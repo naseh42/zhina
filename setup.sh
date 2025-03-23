@@ -361,7 +361,7 @@ Description=FastAPI Service
 After=network.target
 
 [Service]
-ExecStart=$WORK_DIR/venv/bin/uvicorn main:app --host 0.0.0.0 --port $PORT --workers 4
+ExecStart=$WORK_DIR/venv/bin/uvicorn backend.app:app --host 0.0.0.0 --port $PORT --workers 4
 WorkingDirectory=$WORK_DIR
 Restart=on-failure
 
