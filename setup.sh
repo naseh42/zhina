@@ -155,38 +155,6 @@ systemctl restart nginx || error "خطا در ری‌استارت Nginx!"
 if [ -n "$DOMAIN" ]; then
     info "در حال دریافت گواهی SSL برای دامنه $DOMAIN..."
     certbot --nginx -d $DOMAIN --non-interactive --agree-tos --email admin@$DOMAIN || error "خطا در دریافت گواهی SSL!"
-else
-    info "در حال ایجاد گواهی خودامضا (self-signed) برای IP سرور ($IP)..."
-    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-        -keyout /etc/ssl/private/nginx-selfsigned.key \
-        -out /etc/ssl/certs/nginx-selfsigned.crt \
-        -subj "/CN=$IP" || error "خطا در ایجاد گواهی خودامضا!"
-
-    # به‌روزرسانی فایل کانفیگ Nginx
-    cat <<EOF > /etc/nginx/sites-available/default
-server {
-    listen 80;
-    server_name $SERVER_NAME;
-    return 301 https://\$host\$request_uri;
-}
-
-server {
-    listen 443 ssl;
-    server_name $SERVER_NAME;
-
-    ssl_certificate /etc/ssl/certs/nginx-selfsigned.crt;
-    ssl_certificate_key /etc/ssl/private/nginx-selfsigned.key;
-
-    location / {
-        proxy_pass http://127.0.0.1:$PORT;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    }
-}
-EOF
-
-    systemctl restart nginx || error "خطا در ری‌استارت Nginx!"
 fi
 
 # تنظیمات دیتابیس PostgreSQL
