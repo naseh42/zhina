@@ -152,6 +152,17 @@ sudo -u postgres psql -c "CREATE DATABASE vpndb;"
 sudo -u postgres psql -c "CREATE USER vpnuser WITH PASSWORD 'vpnpassword';"
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE vpndb TO vpnuser;"
 
+# تنظیمات احراز هویت PostgreSQL
+info "در حال تنظیمات احراز هویت PostgreSQL..."
+cat <<EOF > /etc/postgresql/14/main/pg_hba.conf
+local   all             postgres                                peer
+local   all             all                                     md5
+host    all             all             127.0.0.1/32            md5
+host    all             all             ::1/128                 md5
+EOF
+
+systemctl restart postgresql
+
 # ایجاد جداول دیتابیس
 info "در حال ایجاد جداول دیتابیس..."
 psql -U vpnuser -d vpndb -c "
@@ -174,7 +185,7 @@ CREATE TABLE domains (
 
 # ذخیره یوزرنیم و پسورد در فایل config.py
 info "در حال ذخیره اطلاعات لاگین..."
-cat <<EOF > /path/to/your/project/config.py
+cat <<EOF > /root/zhina/config.py
 ADMIN_USERNAME = "$ADMIN_USERNAME"
 ADMIN_PASSWORD = "$ADMIN_PASSWORD"
 EOF
@@ -206,8 +217,8 @@ Description=FastAPI Service
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/python3 /path/to/your/app.py
-WorkingDirectory=/path/to/your/project
+ExecStart=/usr/bin/python3 /root/zhina/app.py
+WorkingDirectory=/root/zhina
 Restart=on-failure
 
 [Install]
