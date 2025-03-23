@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <div class="domains-container">
+        <!-- هدر -->
+        <header class="domains-header">
+            <h1>مدیریت دامنه‌ها</h1>
+            <button class="add-domain-btn" onclick="openAddDomainModal()">
+                <i class="fas fa-plus"></i> افزودن دامنه
+            </button>
+        </header>
+
+        <!-- جدول دامنه‌ها -->
+        <table class="domains-table">
+            <thead>
+                <tr>
+                    <th>نام دامنه</th>
+                    <th>نوع</th>
+                    <th>وضعیت</th>
+                    <th>عملیات</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for domain in domains %}
+                    <tr>
+                        <td>{{ domain.name }}</td>
+                        <td>{{ domain.type }}</td>
+                        <td>
+                            {% if domain.is_active %}
+                                <span class="status active">فعال</span>
+                            {% else %}
+                                <span class="status inactive">غیرفعال</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <button class="edit-btn" onclick="openEditDomainModal('{{ domain.id }}')">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                            <button class="delete-btn" onclick="deleteDomain('{{ domain.id }}')">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <!-- مودال افزودن دامنه -->
+        <div id="addDomainModal" class="modal">
+            <div class="modal-content">
+                <span class="close" onclick="closeAddDomainModal()">&times;</span>
+                <h2>افزودن دامنه جدید</h2>
+                <form id="addDomainForm">
+                    <label for="name">نام دامنه:</label>
+                    <input type="text" id="name" name="name" required>
+
+                    <label for="type">نوع دامنه:</label>
+                    <select id="type" name="type" required>
+                        <option value="reality">Reality</option>
+                        <option value="direct">Direct</option>
+                        <option value="subscription">Subscription</option>
+                        <option value="cdn">CDN</option>
+                        <option value="other">Other</option>
+                    </select>
+
+                    <button type="submit">ذخیره</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- مودال ویرایش دامنه -->
+        <div id="editDomainModal" class="modal">
+            <div class="modal-content">
+                <span class="close" onclick="closeEditDomainModal()">&times;</span>
+                <h2>ویرایش دامنه</h2>
+                <form id="editDomainForm">
+                    <input type="hidden" id="editDomainId" name="id">
+                    <label for="editName">نام دامنه:</label>
+                    <input type="text" id="editName" name="name" required>
+
+                    <label for="editType">نوع دامنه:</label>
+                    <select id="editType" name="type" required>
+                        <option value="reality">Reality</option>
+                        <option value="direct">Direct</option>
+                        <option value="subscription">Subscription</option>
+                        <option value="cdn">CDN</option>
+                        <option value="other">Other</option>
+                    </select>
+
+                    <button type="submit">ذخیره</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/domains.js') }}"></script>
+{% endblock %}
