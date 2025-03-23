@@ -39,8 +39,8 @@ fi
 
 # ایجاد پوشه zhina با دسترسی مناسب
 mkdir -p /root/zhina
-chmod 755 /root/zhina
-chown $USER:$USER /root/zhina
+chown -R $USER:$USER /root/zhina
+chmod -R 755 /root/zhina
 
 # دریافت دامنه (اختیاری)
 read -p "دامنه خود را وارد کنید (اختیاری): " DOMAIN
