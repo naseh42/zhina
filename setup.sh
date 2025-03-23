@@ -39,7 +39,8 @@ fi
 
 # ایجاد پوشه zhina با دسترسی مناسب
 mkdir -p /root/zhina
-chmod 700 /root/zhina
+chmod 755 /root/zhina
+chown $USER:$USER /root/zhina
 
 # دریافت دامنه (اختیاری)
 read -p "دامنه خود را وارد کنید (اختیاری): " DOMAIN
@@ -103,22 +104,6 @@ cat <<EOF > /etc/xray/config.json
                         }
                     ]
                 }
-            }
-        },
-        {
-            "port": 80,
-            "protocol": "vless",
-            "settings": {
-                "clients": [
-                    {
-                        "id": "$(uuidgen)",
-                        "flow": "xtls-rprx-direct"
-                    }
-                ]
-            },
-            "streamSettings": {
-                "network": "tcp",
-                "security": "none"
             }
         }
     ],
@@ -233,7 +218,7 @@ EOF
 
 systemctl restart postgresql || error "خطا در ری‌استارت PostgreSQL!"
 
-# ایجاد جداول دیتابیس (با استفاده از پسورد به‌صورت خودکار)
+# ایجاد جداول دیتابیس (با استفاده از پسورد خودکار)
 info "در حال ایجاد جداول دیتابیس..."
 PGPASSWORD="$DB_PASSWORD" psql -U vpnuser -d vpndb -h 127.0.0.1 -c "
 CREATE TABLE IF NOT EXISTS users (
