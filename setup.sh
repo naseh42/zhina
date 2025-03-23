@@ -37,12 +37,17 @@ DOMAIN=""  # دامنه (اختیاری)
 IP=$(hostname -I | awk '{print $1}')  # دریافت IP سرور
 PORT="8000"  # پورت پیش‌فرض برای پنل
 WORK_DIR="/var/lib/zhina"  # دایرکتوری کاری
+BACKEND_DIR="$WORK_DIR/backend"  # دایرکتوری backend
 
 # ایجاد دایرکتوری کاری و تنظیم دسترسی
 info "در حال ایجاد دایرکتوری کاری و تنظیم دسترسی..."
-mkdir -p $WORK_DIR
+mkdir -p $BACKEND_DIR
 chmod -R 755 $WORK_DIR
 chown -R root:root $WORK_DIR
+
+# انتقال فایل‌های پروژه به دایرکتوری کاری
+info "در حال انتقال فایل‌های پروژه..."
+cp -R /root/zhina/backend/* $BACKEND_DIR/ || error "خطا در انتقال فایل‌ها!"
 
 # دریافت دامنه (اختیاری)
 read -p "دامنه خود را وارد کنید (اختیاری): " DOMAIN
@@ -73,7 +78,11 @@ source $WORK_DIR/venv/bin/activate || error "خطا در فعال‌سازی م�
 
 # نصب کتابخانه‌های پایتون در محیط مجازی
 info "در حال نصب کتابخانه‌های پایتون..."
-pip install fastapi uvicorn sqlalchemy pydantic psycopg2-binary || error "خطا در نصب کتابخانه‌های پایتون!"
+pip install fastapi uvicorn sqlalchemy pydantic psycopg2-binary pydantic-settings || error "خطا در نصب کتابخانه‌های پایتون!"
+
+# تنظیم PYTHONPATH
+info "در حال تنظیم PYTHONPATH..."
+export PYTHONPATH=$WORK_DIR
 
 # نصب Xray
 info "در حال نصب Xray..."
@@ -328,7 +337,7 @@ CREATE TABLE IF NOT EXISTS domains (
 
 # ذخیره اطلاعات دیتابیس در فایل config.py
 info "در حال ذخیره اطلاعات دیتابیس..."
-cat <<EOF > $WORK_DIR/config.py
+cat <<EOF > $BACKEND_DIR/config.py
 ADMIN_USERNAME = "$ADMIN_USERNAME"
 ADMIN_PASSWORD = "$ADMIN_PASSWORD"
 DB_PASSWORD = "$DB_PASSWORD"
@@ -361,8 +370,8 @@ Description=FastAPI Service
 After=network.target
 
 [Service]
-ExecStart=$WORK_DIR/venv/bin/uvicorn backend.app:app --host 0.0.0.0 --port $PORT --workers 4
-WorkingDirectory=$WORK_DIR
+ExecStart=$WORK_DIR/venv/bin/uvicorn app:app --host 0.0.0.0 --port $PORT --workers 4
+WorkingDirectory=$BACKEND_DIR
 Restart=on-failure
 
 [Install]
