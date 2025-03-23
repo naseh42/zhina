@@ -195,25 +195,25 @@ info "در حال نصب و کانفیگ دیتابیس..."
 # بررسی وجود پایگاه داده و حذف آن در صورت وجود
 if sudo -u postgres psql -lqt | cut -d \| -f 1 | grep -qw vpndb; then
     info "پایگاه داده vpndb از قبل وجود دارد. در حال حذف و ایجاد مجدد..."
-    sudo -u postgres psql -c "DROP DATABASE IF EXISTS vpndb;" || error "خطا در حذف پایگاه داده vpndb!"
+    sudo -u postgres psql -c "DROP DATABASE IF EXISTS vpndb;" -d $WORK_DIR || error "خطا در حذف پایگاه داده vpndb!"
 fi
 
 # ایجاد پایگاه داده جدید
 info "در حال ایجاد پایگاه داده vpndb..."
-sudo -u postgres psql -c "CREATE DATABASE vpndb;" || error "خطا در ایجاد پایگاه داده vpndb!"
+sudo -u postgres psql -c "CREATE DATABASE vpndb;" -d $WORK_DIR || error "خطا در ایجاد پایگاه داده vpndb!"
 
 # بررسی وجود کاربر و حذف آن در صورت وجود
 if sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='vpnuser'" | grep -q 1; then
     info "کاربر vpnuser از قبل وجود دارد. در حال حذف و ایجاد مجدد..."
-    sudo -u postgres psql -c "DROP USER IF EXISTS vpnuser;" || error "خطا در حذف کاربر vpnuser!"
+    sudo -u postgres psql -c "DROP USER IF EXISTS vpnuser;" -d $WORK_DIR || error "خطا در حذف کاربر vpnuser!"
 fi
 
 # ایجاد کاربر جدید
 info "در حال ایجاد کاربر vpnuser..."
-sudo -u postgres psql -c "CREATE USER vpnuser WITH PASSWORD '$DB_PASSWORD';" || error "خطا در ایجاد کاربر vpnuser!"
+sudo -u postgres psql -c "CREATE USER vpnuser WITH PASSWORD '$DB_PASSWORD';" -d $WORK_DIR || error "خطا در ایجاد کاربر vpnuser!"
 
 # اعطای دسترسی به کاربر
-sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE vpndb TO vpnuser;" || error "خطا در اعطای دسترسی به کاربر vpnuser!"
+sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE vpndb TO vpnuser;" -d $WORK_DIR || error "خطا در اعطای دسترسی به کاربر vpnuser!"
 
 # تنظیمات احراز هویت PostgreSQL
 info "در حال تنظیمات احراز هویت PostgreSQL..."
