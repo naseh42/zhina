@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <div class="settings-container">
+        <!-- هدر -->
+        <header class="settings-header">
+            <h1>تنظیمات</h1>
+        </header>
+
+        <!-- تب‌ها -->
+        <div class="tabs">
+            <button class="tab-link active" onclick="openTab(event, 'general')">عمومی</button>
+            <button class="tab-link" onclick="openTab(event, 'advanced')">پیشرفته</button>
+        </div>
+
+        <!-- تب عمومی -->
+        <div id="general" class="tab-content active">
+            <h2>تنظیمات عمومی</h2>
+            <form id="generalSettingsForm">
+                <label for="language">زبان:</label>
+                <select id="language" name="language">
+                    <option value="fa">فارسی</option>
+                    <option value="en">English</option>
+                </select>
+
+                <label for="theme">تم:</label>
+                <select id="theme" name="theme">
+                    <option value="dark">تیره</option>
+                    <option value="light">روشن</option>
+                </select>
+
+                <button type="submit">ذخیره</button>
+            </form>
+        </div>
+
+        <!-- تب پیشرفته -->
+        <div id="advanced" class="tab-content">
+            <h2>تنظیمات پیشرفته</h2>
+            <form id="advancedSettingsForm">
+                <label for="cdn">CDN:</label>
+                <select id="cdn" name="cdn">
+                    <option value="cloudflare">Cloudflare</option>
+                    <option value="fastly">Fastly</option>
+                    <option value="gcore">Gcore</option>
+                </select>
+
+                <label for="ssl">SSL:</label>
+                <select id="ssl" name="ssl">
+                    <option value="letsencrypt">Let's Encrypt</option>
+                    <option value="selfsigned">Self-Signed</option>
+                </select>
+
+                <button type="submit">ذخیره</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+{% endblock %}
