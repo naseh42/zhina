@@ -27,6 +27,11 @@ info() {
     echo -e "${YELLOW}[INFO] $1${NC}"
 }
 
+# تابع برای تولید پسورد تصادفی
+generate_password() {
+    echo $(openssl rand -base64 12)
+}
+
 # بررسی دسترسی root
 if [ "$EUID" -ne 0 ]; then
     error "لطفا با دسترسی root اجرا کنید."
@@ -46,10 +51,13 @@ read -p "یوزرنیم برای لاگین به پنل وارد کنید: " ADM
 read -s -p "پسورد برای لاگین به پنل وارد کنید: " ADMIN_PASSWORD
 echo ""
 
+# تولید پسورد تصادفی برای PostgreSQL
+DB_PASSWORD=$(generate_password)
+
 # نصب پیش‌نیازها
 info "در حال نصب پیش‌نیازها..."
 apt-get update
-apt-get install -y curl wget git python3 python3-pip nginx certbot
+apt-get install -y curl wget git python3 python3-pip nginx certbot postgresql postgresql-contrib openssl
 
 # نصب کتابخانه‌های پایتون
 info "در حال نصب کتابخانه‌های پایتون..."
@@ -147,9 +155,25 @@ fi
 
 # نصب و کانفیگ دیتابیس (PostgreSQL)
 info "در حال نصب و کانفیگ دیتابیس..."
-apt-get install -y postgresql postgresql-contrib
-sudo -u postgres psql -c "CREATE DATABASE vpndb;"
-sudo -u postgres psql -c "CREATE USER vpnuser WITH PASSWORD 'vpnpassword';"
+
+# بررسی وجود پایگاه داده
+if sudo -u postgres psql -lqt | cut -d \| -f 1 | grep -qw vpndb; then
+    info "پایگاه داده vpndb از قبل وجود دارد."
+else
+    info "در حال ایجاد پایگاه داده vpndb..."
+    sudo -u postgres psql -c "CREATE DATABASE vpndb;"
+fi
+
+# بررسی وجود کاربر
+if sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='vpnuser'" | grep -q 1; then
+    info "کاربر vpnuser از قبل وجود دارد. در حال به‌روزرسانی پسورد..."
+    sudo -u postgres psql -c "ALTER USER vpnuser WITH PASSWORD '$DB_PASSWORD';"
+else
+    info "در حال ایجاد کاربر vpnuser..."
+    sudo -u postgres psql -c "CREATE USER vpnuser WITH PASSWORD '$DB_PASSWORD';"
+fi
+
+# اعطای دسترسی به کاربر
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE vpndb TO vpnuser;"
 
 # تنظیمات احراز هویت PostgreSQL
@@ -166,7 +190,7 @@ systemctl restart postgresql
 # ایجاد جداول دیتابیس
 info "در حال ایجاد جداول دیتابیس..."
 psql -U vpnuser -d vpndb -c "
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     uuid VARCHAR(255) NOT NULL,
@@ -175,7 +199,7 @@ CREATE TABLE users (
     simultaneous_connections INT DEFAULT 1,
     is_active BOOLEAN DEFAULT TRUE
 );
-CREATE TABLE domains (
+CREATE TABLE IF NOT EXISTS domains (
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     description TEXT,
@@ -188,6 +212,7 @@ info "در حال ذخیره اطلاعات لاگین..."
 cat <<EOF > /root/zhina/config.py
 ADMIN_USERNAME = "$ADMIN_USERNAME"
 ADMIN_PASSWORD = "$ADMIN_PASSWORD"
+DB_PASSWORD = "$DB_PASSWORD"
 EOF
 
 # ایجاد فایل systemd service برای Xray
@@ -239,3 +264,4 @@ else
 fi
 echo -e "${GREEN}یوزرنیم: $ADMIN_USERNAME${NC}"
 echo -e "${GREEN}پسورد: $ADMIN_PASSWORD${NC}"
+echo -e "${GREEN}پسورد دیتابیس: $DB_PASSWORD${NC}"
