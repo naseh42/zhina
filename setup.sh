@@ -32,231 +32,262 @@ if [ "$EUID" -ne 0 ]; then
     error "لطفاً با دسترسی root اجرا کنید."
 fi
 
-echo "[INFO] شروع نصب Kurdan..."
+# تنظیمات اولیه
+DOMAIN=""  # دامنه (اختیاری)
+IP=$(hostname -I | awk '{print $1}')  # دریافت IP سرور
+PORT="8000"  # پورت پیش‌فرض برای پنل
 
-# بررسی معماری سیستم
-ARCH=$(uname -m)
-if [[ $ARCH != "x86_64" ]]; then
-    error "این اسکریپت فقط روی معماری x86_64 تست شده است."
+# دریافت دامنه (اختیاری)
+read -p "دامنه خود را وارد کنید (اختیاری): " DOMAIN
+
+# دریافت پورت پنل
+read -p "پورت پنل را وارد کنید (پیش‌فرض: 8000): " USER_PORT
+if [ -n "$USER_PORT" ]; then
+    PORT=$USER_PORT
 fi
+
+# دریافت یوزرنیم و پسورد برای لاگین به پنل
+read -p "یوزرنیم برای لاگین به پنل وارد کنید: " ADMIN_USERNAME
+read -s -p "پسورد برای لاگین به پنل وارد کنید: " ADMIN_PASSWORD
+echo ""
+
+# تولید پسورد تصادفی برای PostgreSQL
+DB_PASSWORD=$(generate_password)
 
 # نصب پیش‌نیازها
 info "در حال نصب پیش‌نیازها..."
-apt update && apt upgrade -y
-apt install -y wget curl ufw postgresql postgresql-contrib python3-pip nginx git uuid-runtime
+apt-get update
+apt-get install -y curl wget git python3 python3-pip nginx certbot postgresql postgresql-contrib openssl
 
-# تنظیمات فایروال
-info "در حال تنظیم فایروال..."
-ufw allow OpenSSH
-ufw allow 80,443,8000/tcp
-ufw enable
+# نصب کتابخانه‌های پایتون
+info "در حال نصب کتابخانه‌های پایتون..."
+pip3 install fastapi uvicorn sqlalchemy pydantic psycopg2-binary
 
-# دانلود و نصب XRay
-info "در حال نصب XRay..."
-wget https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip -O xray.zip
-if [ $? -ne 0 ]; then
-    error "دانلود XRay با مشکل مواجه شد."
-fi
-unzip -o xray.zip -d /usr/local/bin/
-chmod +x /usr/local/bin/xray
-rm -f xray.zip
+# نصب Xray
+info "در حال نصب Xray..."
+bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
 
-# دانلود و نصب Sing-box
-info "در حال نصب Sing-box..."
-wget https://github.com/SagerNet/sing-box/releases/latest/download/sing-box-linux-amd64.tar.gz -O sing-box.tar.gz
-if [ $? -ne 0 ]; then
-    error "دانلود Sing-box با مشکل مواجه شد."
-fi
-tar -zxvf sing-box.tar.gz
-mv sing-box /usr/local/bin/
-chmod +x /usr/local/bin/sing-box
-rm -f sing-box.tar.gz
+# ایجاد پوشه‌های مورد نیاز
+info "در حال ایجاد پوشه‌های مورد نیاز..."
+mkdir -p /etc/xray /var/log/xray /usr/local/etc/xray
 
-# بررسی وضعیت PostgreSQL
-info "بررسی وضعیت دیتابیس PostgreSQL..."
-systemctl start postgresql
-systemctl enable postgresql
-
-# تنظیمات دیتابیس
-DB_USER="kurdan_user"
-DB_PASS=$(generate_password)  # تولید پسورد تصادفی
-DB_NAME="kurdan"
-
-info "تنظیمات دیتابیس در حال انجام است..."
-sudo -u postgres psql <<EOF
-ALTER USER postgres WITH PASSWORD '${DB_PASS}';
-CREATE DATABASE ${DB_NAME};
-CREATE USER ${DB_USER} WITH ENCRYPTED PASSWORD '${DB_PASS}';
-GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};
+# کانفیگ Xray
+info "در حال ایجاد کانفیگ Xray..."
+cat <<EOF > /etc/xray/config.json
+{
+    "inbounds": [
+        {
+            "port": 443,
+            "protocol": "vmess",
+            "settings": {
+                "clients": [
+                    {
+                        "id": "$(uuidgen)",
+                        "alterId": 64
+                    }
+                ]
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "tls",
+                "tlsSettings": {
+                    "serverName": "$DOMAIN",
+                    "certificates": [
+                        {
+                            "certificateFile": "/etc/letsencrypt/live/$DOMAIN/fullchain.pem",
+                            "keyFile": "/etc/letsencrypt/live/$DOMAIN/privkey.pem"
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "outbounds": [
+        {
+            "protocol": "freedom",
+            "settings": {}
+        }
+    ]
+}
 EOF
 
-# تنظیم احراز هویت PostgreSQL
-info "تنظیم احراز هویت PostgreSQL..."
+# تنظیمات Nginx
+info "در حال نصب و کانفیگ Nginx..."
+
+if [ -n "$DOMAIN" ]; then
+    SERVER_NAME="$DOMAIN"
+    info "دامنه وارد شده است: $DOMAIN"
+else
+    SERVER_NAME="$IP"
+    info "دامنه وارد نشده است. از IP سرور ($IP) استفاده می‌شود."
+fi
+
+# ایجاد فایل کانفیگ Nginx
+cat <<EOF > /etc/nginx/sites-available/default
+server {
+    listen 80;
+    server_name $SERVER_NAME;
+
+    location / {
+        proxy_pass http://127.0.0.1:$PORT;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+}
+EOF
+
+# ری‌استارت Nginx
+systemctl restart nginx || error "خطا در ری‌استارت Nginx!"
+
+# دریافت گواهی SSL (فقط اگر دامنه وارد شده باشد)
+if [ -n "$DOMAIN" ]; then
+    info "در حال دریافت گواهی SSL برای دامنه $DOMAIN..."
+    certbot --nginx -d $DOMAIN --non-interactive --agree-tos --email admin@$DOMAIN || error "خطا در دریافت گواهی SSL!"
+else
+    info "در حال ایجاد گواهی خودامضا (self-signed) برای IP سرور ($IP)..."
+    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+        -keyout /etc/ssl/private/nginx-selfsigned.key \
+        -out /etc/ssl/certs/nginx-selfsigned.crt \
+        -subj "/CN=$IP" || error "خطا در ایجاد گواهی خودامضا!"
+
+    # به‌روزرسانی فایل کانفیگ Nginx
+    cat <<EOF > /etc/nginx/sites-available/default
+server {
+    listen 80;
+    server_name $SERVER_NAME;
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name $SERVER_NAME;
+
+    ssl_certificate /etc/ssl/certs/nginx-selfsigned.crt;
+    ssl_certificate_key /etc/ssl/private/nginx-selfsigned.key;
+
+    location / {
+        proxy_pass http://127.0.0.1:$PORT;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+}
+EOF
+
+    systemctl restart nginx || error "خطا در ری‌استارت Nginx!"
+fi
+
+# تنظیمات دیتابیس PostgreSQL
+info "در حال نصب و کانفیگ دیتابیس..."
+
+# بررسی وجود پایگاه داده
+if sudo -u postgres psql -lqt | cut -d \| -f 1 | grep -qw vpndb; then
+    info "پایگاه داده vpndb از قبل وجود دارد. در حال به‌روزرسانی پسورد..."
+    sudo -u postgres psql -c "ALTER USER vpnuser WITH PASSWORD '$DB_PASSWORD';" || error "خطا در به‌روزرسانی پسورد کاربر vpnuser!"
+else
+    info "در حال ایجاد پایگاه داده vpndb..."
+    sudo -u postgres psql -c "CREATE DATABASE vpndb;" || error "خطا در ایجاد پایگاه داده vpndb!"
+fi
+
+# بررسی وجود کاربر
+if sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='vpnuser'" | grep -q 1; then
+    info "کاربر vpnuser از قبل وجود دارد. در حال به‌روزرسانی پسورد..."
+    sudo -u postgres psql -c "ALTER USER vpnuser WITH PASSWORD '$DB_PASSWORD';" || error "خطا در به‌روزرسانی پسورد کاربر vpnuser!"
+else
+    info "در حال ایجاد کاربر vpnuser..."
+    sudo -u postgres psql -c "CREATE USER vpnuser WITH PASSWORD '$DB_PASSWORD';" || error "خطا در ایجاد کاربر vpnuser!"
+fi
+
+# اعطای دسترسی به کاربر
+sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE vpndb TO vpnuser;" || error "خطا در اعطای دسترسی به کاربر vpnuser!"
+
+# تنظیمات احراز هویت PostgreSQL
+info "در حال تنظیمات احراز هویت PostgreSQL..."
 cat <<EOF > /etc/postgresql/14/main/pg_hba.conf
 local   all             postgres                                peer
 local   all             all                                     md5
 host    all             all             127.0.0.1/32            md5
 host    all             all             ::1/128                 md5
 EOF
-systemctl restart postgresql
 
-# ایجاد فولدرهای XRay و Sing-box
-mkdir -p /etc/xray
-mkdir -p /etc/sing-box
+systemctl restart postgresql || error "خطا در ری‌استارت PostgreSQL!"
 
-# تولید UUID برای کانفیگ‌ها
-UUID=$(uuidgen)
+# ایجاد جداول دیتابیس (با استفاده از پسورد خودکار)
+info "در حال ایجاد جداول دیتابیس..."
+PGPASSWORD="$DB_PASSWORD" psql -U vpnuser -d vpndb -h 127.0.0.1 -c "
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    uuid VARCHAR(255) NOT NULL,
+    traffic_limit INT DEFAULT 0,
+    usage_duration INT DEFAULT 0,
+    simultaneous_connections INT DEFAULT 1,
+    is_active BOOLEAN DEFAULT TRUE
+);
+CREATE TABLE IF NOT EXISTS domains (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    cdn_enabled BOOLEAN DEFAULT FALSE
+);
+" || error "خطا در ایجاد جداول دیتابیس!"
 
-# ایجاد کانفیگ XRay
-cat <<EOF > /etc/xray/config.json
-{
-  "inbounds": [
-    {
-      "port": 10086,
-      "protocol": "vmess",
-      "settings": {
-        "clients": [
-          {
-            "id": "${UUID}",
-            "alterId": 64
-          }
-        ]
-      }
-    }
-  ]
-}
+# ذخیره اطلاعات دیتابیس در فایل config.py
+info "در حال ذخیره اطلاعات دیتابیس..."
+cat <<EOF > /root/zhina/config.py
+ADMIN_USERNAME = "$ADMIN_USERNAME"
+ADMIN_PASSWORD = "$ADMIN_PASSWORD"
+DB_PASSWORD = "$DB_PASSWORD"
 EOF
 
-# ایجاد کانفیگ Sing-box
-cat <<EOF > /etc/sing-box/config.json
-{
-  "log": {
-    "level": "info",
-    "output": "stdout"
-  },
-  "outbounds": [
-    {
-      "protocol": "vmess",
-      "settings": {
-        "vnext": [
-          {
-            "address": "example.com",
-            "port": 443,
-            "users": [
-              {
-                "id": "${UUID}",
-                "alterId": 64
-              }
-            ]
-          }
-        ]
-      }
-    }
-  ]
-}
-EOF
-
-# تنظیم سرویس‌های XRay و Sing-box
-info "ایجاد سرویس‌های systemd..."
+# ایجاد فایل systemd service برای Xray
+info "در حال ایجاد فایل systemd service برای Xray..."
 cat <<EOF > /etc/systemd/system/xray.service
 [Unit]
-Description=XRay service
+Description=Xray Service
 After=network.target
 
 [Service]
 ExecStart=/usr/local/bin/xray run -config /etc/xray/config.json
 Restart=on-failure
-User=nobody
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-cat <<EOF > /etc/systemd/system/sing-box.service
+systemctl daemon-reload
+systemctl enable xray
+systemctl start xray
+
+# ایجاد فایل systemd service برای FastAPI
+info "در حال ایجاد فایل systemd service برای FastAPI..."
+cat <<EOF > /etc/systemd/system/fastapi.service
 [Unit]
-Description=Sing-box service
+Description=FastAPI Service
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/sing-box run -config /etc/sing-box/config.json
+ExecStart=/usr/bin/python3 /root/zhina/app.py
+WorkingDirectory=/root/zhina
 Restart=on-failure
-User=nobody
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-systemctl enable xray sing-box
-systemctl start xray sing-box
+systemctl daemon-reload
+systemctl enable fastapi
+systemctl start fastapi
 
-# تنظیم دامنه برای Nginx
-read -p "[INFO] دامنه خود را وارد کنید (یا Enter بزنید تا IP استفاده شود): " DOMAIN
-if [ -z "$DOMAIN" ]; then
-    DOMAIN=$(curl -s ifconfig.me)
-    info "از IP سرور (${DOMAIN}) استفاده می‌شود."
+# نمایش اطلاعات نهایی
+success "نصب و پیکربندی با موفقیت انجام شد!"
+info "اطلاعات دسترسی به پنل:"
+if [ -n "$DOMAIN" ]; then
+    echo -e "${GREEN}آدرس وب پنل: https://$DOMAIN${NC}"
+else
+    echo -e "${GREEN}آدرس وب پنل: http://$IP:$PORT${NC}"
 fi
-
-# ایجاد گواهی SSL خودامضا (اگر دامنه وارد نشده باشد)
-if [ -z "$DOMAIN" ]; then
-    info "در حال ایجاد گواهی خودامضا (self-signed) برای IP سرور ($DOMAIN)..."
-    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-        -keyout /etc/ssl/private/nginx-selfsigned.key \
-        -out /etc/ssl/certs/nginx-selfsigned.crt \
-        -subj "/CN=$DOMAIN" || error "خطا در ایجاد گواهی خودامضا!"
-fi
-
-# تنظیمات Nginx
-cat <<EOF > /etc/nginx/sites-available/kurdan
-server {
-    listen 80;
-    server_name ${DOMAIN};
-
-    location / {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-}
-EOF
-
-ln -s /etc/nginx/sites-available/kurdan /etc/nginx/sites-enabled/
-systemctl restart nginx
-
-# نصب FastAPI و پکیج‌های مورد نیاز
-info "در حال نصب FastAPI..."
-pip3 install --upgrade pip
-pip3 install fastapi uvicorn sqlalchemy psycopg2-binary
-
-# اجرای سرویس FastAPI
-cat <<EOF > /etc/systemd/system/kurdan-api.service
-[Unit]
-Description=Kurdan FastAPI
-After=network.target
-
-[Service]
-User=root
-ExecStart=/usr/local/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl enable kurdan-api
-systemctl start kurdan-api
-
-# ذخیره اطلاعات دیتابیس در فایل config.py
-info "در حال ذخیره اطلاعات دیتابیس..."
-cat <<EOF > /root/zhina/config.py
-ADMIN_USERNAME = "admin"
-ADMIN_PASSWORD = "admin"
-DB_PASSWORD = "${DB_PASS}"
-EOF
-
-success "نصب و پیکربندی Kurdan با موفقیت انجام شد!"
-info "اطلاعات دسترسی:"
-echo -e "${GREEN}آدرس وب پنل: http://${DOMAIN}:8000${NC}"
-echo -e "${GREEN}یوزرنیم: admin${NC}"
-echo -e "${GREEN}پسورد دیتابیس: ${DB_PASS}${NC}"
+echo -e "${GREEN}یوزرنیم: $ADMIN_USERNAME${NC}"
+echo -e "${GREEN}پسورد: $ADMIN_PASSWORD${NC}"
+echo -e "${GREEN}پسورد دیتابیس: $DB_PASSWORD${NC}"
