@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="{{ language }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }} - Kurd Panel</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/futuristic.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+    <!-- منوی مدیریت -->
+    <nav class="sidebar">
+        <div class="logo">
+            <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Kurd Panel">
+            <span>Kurd Panel</span>
+        </div>
+        <ul class="menu">
+            <li><a href="/dashboard"><i class="fas fa-home"></i> داشبورد</a></li>
+            <li><a href="/users"><i class="fas fa-users"></i> کاربران</a></li>
+            <li><a href="/domains"><i class="fas fa-globe"></i> دامنه‌ها</a></li>
+            <li><a href="/settings"><i class="fas fa-cog"></i> تنظیمات</a></li>
+        </ul>
+    </nav>
+
+    <!-- محتوای صفحه -->
+    <main class="content">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- اسکریپت‌ها -->
+    <script src="{{ url_for('static', filename='js/scripts.js') }}"></script>
+</body>
+</html>
