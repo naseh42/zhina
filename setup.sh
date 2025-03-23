@@ -46,9 +46,10 @@ if [ -n "$USER_PORT" ]; then
     PORT=$USER_PORT
 fi
 
-# تولید یوزرنیم و پسورد برای لاگین به پنل
-ADMIN_USERNAME="admin"
-ADMIN_PASSWORD=$(generate_password)
+# دریافت یوزرنیم و پسورد برای لاگین به پنل
+read -p "یوزرنیم برای لاگین به پنل وارد کنید: " ADMIN_USERNAME
+read -s -p "پسورد برای لاگین به پنل وارد کنید: " ADMIN_PASSWORD
+echo ""
 
 # تولید پسورد تصادفی برای PostgreSQL
 DB_PASSWORD=$(generate_password)
