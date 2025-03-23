@@ -3,6 +3,7 @@ from typing import Optional, Dict
 from backend.database import get_db
 from backend.models import Domain
 from sqlalchemy.orm import Session
+from backend.utils import setup_ssl  # تابع دریافت خودکار سرتیفیکیت
 
 class DomainCreate(BaseModel):
     name: str
@@ -25,10 +26,19 @@ class DomainCreate(BaseModel):
 
 def add_domain(db: Session, domain: DomainCreate, owner_id: int):
     """ اضافه کردن دامنه جدید """
+    # دریافت خودکار سرتیفیکیت SSL
+    ssl_certificate = setup_ssl(domain.name)
+    if not ssl_certificate:
+        raise ValueError("خطا در دریافت سرتیفیکیت SSL.")
+
+    # ذخیره‌سازی دامنه در دیتابیس
     db_domain = Domain(
         name=domain.name,
         type=domain.type,
-        config=domain.config,
+        config={
+            "ssl_certificate": ssl_certificate,
+            **domain.config  # اضافه کردن تنظیمات دیگر
+        },
         description=domain.description,
         owner_id=owner_id
     )
