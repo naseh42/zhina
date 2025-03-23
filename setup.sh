@@ -36,7 +36,11 @@ fi
 DOMAIN=""  # دامنه (اختیاری)
 IP=$(hostname -I | awk '{print $1}')  # دریافت IP سرور
 PORT="8000"  # پورت پیش‌فرض برای پنل
-CURRENT_DIR=$(pwd)  # دریافت مسیر جاری
+WORK_DIR="/var/lib/zhina"  # دایرکتوری کاری
+
+# ایجاد دایرکتوری کاری
+mkdir -p $WORK_DIR
+chown -R postgres:postgres $WORK_DIR
 
 # دریافت دامنه (اختیاری)
 read -p "دامنه خود را وارد کنید (اختیاری): " DOMAIN
@@ -62,8 +66,8 @@ apt-get install -y curl wget git python3 python3-pip nginx certbot postgresql po
 
 # ایجاد محیط مجازی برای پایتون
 info "در حال ایجاد محیط مجازی پایتون..."
-python3 -m venv $CURRENT_DIR/venv || error "خطا در ایجاد محیط مجازی!"
-source $CURRENT_DIR/venv/bin/activate || error "خطا در فعال‌سازی محیط مجازی!"
+python3 -m venv $WORK_DIR/venv || error "خطا در ایجاد محیط مجازی!"
+source $WORK_DIR/venv/bin/activate || error "خطا در فعال‌سازی محیط مجازی!"
 
 # نصب کتابخانه‌های پایتون در محیط مجازی
 info "در حال نصب کتابخانه‌های پایتون..."
@@ -243,7 +247,7 @@ CREATE TABLE IF NOT EXISTS domains (
 
 # ذخیره اطلاعات دیتابیس در فایل config.py
 info "در حال ذخیره اطلاعات دیتابیس..."
-cat <<EOF > $CURRENT_DIR/config.py
+cat <<EOF > $WORK_DIR/config.py
 ADMIN_USERNAME = "$ADMIN_USERNAME"
 ADMIN_PASSWORD = "$ADMIN_PASSWORD"
 DB_PASSWORD = "$DB_PASSWORD"
@@ -276,8 +280,8 @@ Description=FastAPI Service
 After=network.target
 
 [Service]
-ExecStart=$CURRENT_DIR/venv/bin/uvicorn main:app --host 0.0.0.0 --port $PORT --workers 4
-WorkingDirectory=$CURRENT_DIR
+ExecStart=$WORK_DIR/venv/bin/uvicorn main:app --host 0.0.0.0 --port $PORT --workers 4
+WorkingDirectory=$WORK_DIR
 Restart=on-failure
 
 [Install]
