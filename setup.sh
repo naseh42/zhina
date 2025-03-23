@@ -161,6 +161,9 @@ fi
 # تنظیمات دیتابیس PostgreSQL
 info "در حال نصب و کانفیگ دیتابیس..."
 
+# تغییر مسیر به /tmp برای جلوگیری از خطاهای دسترسی
+cd /tmp
+
 # بررسی وجود پایگاه داده و حذف آن در صورت وجود
 if sudo -u postgres psql -lqt | cut -d \| -f 1 | grep -qw vpndb; then
     info "پایگاه داده vpndb از قبل وجود دارد. در حال حذف و ایجاد مجدد..."
@@ -197,7 +200,6 @@ systemctl restart postgresql || error "خطا در ری‌استارت PostgreSQ
 
 # ایجاد جداول دیتابیس (با استفاده از پسورد خودکار)
 info "در حال ایجاد جداول دیتابیس..."
-cd /tmp  # تغییر مسیر برای جلوگیری از خطاهای دسترسی
 PGPASSWORD="$DB_PASSWORD" psql -U vpnuser -d vpndb -h 127.0.0.1 -c "
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
