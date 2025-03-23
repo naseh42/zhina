@@ -34,7 +34,7 @@ generate_password() {
 
 # بررسی دسترسی root
 if [ "$EUID" -ne 0 ]; then
-    error "لطفا با دسترسی root اجرا کنید."
+    error "لطفاً با دسترسی root اجرا کنید."
 fi
 
 # دریافت دامنه (اختیاری)
@@ -46,10 +46,9 @@ if [ -n "$USER_PORT" ]; then
     PORT=$USER_PORT
 fi
 
-# دریافت یوزرنیم و پسورد برای لاگین به پنل
-read -p "یوزرنیم برای لاگین به پنل وارد کنید: " ADMIN_USERNAME
-read -s -p "پسورد برای لاگین به پنل وارد کنید: " ADMIN_PASSWORD
-echo ""
+# تولید یوزرنیم و پسورد برای لاگین به پنل
+ADMIN_USERNAME="admin"
+ADMIN_PASSWORD=$(generate_password)
 
 # تولید پسورد تصادفی برای PostgreSQL
 DB_PASSWORD=$(generate_password)
@@ -127,12 +126,24 @@ cat <<EOF > /etc/xray/config.json
 }
 EOF
 
-# نصب و کانفیگ Nginx
+# تنظیمات Nginx
 info "در حال نصب و کانفیگ Nginx..."
+
+if [ -n "$DOMAIN" ]; then
+    # اگر دامنه وارد شده باشد
+    SERVER_NAME="$DOMAIN"
+    info "دامنه وارد شده است: $DOMAIN"
+else
+    # اگر دامنه وارد نشده باشد، از IP سرور استفاده می‌شود
+    SERVER_NAME="$IP"
+    info "دامنه وارد نشده است. از IP سرور ($IP) استفاده می‌شود."
+fi
+
+# ایجاد فایل کانفیگ Nginx
 cat <<EOF > /etc/nginx/sites-available/default
 server {
     listen 80;
-    server_name $DOMAIN;
+    server_name $SERVER_NAME;
 
     location / {
         proxy_pass http://127.0.0.1:$PORT;
@@ -143,38 +154,72 @@ server {
 }
 EOF
 
-systemctl restart nginx
+# ری‌استارت Nginx
+systemctl restart nginx || error "خطا در ری‌استارت Nginx!"
 
-# دریافت گواهی SSL (اگر دامنه وارد شده باشد)
+# دریافت گواهی SSL (فقط اگر دامنه وارد شده باشد)
 if [ -n "$DOMAIN" ]; then
     info "در حال دریافت گواهی SSL برای دامنه $DOMAIN..."
-    certbot --nginx -d $DOMAIN --non-interactive --agree-tos --email admin@$DOMAIN
+    certbot --nginx -d $DOMAIN --non-interactive --agree-tos --email admin@$DOMAIN || error "خطا در دریافت گواهی SSL!"
 else
-    info "دامنه وارد نشده است. از IP سرور ($IP) استفاده می‌شود."
+    # اگر دامنه وارد نشده باشد، از گواهی خودامضا استفاده می‌شود
+    info "در حال ایجاد گواهی خودامضا (self-signed) برای IP سرور ($IP)..."
+    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+        -keyout /etc/ssl/private/nginx-selfsigned.key \
+        -out /etc/ssl/certs/nginx-selfsigned.crt \
+        -subj "/CN=$IP" || error "خطا در ایجاد گواهی خودامضا!"
+
+    # به‌روزرسانی فایل کانفیگ Nginx برای استفاده از گواهی خودامضا
+    cat <<EOF > /etc/nginx/sites-available/default
+server {
+    listen 80;
+    server_name $SERVER_NAME;
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name $SERVER_NAME;
+
+    ssl_certificate /etc/ssl/certs/nginx-selfsigned.crt;
+    ssl_certificate_key /etc/ssl/private/nginx-selfsigned.key;
+
+    location / {
+        proxy_pass http://127.0.0.1:$PORT;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+}
+EOF
+
+    # ری‌استارت Nginx
+    systemctl restart nginx || error "خطا در ری‌استارت Nginx!"
 fi
 
-# نصب و کانفیگ دیتابیس (PostgreSQL)
+# تنظیمات دیتابیس PostgreSQL
 info "در حال نصب و کانفیگ دیتابیس..."
 
 # بررسی وجود پایگاه داده
 if sudo -u postgres psql -lqt | cut -d \| -f 1 | grep -qw vpndb; then
-    info "پایگاه داده vpndb از قبل وجود دارد."
+    info "پایگاه داده vpndb از قبل وجود دارد. در حال به‌روزرسانی پسورد..."
+    sudo -u postgres psql -c "ALTER USER vpnuser WITH PASSWORD '$DB_PASSWORD';" || error "خطا در به‌روزرسانی پسورد کاربر vpnuser!"
 else
     info "در حال ایجاد پایگاه داده vpndb..."
-    sudo -u postgres psql -c "CREATE DATABASE vpndb;"
+    sudo -u postgres psql -c "CREATE DATABASE vpndb;" || error "خطا در ایجاد پایگاه داده vpndb!"
 fi
 
 # بررسی وجود کاربر
 if sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='vpnuser'" | grep -q 1; then
     info "کاربر vpnuser از قبل وجود دارد. در حال به‌روزرسانی پسورد..."
-    sudo -u postgres psql -c "ALTER USER vpnuser WITH PASSWORD '$DB_PASSWORD';"
+    sudo -u postgres psql -c "ALTER USER vpnuser WITH PASSWORD '$DB_PASSWORD';" || error "خطا در به‌روزرسانی پسورد کاربر vpnuser!"
 else
     info "در حال ایجاد کاربر vpnuser..."
-    sudo -u postgres psql -c "CREATE USER vpnuser WITH PASSWORD '$DB_PASSWORD';"
+    sudo -u postgres psql -c "CREATE USER vpnuser WITH PASSWORD '$DB_PASSWORD';" || error "خطا در ایجاد کاربر vpnuser!"
 fi
 
 # اعطای دسترسی به کاربر
-sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE vpndb TO vpnuser;"
+sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE vpndb TO vpnuser;" || error "خطا در اعطای دسترسی به کاربر vpnuser!"
 
 # تنظیمات احراز هویت PostgreSQL
 info "در حال تنظیمات احراز هویت PostgreSQL..."
@@ -185,11 +230,12 @@ host    all             all             127.0.0.1/32            md5
 host    all             all             ::1/128                 md5
 EOF
 
-systemctl restart postgresql
+# ری‌استارت PostgreSQL
+systemctl restart postgresql || error "خطا در ری‌استارت PostgreSQL!"
 
 # ایجاد جداول دیتابیس
 info "در حال ایجاد جداول دیتابیس..."
-psql -U vpnuser -d vpndb -c "
+sudo -u postgres psql -U vpnuser -d vpndb -c "
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
@@ -205,10 +251,10 @@ CREATE TABLE IF NOT EXISTS domains (
     description TEXT,
     cdn_enabled BOOLEAN DEFAULT FALSE
 );
-"
+" || error "خطا در ایجاد جداول دیتابیس!"
 
-# ذخیره یوزرنیم و پسورد در فایل config.py
-info "در حال ذخیره اطلاعات لاگین..."
+# ذخیره اطلاعات دیتابیس در فایل config.py
+info "در حال ذخیره اطلاعات دیتابیس..."
 cat <<EOF > /root/zhina/config.py
 ADMIN_USERNAME = "$ADMIN_USERNAME"
 ADMIN_PASSWORD = "$ADMIN_PASSWORD"
@@ -258,7 +304,7 @@ systemctl start fastapi
 success "نصب و پیکربندی با موفقیت انجام شد!"
 info "اطلاعات دسترسی به پنل:"
 if [ -n "$DOMAIN" ]; then
-    echo -e "${GREEN}آدرس وب پنل: http://$DOMAIN:$PORT${NC}"
+    echo -e "${GREEN}آدرس وب پنل: https://$DOMAIN${NC}"
 else
     echo -e "${GREEN}آدرس وب پنل: http://$IP:$PORT${NC}"
 fi
