@@ -41,7 +41,8 @@ WORK_DIR="/var/lib/zhina"  # دایرکتوری کاری
 # ایجاد دایرکتوری کاری و تنظیم دسترسی
 info "در حال ایجاد دایرکتوری کاری و تنظیم دسترسی..."
 mkdir -p $WORK_DIR
-chown -R postgres:postgres $WORK_DIR
+chmod -R 755 $WORK_DIR
+chown -R root:root $WORK_DIR
 
 # دریافت دامنه (اختیاری)
 read -p "دامنه خود را وارد کنید (اختیاری): " DOMAIN
@@ -196,6 +197,7 @@ systemctl restart postgresql || error "خطا در ری‌استارت PostgreSQ
 
 # ایجاد جداول دیتابیس (با استفاده از پسورد خودکار)
 info "در حال ایجاد جداول دیتابیس..."
+cd /tmp  # تغییر مسیر برای جلوگیری از خطاهای دسترسی
 PGPASSWORD="$DB_PASSWORD" psql -U vpnuser -d vpndb -h 127.0.0.1 -c "
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
