@@ -83,10 +83,13 @@ bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release
 info "در حال ایجاد پوشه‌های مورد نیاز..."
 mkdir -p /etc/xray /var/log/xray /usr/local/etc/xray
 
-# کانفیگ Xray
-info "در حال ایجاد کانفیگ Xray..."
+# کانفیگ Xray با پشتیبانی از تمام پروتکل‌ها
+info "در حال ایجاد کانفیگ Xray با پشتیبانی از تمام پروتکل‌ها..."
 cat <<EOF > /etc/xray/config.json
 {
+    "log": {
+        "loglevel": "warning"
+    },
     "inbounds": [
         {
             "port": 443,
@@ -98,6 +101,111 @@ cat <<EOF > /etc/xray/config.json
                         "alterId": 64
                     }
                 ]
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "tls",
+                "tlsSettings": {
+                    "serverName": "$DOMAIN",
+                    "certificates": [
+                        {
+                            "certificateFile": "/etc/letsencrypt/live/$DOMAIN/fullchain.pem",
+                            "keyFile": "/etc/letsencrypt/live/$DOMAIN/privkey.pem"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "port": 8443,
+            "protocol": "vless",
+            "settings": {
+                "clients": [
+                    {
+                        "id": "$(uuidgen)",
+                        "flow": "xtls-rprx-direct"
+                    }
+                ],
+                "decryption": "none"
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "xtls",
+                "xtlsSettings": {
+                    "serverName": "$DOMAIN",
+                    "certificates": [
+                        {
+                            "certificateFile": "/etc/letsencrypt/live/$DOMAIN/fullchain.pem",
+                            "keyFile": "/etc/letsencrypt/live/$DOMAIN/privkey.pem"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "port": 2083,
+            "protocol": "trojan",
+            "settings": {
+                "clients": [
+                    {
+                        "password": "$(openssl rand -hex 16)"
+                    }
+                ]
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "tls",
+                "tlsSettings": {
+                    "serverName": "$DOMAIN",
+                    "certificates": [
+                        {
+                            "certificateFile": "/etc/letsencrypt/live/$DOMAIN/fullchain.pem",
+                            "keyFile": "/etc/letsencrypt/live/$DOMAIN/privkey.pem"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "port": 2096,
+            "protocol": "http",
+            "settings": {
+                "timeout": 300,
+                "accounts": [
+                    {
+                        "user": "admin",
+                        "pass": "$(openssl rand -hex 8)"
+                    }
+                ]
+            },
+            "streamSettings": {
+                "network": "tcp"
+            }
+        },
+        {
+            "port": 2095,
+            "protocol": "shadowsocks",
+            "settings": {
+                "method": "aes-256-gcm",
+                "password": "$(openssl rand -hex 16)",
+                "network": "tcp,udp"
+            }
+        },
+        {
+            "port": 2097,
+            "protocol": "hysteria",
+            "settings": {
+                "auth_str": "$(openssl rand -hex 16)",
+                "obfs": "$(openssl rand -hex 8)",
+                "up_mbps": 100,
+                "down_mbps": 100
+            }
+        },
+        {
+            "port": 2098,
+            "protocol": "grpc",
+            "settings": {
+                "serviceName": "grpc-service"
             },
             "streamSettings": {
                 "network": "tcp",
