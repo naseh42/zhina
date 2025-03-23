@@ -38,7 +38,8 @@ IP=$(hostname -I | awk '{print $1}')  # دریافت IP سرور
 PORT="8000"  # پورت پیش‌فرض برای پنل
 WORK_DIR="/var/lib/zhina"  # دایرکتوری کاری
 
-# ایجاد دایرکتوری کاری
+# ایجاد دایرکتوری کاری و تنظیم دسترسی
+info "در حال ایجاد دایرکتوری کاری و تنظیم دسترسی..."
 mkdir -p $WORK_DIR
 chown -R postgres:postgres $WORK_DIR
 
