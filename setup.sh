@@ -57,15 +57,20 @@ DB_PASSWORD=$(generate_password)
 # نصب پیش‌نیازها
 info "در حال نصب پیش‌نیازها..."
 apt-get update
-apt-get install -y curl wget git python3 python3-pip nginx certbot postgresql postgresql-contrib openssl
+apt-get install -y curl wget git python3 python3-pip nginx certbot postgresql postgresql-contrib openssl python3-venv
 
-# نصب کتابخانه‌های پایتون
+# ایجاد محیط مجازی برای پایتون
+info "در حال ایجاد محیط مجازی پایتون..."
+python3 -m venv /root/zhina/venv || error "خطا در ایجاد محیط مجازی!"
+source /root/zhina/venv/bin/activate || error "خطا در فعال‌سازی محیط مجازی!"
+
+# نصب کتابخانه‌های پایتون در محیط مجازی
 info "در حال نصب کتابخانه‌های پایتون..."
-pip3 install fastapi uvicorn sqlalchemy pydantic psycopg2-binary
+pip install fastapi uvicorn sqlalchemy pydantic psycopg2-binary || error "خطا در نصب کتابخانه‌های پایتون!"
 
 # نصب Xray
 info "در حال نصب Xray..."
-bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install || error "خطا در نصب Xray!"
 
 # ایجاد پوشه‌های مورد نیاز
 info "در حال ایجاد پوشه‌های مورد نیاز..."
@@ -181,23 +186,25 @@ fi
 # تنظیمات دیتابیس PostgreSQL
 info "در حال نصب و کانفیگ دیتابیس..."
 
-# بررسی وجود پایگاه داده
+# بررسی وجود پایگاه داده و حذف آن در صورت وجود
 if sudo -u postgres psql -lqt | cut -d \| -f 1 | grep -qw vpndb; then
-    info "پایگاه داده vpndb از قبل وجود دارد. در حال به‌روزرسانی پسورد..."
-    sudo -u postgres psql -c "ALTER USER vpnuser WITH PASSWORD '$DB_PASSWORD';" || error "خطا در به‌روزرسانی پسورد کاربر vpnuser!"
-else
-    info "در حال ایجاد پایگاه داده vpndb..."
-    sudo -u postgres psql -c "CREATE DATABASE vpndb;" || error "خطا در ایجاد پایگاه داده vpndb!"
+    info "پایگاه داده vpndb از قبل وجود دارد. در حال حذف و ایجاد مجدد..."
+    sudo -u postgres psql -c "DROP DATABASE IF EXISTS vpndb;" || error "خطا در حذف پایگاه داده vpndb!"
 fi
 
-# بررسی وجود کاربر
+# ایجاد پایگاه داده جدید
+info "در حال ایجاد پایگاه داده vpndb..."
+sudo -u postgres psql -c "CREATE DATABASE vpndb;" || error "خطا در ایجاد پایگاه داده vpndb!"
+
+# بررسی وجود کاربر و حذف آن در صورت وجود
 if sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='vpnuser'" | grep -q 1; then
-    info "کاربر vpnuser از قبل وجود دارد. در حال به‌روزرسانی پسورد..."
-    sudo -u postgres psql -c "ALTER USER vpnuser WITH PASSWORD '$DB_PASSWORD';" || error "خطا در به‌روزرسانی پسورد کاربر vpnuser!"
-else
-    info "در حال ایجاد کاربر vpnuser..."
-    sudo -u postgres psql -c "CREATE USER vpnuser WITH PASSWORD '$DB_PASSWORD';" || error "خطا در ایجاد کاربر vpnuser!"
+    info "کاربر vpnuser از قبل وجود دارد. در حال حذف و ایجاد مجدد..."
+    sudo -u postgres psql -c "DROP USER IF EXISTS vpnuser;" || error "خطا در حذف کاربر vpnuser!"
 fi
+
+# ایجاد کاربر جدید
+info "در حال ایجاد کاربر vpnuser..."
+sudo -u postgres psql -c "CREATE USER vpnuser WITH PASSWORD '$DB_PASSWORD';" || error "خطا در ایجاد کاربر vpnuser!"
 
 # اعطای دسترسی به کاربر
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE vpndb TO vpnuser;" || error "خطا در اعطای دسترسی به کاربر vpnuser!"
@@ -268,7 +275,7 @@ Description=FastAPI Service
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/python3 /root/zhina/app.py
+ExecStart=/root/zhina/venv/bin/uvicorn main:app --host 0.0.0.0 --port $PORT --workers 4
 WorkingDirectory=/root/zhina
 Restart=on-failure
 
@@ -279,6 +286,18 @@ EOF
 systemctl daemon-reload
 systemctl enable fastapi
 systemctl start fastapi
+
+# بررسی وضعیت سرویس‌ها
+info "در حال بررسی وضعیت سرویس‌ها..."
+services=("xray" "fastapi" "nginx" "postgresql")
+for service in "${services[@]}"; do
+    systemctl is-active --quiet $service
+    if [ $? -eq 0 ]; then
+        success "سرویس $service با موفقیت راه‌اندازی شد."
+    else
+        error "سرویس $service راه‌اندازی نشد. لطفاً وضعیت سرویس را بررسی کنید."
+    fi
+done
 
 # نمایش اطلاعات نهایی
 success "نصب و پیکربندی با موفقیت انجام شد!"
