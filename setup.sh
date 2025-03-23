@@ -37,6 +37,10 @@ if [ "$EUID" -ne 0 ]; then
     error "لطفاً با دسترسی root اجرا کنید."
 fi
 
+# ایجاد پوشه zhina با دسترسی مناسب
+mkdir -p /root/zhina
+chmod 700 /root/zhina
+
 # دریافت دامنه (اختیاری)
 read -p "دامنه خود را وارد کنید (اختیاری): " DOMAIN
 
@@ -131,11 +135,9 @@ EOF
 info "در حال نصب و کانفیگ Nginx..."
 
 if [ -n "$DOMAIN" ]; then
-    # اگر دامنه وارد شده باشد
     SERVER_NAME="$DOMAIN"
     info "دامنه وارد شده است: $DOMAIN"
 else
-    # اگر دامنه وارد نشده باشد، از IP سرور استفاده می‌شود
     SERVER_NAME="$IP"
     info "دامنه وارد نشده است. از IP سرور ($IP) استفاده می‌شود."
 fi
@@ -163,14 +165,13 @@ if [ -n "$DOMAIN" ]; then
     info "در حال دریافت گواهی SSL برای دامنه $DOMAIN..."
     certbot --nginx -d $DOMAIN --non-interactive --agree-tos --email admin@$DOMAIN || error "خطا در دریافت گواهی SSL!"
 else
-    # اگر دامنه وارد نشده باشد، از گواهی خودامضا استفاده می‌شود
     info "در حال ایجاد گواهی خودامضا (self-signed) برای IP سرور ($IP)..."
     openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
         -keyout /etc/ssl/private/nginx-selfsigned.key \
         -out /etc/ssl/certs/nginx-selfsigned.crt \
         -subj "/CN=$IP" || error "خطا در ایجاد گواهی خودامضا!"
 
-    # به‌روزرسانی فایل کانفیگ Nginx برای استفاده از گواهی خودامضا
+    # به‌روزرسانی فایل کانفیگ Nginx
     cat <<EOF > /etc/nginx/sites-available/default
 server {
     listen 80;
@@ -194,7 +195,6 @@ server {
 }
 EOF
 
-    # ری‌استارت Nginx
     systemctl restart nginx || error "خطا در ری‌استارت Nginx!"
 fi
 
@@ -231,12 +231,11 @@ host    all             all             127.0.0.1/32            md5
 host    all             all             ::1/128                 md5
 EOF
 
-# ری‌استارت PostgreSQL
 systemctl restart postgresql || error "خطا در ری‌استارت PostgreSQL!"
 
-# ایجاد جداول دیتابیس
+# ایجاد جداول دیتابیس (با استفاده از پسورد به‌صورت خودکار)
 info "در حال ایجاد جداول دیتابیس..."
-sudo -u postgres psql -U vpnuser -d vpndb -c "
+PGPASSWORD="$DB_PASSWORD" psql -U vpnuser -d vpndb -h 127.0.0.1 -c "
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
