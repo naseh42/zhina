@@ -49,6 +49,26 @@ chown -R root:root $WORK_DIR
 info "در حال انتقال فایل‌های پروژه..."
 cp -R /root/zhina/backend/* $BACKEND_DIR/ || error "خطا در انتقال فایل‌ها!"
 
+# ایجاد فایل‌های __init__.py در پوشه‌های مورد نیاز
+info "در حال ایجاد فایل‌های __init__.py در پوشه‌های مورد نیاز..."
+
+# لیست پوشه‌هایی که نیاز به __init__.py دارند
+init_folders=(
+    "$BACKEND_DIR"
+    "$BACKEND_DIR/dashboard"
+    "$BACKEND_DIR/domains"
+    "$BACKEND_DIR/routers"
+    "$BACKEND_DIR/settings"
+    "$BACKEND_DIR/users"
+    "$BACKEND_DIR/xray_config"
+)
+
+# ایجاد فایل‌های __init__.py
+for folder in "${init_folders[@]}"; do
+    touch "$folder/__init__.py"
+    success "فایل __init__.py در $folder ایجاد شد."
+done
+
 # دریافت دامنه (اختیاری)
 read -p "دامنه خود را وارد کنید (اختیاری): " DOMAIN
 
