@@ -224,6 +224,34 @@ EOF
     systemctl start xray zhina-panel
 }
 
+# ------------------- بخش ساخت و اجرای requirements.txt -------------------
+setup_requirements() {
+    info "ایجاد و نصب فایل requirements.txt..."
+    
+    # ایجاد فایل requirements.txt با محتوای مورد نیاز
+    cat > $INSTALL_DIR/requirements.txt <<EOF
+fastapi>=0.95.0
+uvicorn>=0.21.0
+python-multipart>=0.0.6
+psycopg2-binary>=2.9.5
+python-jose>=3.3.0
+passlib>=1.7.4
+python-dotenv>=1.0.0
+sqlalchemy>=2.0.0
+alembic>=1.10.0
+httpx>=0.24.0
+cryptography>=40.0.0
+pyotp>=2.8.0
+apscheduler>=3.9.0
+python-crontab>=2.6.0
+EOF
+
+    # نصب وابستگی‌ها
+    sudo -u $SERVICE_USER $INSTALL_DIR/venv/bin/pip install -r $INSTALL_DIR/requirements.txt
+    
+    success "فایل requirements.txt با موفقیت ایجاد و وابستگی‌ها نصب شدند."
+}
+
 show_final_info() {
     success "\n\n=== نصب کامل شد! ==="
     echo -e "دسترسی پنل مدیریتی:"
@@ -242,10 +270,15 @@ show_final_info() {
     echo -e "• UUID/پسورد مشترک: ${YELLOW}$XRAY_UUID${NC}"
     echo -e "• مسیر WS: ${YELLOW}$XRAY_PATH${NC}"
 
+    echo -e "\nاطلاعات requirements.txt:"
+    echo -e "• مسیر فایل: ${YELLOW}$INSTALL_DIR/requirements.txt${NC}"
+    echo -e "• تعداد وابستگی‌های نصب شده: ${YELLOW}$(wc -l < $INSTALL_DIR/requirements.txt)${NC}"
+
     echo -e "\nدستورات مدیریت:"
     echo -e "• وضعیت Xray: ${YELLOW}systemctl status xray${NC}"
     echo -e "• وضعیت پنل: ${YELLOW}systemctl status zhina-panel${NC}"
     echo -e "• مشاهده لاگ‌ها: ${YELLOW}journalctl -u xray -u zhina-panel -f${NC}"
+    echo -e "• بروزرسانی وابستگی‌ها: ${YELLOW}sudo -u $SERVICE_USER $INSTALL_DIR/venv/bin/pip install -r $INSTALL_DIR/requirements.txt --upgrade${NC}"
 }
 
 # ------------------- مراحل اصلی -------------------
@@ -256,7 +289,7 @@ main() {
     # 2. نصب پیش‌نیازها
     info "نصب پیش‌نیازهای سیستم..."
     apt-get update
-    apt-get install -y git python3 python3-venv python3-pip postgresql nginx curl wget openssl unzip
+    apt-get install -y git python3 python3-venv python3-pip postgresql nginx curl wget openssl unzip uuid-runtime
 
     # 3. ایجاد کاربر سرویس
     if ! id "$SERVICE_USER" &>/dev/null; then
@@ -280,7 +313,9 @@ EOF
     # 6. محیط مجازی و وابستگی‌ها
     info "ایجاد محیط مجازی..."
     sudo -u $SERVICE_USER python3 -m venv $INSTALL_DIR/venv
-    sudo -u $SERVICE_USER $INSTALL_DIR/venv/bin/pip install -r $INSTALL_DIR/requirements.txt
+    
+    # 6.1 ساخت و نصب requirements.txt
+    setup_requirements
 
     # 7. نصب و پیکربندی Xray
     install_xray_with_all_protocols
