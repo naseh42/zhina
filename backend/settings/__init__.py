@@ -1,5 +1,5 @@
-admin_management.py
-advanced_settings.py
-change_password.py
-language.py
-theme.py
+from .admin_management import *
+from .advanced_settings import *
+from .change_password import *
+from .language import *
+from .theme import *
