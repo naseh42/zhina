@@ -194,8 +194,7 @@ sudo systemctl enable uvicorn
 sudo systemctl start uvicorn
 sudo systemctl enable xray
 sudo systemctl start xray
-
-# نمایش اطلاعات دسترسی
+# نمایش اطلاعات دسترسی و پروتکل‌ها
 success "نصب کامل و موفقیت‌آمیز انجام شد!"
 info "====== اطلاعات دسترسی ======"
 echo -e "${GREEN}• آدرس پنل: http://${DOMAIN:-$(curl -s ifconfig.me)}:${PORT}${NC}"
@@ -215,4 +214,11 @@ echo -e "${GREEN}⚔️ Trojan:"
 echo -e "  پورت: 2083"
 echo -e "  پسورد: $(openssl rand -hex 16)${NC}"
 
-echo -e "${GREEN}
+echo -e "${GREEN}🌐 HTTP:"
+echo -e "  پورت: 8080${NC}"
+
+echo -e "${GREEN}📡 TCP:"
+echo -e "  پورت: 9000${NC}"
+
+# پایان اسکریپت
+success "اسکریپت با موفقیت اجرا شد و سرور آماده است!"
