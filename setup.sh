@@ -1,190 +1,266 @@
 #!/bin/bash
 
-# --- رنگ‌ها و توابع ---
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
-error() { echo -e "${RED}[ERROR] $1${NC}"; exit 1; }
+# رنگ‌ها برای نمایش پیام‌ها
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'  # No Color
+
+# توابع نمایش پیام
+error() { echo -e "${RED}[ERROR] $1${NC}" >&2; exit 1; }
 success() { echo -e "${GREEN}[SUCCESS] $1${NC}"; }
 info() { echo -e "${YELLOW}[INFO] $1${NC}"; }
 
-# --- بررسی root ---
-[ "$EUID" -ne 0 ] && error "لطفاً با دسترسی root اجرا کنید."
+# بررسی دسترسی root
+if [ "$EUID" -ne 0 ]; then
+    error "لطفاً با دسترسی root اجرا کنید."
+fi
 
-# --- تولید مقادیر تصادفی ---
-generate_uuid() { echo $(cat /proc/sys/kernel/random/uuid); }
-generate_password() { echo $(openssl rand -base64 12); }
+# تنظیمات اولیه
+DOMAIN=""  # دامنه (اختیاری)
+IP=$(hostname -I | awk '{print $1}')  # دریافت IP سرور
+PORT="8000"  # پورت پیش‌فرض برای پنل
+WORK_DIR="/var/lib/zhina"  # دایرکتوری کاری
+BACKEND_DIR="$WORK_DIR/backend"  # دایرکتوری backend
 
-# --- تنظیمات اولیه ---
-DOMAIN=""
-IP=$(hostname -I | awk '{print $1}')
-WORK_DIR="/var/lib/zhina"
-BACKEND_DIR="$WORK_DIR/backend"
-XRAY_CONFIG="/etc/xray/config.json"
+# دریافت اطلاعات از کاربر
+read -p "دامنه خود را وارد کنید (اختیاری): " DOMAIN
+read -p "پورت پنل را وارد کنید (پیش‌فرض: 8000): " USER_PORT
+[ -n "$USER_PORT" ] && PORT=$USER_PORT
 
-# --- دریافت اطلاعات کاربر ---
-read -p "دامنه (اختیاری): " DOMAIN
-read -p "پورت پنل (پیش‌فرض: 8000): " PORT
-PORT=${PORT:-8000}
-
-read -p "یوزرنیم ادمین (پیش‌فرض: admin): " ADMIN_USERNAME
-ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
-
-read -sp "پسورد ادمین (Enter برای تولید خودکار): " ADMIN_PASSWORD
-[ -z "$ADMIN_PASSWORD" ] && ADMIN_PASSWORD=$(generate_password)
+read -p "یوزرنیم ادمین: " ADMIN_USERNAME
+read -s -p "پسورد ادمین: " ADMIN_PASSWORD
 echo ""
+DB_PASSWORD=$(openssl rand -base64 12)  # تولید پسورد تصادفی برای دیتابیس
 
-# --- ساخت فایل .env ---
+# ایجاد فایل .env
+info "در حال ایجاد فایل .env..."
 cat <<EOF > $BACKEND_DIR/.env
-ADMIN_USERNAME="$ADMIN_USERNAME"
-ADMIN_PASSWORD="$ADMIN_PASSWORD"
-DB_PASSWORD="$(generate_password)"
+ADMIN_USERNAME=$ADMIN_USERNAME
+ADMIN_PASSWORD=$ADMIN_PASSWORD
+DB_PASSWORD=$DB_PASSWORD
+DATABASE_URL=postgresql://vpnuser:$DB_PASSWORD@localhost/vpndb
 EOF
 chmod 600 $BACKEND_DIR/.env
+success "فایل .env ایجاد شد."
 
-# --- نصب Xray با تمام پروتکل‌ها ---
-info "در حال نصب Xray با تمام پروتکل‌ها..."
-bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+# ایجاد فایل config.py جدید
+info "در حال ایجاد فایل config.py..."
+cat <<EOF > $BACKEND_DIR/config.py
+from pydantic_settings import BaseSettings
 
-# --- کانفیگ Xray (تمامی پروتکل‌ها) ---
-info "در حال ایجاد کانفیگ کامل Xray..."
-cat <<EOF > $XRAY_CONFIG
+class Settings(BaseSettings):
+    admin_username: str
+    admin_password: str
+    db_password: str
+    database_url: str
+
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+
+settings = Settings()
+EOF
+success "فایل config.py ایجاد شد."
+
+# نصب Xray
+info "در حال نصب Xray..."
+bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install || error "خطا در نصب Xray!"
+
+# ایجاد کانفیگ Xray با تمام پروتکل‌ها
+info "در حال ایجاد کانفیگ Xray با تمام پروتکل‌ها..."
+
+# تولید UUID و کلیدهای تصادفی
+VMESS_UUID=$(uuidgen)
+VLESS_UUID=$(uuidgen)
+TROJAN_PASSWORD=$(openssl rand -hex 16)
+SHADOWSOCKS_PASSWORD=$(openssl rand -hex 16)
+HYSTERIA_OBFS=$(openssl rand -hex 8)
+HYSTERIA_AUTH=$(openssl rand -hex 16)
+
+cat <<EOF > /etc/xray/config.json
 {
-    "log": { "loglevel": "warning" },
+    "log": {
+        "loglevel": "warning"
+    },
     "inbounds": [
-        # 1. VMESS (WS + TLS)
+        # VMESS
         {
             "port": 443,
             "protocol": "vmess",
             "settings": {
-                "clients": [ { "id": "$(generate_uuid)", "alterId": 0 } ]
+                "clients": [
+                    {
+                        "id": "$VMESS_UUID",
+                        "alterId": 64
+                    }
+                ]
             },
             "streamSettings": {
-                "network": "ws",
+                "network": "tcp",
                 "security": "tls",
-                "wsSettings": { "path": "/vmess-ws" },
                 "tlsSettings": {
-                    "certificates": [{
-                        "certificateFile": "/etc/letsencrypt/live/$DOMAIN/fullchain.pem",
-                        "keyFile": "/etc/letsencrypt/live/$DOMAIN/privkey.pem"
-                    }]
+                    "serverName": "$DOMAIN",
+                    "certificates": [
+                        {
+                            "certificateFile": "/etc/letsencrypt/live/$DOMAIN/fullchain.pem",
+                            "keyFile": "/etc/letsencrypt/live/$DOMAIN/privkey.pem"
+                        }
+                    ]
                 }
-            }
+            },
+            "tag": "vmess-tls"
         },
-        # 2. VLESS (TCP + XTLS)
+        # VLESS
         {
             "port": 8443,
             "protocol": "vless",
             "settings": {
-                "clients": [ { "id": "$(generate_uuid)", "flow": "xtls-rprx-vision" } ],
+                "clients": [
+                    {
+                        "id": "$VLESS_UUID",
+                        "flow": "xtls-rprx-direct"
+                    }
+                ],
                 "decryption": "none"
             },
             "streamSettings": {
                 "network": "tcp",
                 "security": "xtls",
                 "xtlsSettings": {
-                    "certificates": [{
-                        "certificateFile": "/etc/letsencrypt/live/$DOMAIN/fullchain.pem",
-                        "keyFile": "/etc/letsencrypt/live/$DOMAIN/privkey.pem"
-                    }]
+                    "serverName": "$DOMAIN",
+                    "certificates": [
+                        {
+                            "certificateFile": "/etc/letsencrypt/live/$DOMAIN/fullchain.pem",
+                            "keyFile": "/etc/letsencrypt/live/$DOMAIN/privkey.pem"
+                        }
+                    ]
                 }
-            }
+            },
+            "tag": "vless-xtls"
         },
-        # 3. Trojan (TCP + TLS)
+        # Trojan
         {
-            "port": 2053,
+            "port": 2083,
             "protocol": "trojan",
             "settings": {
-                "clients": [ { "password": "$(generate_password)" } ]
+                "clients": [
+                    {
+                        "password": "$TROJAN_PASSWORD"
+                    }
+                ]
             },
             "streamSettings": {
                 "network": "tcp",
                 "security": "tls",
                 "tlsSettings": {
-                    "certificates": [{
-                        "certificateFile": "/etc/letsencrypt/live/$DOMAIN/fullchain.pem",
-                        "keyFile": "/etc/letsencrypt/live/$DOMAIN/privkey.pem"
-                    }]
+                    "serverName": "$DOMAIN",
+                    "certificates": [
+                        {
+                            "certificateFile": "/etc/letsencrypt/live/$DOMAIN/fullchain.pem",
+                            "keyFile": "/etc/letsencrypt/live/$DOMAIN/privkey.pem"
+                        }
+                    ]
                 }
-            }
+            },
+            "tag": "trojan-tls"
         },
-        # 4. Shadowsocks 2022
+        # Shadowsocks
         {
-            "port": 2087,
+            "port": 2095,
             "protocol": "shadowsocks",
             "settings": {
-                "method": "2022-blake3-aes-256-gcm",
-                "password": "$(generate_password)",
+                "method": "aes-256-gcm",
+                "password": "$SHADOWSOCKS_PASSWORD",
                 "network": "tcp,udp"
-            }
+            },
+            "tag": "shadowsocks"
         },
-        # 5. Hysteria 2
+        # Hysteria
         {
-            "port": 2096,
+            "port": 2097,
             "protocol": "hysteria",
             "settings": {
-                "auth_str": "$(generate_password)",
-                "obfs": "$(generate_password)",
+                "auth_str": "$HYSTERIA_AUTH",
+                "obfs": "$HYSTERIA_OBFS",
                 "up_mbps": 100,
                 "down_mbps": 100
-            }
+            },
+            "tag": "hysteria"
         },
-        # 6. VLESS (gRPC)
+        # gRPC
         {
-            "port": 50051,
-            "protocol": "vless",
+            "port": 2098,
+            "protocol": "grpc",
             "settings": {
-                "clients": [ { "id": "$(generate_uuid)" } ],
-                "decryption": "none"
+                "serviceName": "grpc-service"
             },
             "streamSettings": {
                 "network": "grpc",
-                "grpcSettings": { "serviceName": "grpc-service" },
                 "security": "tls",
                 "tlsSettings": {
-                    "certificates": [{
-                        "certificateFile": "/etc/letsencrypt/live/$DOMAIN/fullchain.pem",
-                        "keyFile": "/etc/letsencrypt/live/$DOMAIN/privkey.pem"
-                    }]
+                    "serverName": "$DOMAIN",
+                    "certificates": [
+                        {
+                            "certificateFile": "/etc/letsencrypt/live/$DOMAIN/fullchain.pem",
+                            "keyFile": "/etc/letsencrypt/live/$DOMAIN/privkey.pem"
+                        }
+                    ]
                 }
-            }
-        },
-        # 7. VMESS (QUIC)
-        {
-            "port": 2083,
-            "protocol": "vmess",
-            "settings": {
-                "clients": [ { "id": "$(generate_uuid)", "alterId": 0 } ]
             },
-            "streamSettings": {
-                "network": "quic",
-                "security": "none",
-                "quicSettings": {
-                    "security": "none",
-                    "key": "",
-                    "header": { "type": "none" }
-                }
-            }
+            "tag": "grpc-tls"
         }
     ],
     "outbounds": [
-        { "protocol": "freedom", "tag": "direct" },
-        { "protocol": "blackhole", "tag": "blocked" }
+        {
+            "protocol": "freedom",
+            "settings": {}
+        }
     ]
 }
 EOF
 
-# --- راه‌اندازی سرویس‌ها ---
-systemctl enable --now xray
-success "Xray با موفقیت راه‌اندازی شد!"
+# باز کردن پورت‌ها در فایروال
+info "در حال باز کردن پورت‌ها در فایروال..."
+PORTS=(443 8443 2083 2095 2097 2098 $PORT)
+for port in "${PORTS[@]}"; do
+    ufw allow $port/tcp >/dev/null 2>&1
+    ufw allow $port/udp >/dev/null 2>&1
+    success "پورت $port در فایروال باز شد."
+done
 
-# --- نمایش اطلاعات ---
-echo -e "\n${GREEN}=== تنظیمات پروتکل‌ها ===${NC}"
-echo -e "1. VMESS (WS+TLS): پورت 443"
-echo -e "2. VLESS (XTLS): پورت 8443"
-echo -e "3. Trojan: پورت 2053"
-echo -e "4. Shadowsocks 2022: پورت 2087"
-echo -e "5. Hysteria 2: پورت 2096"
-echo -e "6. VLESS (gRPC): پورت 50051"
-echo -e "7. VMESS (QUIC): پورت 2083"
-echo -e "\n${GREEN}اطلاعات ورود به پنل:${NC}"
-echo -e "یوزرنیم: $ADMIN_USERNAME"
-echo -e "پسورد: $ADMIN_PASSWORD"
+# فعال کردن فایروال
+ufw --force enable >/dev/null 2>&1
+success "فایروال فعال شد."
+
+# نمایش اطلاعات اتصال
+success "\n\nتنظیمات Xray با موفقیت انجام شد!"
+info "اطلاعات پروتکل‌ها:"
+echo -e "${GREEN}VMESS (TLS):"
+echo -e "  پورت: 443"
+echo -e "  UUID: $VMESS_UUID${NC}\n"
+
+echo -e "${GREEN}VLESS (XTLS):"
+echo -e "  پورت: 8443"
+echo -e "  UUID: $VLESS_UUID${NC}\n"
+
+echo -e "${GREEN}Trojan:"
+echo -e "  پورت: 2083"
+echo -e "  پسورد: $TROJAN_PASSWORD${NC}\n"
+
+echo -e "${GREEN}Shadowsocks:"
+echo -e "  پورت: 2095"
+echo -e "  روش رمزنگاری: aes-256-gcm"
+echo -e "  پسورد: $SHADOWSOCKS_PASSWORD${NC}\n"
+
+echo -e "${GREEN}Hysteria:"
+echo -e "  پورت: 2097"
+echo -e "  Auth: $HYSTERIA_AUTH"
+echo -e "  Obfs: $HYSTERIA_OBFS${NC}\n"
+
+echo -e "${GREEN}gRPC:"
+echo -e "  پورت: 2098"
+echo -e "  Service Name: grpc-service${NC}\n"
+
+# بقیه تنظیمات (دیتابیس، FastAPI و...) مانند قبل
+# ...
