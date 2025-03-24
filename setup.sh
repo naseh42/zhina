@@ -51,15 +51,21 @@ DB_PASSWORD='$DB_PASSWORD'
 DATABASE_URL='postgresql://vpnuser:$DB_PASSWORD@localhost/vpndb'
 EOF
 
-# انتقال به مسیر نصب
 mkdir -p $INSTALL_DIR/backend/
 mv $TEMP_DIR/.env $INSTALL_DIR/backend/.env || error "خطا در انتقال فایل .env."
 chmod 600 $INSTALL_DIR/backend/.env
 
 # تنظیم پایگاه داده
 info "تنظیم پایگاه داده و کاربر..."
+sudo -u postgres psql <<EOF
+DO \$\$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'vpnuser') THEN
+        CREATE ROLE vpnuser WITH LOGIN PASSWORD '${DB_PASSWORD}';
+    END IF;
+END \$\$;
+EOF
 sudo -u postgres psql -c "CREATE DATABASE vpndb;" 2>/dev/null || info "پایگاه داده از قبل وجود دارد."
-sudo -u postgres psql -c "CREATE USER vpnuser WITH PASSWORD '$DB_PASSWORD';" || info "کاربر از قبل وجود دارد."
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE vpndb TO vpnuser;" || error "خطا در اعطای دسترسی‌ها."
 
 # بررسی و ساخت جداول از فایل مدلس
@@ -98,30 +104,11 @@ ln -sf $NGINX_CONFIG /etc/nginx/sites-enabled/zhina
 sudo nginx -t || error "خطا در تست تنظیمات Nginx."
 sudo systemctl reload nginx || error "خطا در راه‌اندازی مجدد Nginx."
 
-# تنظیم کانفیگ Xray
-info "تنظیم کانفیگ کامل Xray..."
-cat <<EOF > /etc/xray/config.json
-{
-  "log": {"loglevel": "warning"},
-  "inbounds": [
-    {"port": 443, "protocol": "vless", "settings": {"clients": [{"id": "$(uuidgen)"}]}},
-    {"port": 8443, "protocol": "vmess", "settings": {"clients": [{"id": "$(uuidgen)"}]}},
-    {"port": 2083, "protocol": "trojan", "settings": {"clients": [{"password": "$(openssl rand -hex 16)"}]}},
-    {"port": 8989, "protocol": "tuic", "settings": {"auth": "public"}},
-    {"port": 8080, "protocol": "http"},
-    {"port": 9000, "protocol": "tcp"},
-    {"port": 1984, "protocol": "websocket"},
-    {"port": 2002, "protocol": "grpc"}
-  ],
-  "outbounds": [{"protocol": "freedom"}]
-}
-EOF
-sudo systemctl restart xray || error "خطا در اعمال کانفیگ Xray."
-
 # باز کردن پورت‌ها
 info "باز کردن پورت‌های موردنیاز..."
 PORTS=(443 8443 2083 8080 9000 1984 8989 2002)
 for port in "${PORTS[@]}"; do
+    ufw delete allow $port > /dev/null 2>&1
     ufw allow $port || info "پورت $port قبلاً باز شده است."
 done
 ufw reload || error "خطا در بارگذاری مجدد فایروال."
@@ -132,12 +119,3 @@ echo -e "\n====== اطلاعات دسترسی ======"
 echo "• آدرس پنل: http://${DOMAIN:-$(curl -s ifconfig.me)}:${PORT}"
 echo "• یوزرنیم: ${ADMIN_USERNAME}"
 echo "• پسورد: ${ADMIN_PASSWORD}"
-echo -e "\n====== اطلاعات پروتکل‌ها ======"
-echo "🔰 VLESS: پورت 443"
-echo "🌀 VMESS: پورت 8443"
-echo "⚔️ Trojan: پورت 2083"
-echo "🌀 TUIC: پورت 8989"
-echo "🌐 HTTP: پورت 8080"
-echo "📡 TCP: پورت 9000"
-echo "🌐 WebSocket: پورت 1984"
-echo "🔗 gRPC: پورت 2002"
