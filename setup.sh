@@ -104,6 +104,15 @@ ln -sf $NGINX_CONFIG /etc/nginx/sites-enabled/zhina
 sudo nginx -t || error "خطا در تست تنظیمات Nginx."
 sudo systemctl reload nginx || error "خطا در راه‌اندازی مجدد Nginx."
 
+# باز کردن پورت‌ها
+info "باز کردن پورت‌های موردنیاز..."
+PORTS=(443 8443 2083 8080 9000 1984 8989 2002)
+for port in "${PORTS[@]}"; do
+    ufw delete allow $port > /dev/null 2>&1
+    ufw allow $port || info "پورت $port قبلاً باز شده است."
+done
+ufw reload || error "خطا در بارگذاری مجدد فایروال."
+
 # نمایش اطلاعات دسترسی
 success "نصب کامل شد!"
 echo -e "\n====== اطلاعات دسترسی ======"
