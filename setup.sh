@@ -70,12 +70,63 @@ else
 fi
 
 # اعطای دسترسی‌ها
-info "ایجاد دسترسی‌ها..."
+info "ایجاد دسترسی‌ها برای کاربر vpnuser..."
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE vpndb TO vpnuser;" || error "خطا در اعطای دسترسی‌ها."
 
-# افزودن جداول به دیتابیس
-info "ایجاد جداول پایگاه داده..."
-python3 $TEMP_DIR/setup_db.py || error "خطا در اجرای اسکریپت ساخت جداول پایگاه داده."
+# ایجاد اسکریپت ساخت جداول
+info "ایجاد فایل اسکریپت جداول دیتابیس..."
+cat <<EOF > $TEMP_DIR/setup_db.py
+import psycopg2
+
+try:
+    conn = psycopg2.connect("dbname='vpndb' user='vpnuser' password='${DB_PASSWORD}' host='localhost'")
+    cursor = conn.cursor()
+
+    # ایجاد جدول کاربران
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(50) UNIQUE NOT NULL,
+        password VARCHAR(50) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    """)
+
+    # ایجاد جدول تنظیمات
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS settings (
+        id SERIAL PRIMARY KEY,
+        setting_key VARCHAR(50) UNIQUE NOT NULL,
+        setting_value TEXT NOT NULL
+    );
+    """)
+
+    # ایجاد جدول لاگ‌ها
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS logs (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
+        action VARCHAR(100) NOT NULL,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    """)
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+    print("جداول با موفقیت ایجاد شدند.")
+
+except Exception as e:
+    print(f"خطا در اتصال یا ایجاد جداول: {e}")
+EOF
+
+# اجرای اسکریپت ساخت جداول
+info "اجرای اسکریپت ایجاد جداول..."
+if [ -f "$TEMP_DIR/setup_db.py" ]; then
+    python3 $TEMP_DIR/setup_db.py || error "خطا در اجرای اسکریپت ساخت جداول."
+else
+    error "فایل setup_db.py پیدا نشد!"
+fi
 # بررسی فایل Nginx
 info "بررسی و مدیریت فایل‌های Nginx..."
 NGINX_CONFIG="/etc/nginx/sites-available/zhina"
