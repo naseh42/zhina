@@ -49,6 +49,26 @@ chown -R root:root $WORK_DIR
 info "در حال انتقال فایل‌های پروژه..."
 cp -R /root/zhina/backend/* $BACKEND_DIR/ || error "خطا در انتقال فایل‌ها!"
 
+# ایجاد فایل config.py به صورت داینامیک
+info "در حال ایجاد فایل config.py..."
+
+cat <<EOF > $BACKEND_DIR/config.py
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    admin_username: str = "$ADMIN_USERNAME"
+    admin_password: str = "$ADMIN_PASSWORD"
+    db_password: str = "$DB_PASSWORD"
+    database_url: str = f"postgresql://vpnuser:{db_password}@localhost/vpndb"
+
+    class Config:
+        env_file = ".env"
+
+settings = Settings()
+EOF
+
+success "فایل config.py با موفقیت ایجاد شد."
+
 # ایجاد فایل‌های __init__.py در پوشه‌های مورد نیاز
 info "در حال ایجاد فایل‌های __init__.py در پوشه‌های مورد نیاز..."
 
