@@ -23,84 +23,171 @@ fi
 INSTALL_DIR="/var/lib/zhina"
 TEMP_DIR="/tmp/zhina_temp"
 LOG_FILE="/var/log/zhina_install.log"
-XRAY_DIR="/usr/local/bin/xray"
-REPO_URL="https://github.com/naseh42/zhina.git"
+XRAY_CONFIG="/etc/xray/config.json"
 
 # ایجاد فایل لاگ
 exec > >(tee -a $LOG_FILE) 2>&1
 
-# تابع پاکسازی
-cleanup() {
-    info "پاکسازی محیط..."
-    rm -rf $TEMP_DIR
-    rm -rf $INSTALL_DIR/venv
-}
-
-# دریافت آخرین تغییرات از گیت
-info "دریافت آخرین تغییرات از گیتهاب..."
-git clone $REPO_URL $TEMP_DIR || error "خطا در دریافت کدها از گیتهاب"
-cd $TEMP_DIR || error "خطا در تغییر دایرکتوری"
-
-# پیکربندی اولیه
+info "شروع نصب Zhina Panel و Xray..."
 info "بررسی و تنظیم مسیرهای نصب..."
 mkdir -p $INSTALL_DIR || error "خطا در ایجاد دایرکتوری نصب"
+mkdir -p $TEMP_DIR || error "خطا در ایجاد دایرکتوری موقت"
 chmod -R 750 $INSTALL_DIR || error "خطا در تنظیم مجوزهای دایرکتوری نصب"
+chmod -R 750 $TEMP_DIR || error "خطا در تنظیم مجوزهای دایرکتوری موقت"
 
 # نصب پیش‌نیازها
 info "در حال نصب پیش‌نیازها..."
 apt-get update || error "خطا در به روزرسانی لیست پکیج‌ها"
-apt-get install -y python3 python3-venv python3-pip postgresql postgresql-contrib || error "خطا در نصب پیش‌نیازها"
+apt-get install -y curl openssl nginx python3 python3-venv python3-pip postgresql postgresql-contrib unzip || error "خطا در نصب پیش‌نیازها"
 
 # دریافت اطلاعات کاربر
 read -p "دامنه خود را وارد کنید (اختیاری): " DOMAIN
 read -p "پورت پنل را وارد کنید (پیش‌فرض: 8000): " PORT
 PORT=${PORT:-8000}
 
-# تولید پسورد تصادفی
+# تولید پسورد تصادفی برای ادمین
+ADMIN_USERNAME="admin"
 ADMIN_PASSWORD=$(openssl rand -hex 12)
 DB_PASSWORD=$(openssl rand -hex 16)
 
-# تنظیم پایگاه داده
-info "تنظیم پایگاه داده..."
-sudo -u postgres psql <<EOF || error "خطا در اجرای دستورات پایگاه داده"
-DROP DATABASE IF EXISTS vpndb;
-DROP USER IF EXISTS vpnuser;
-CREATE USER vpnuser WITH PASSWORD '${DB_PASSWORD}';
-CREATE DATABASE vpndb;
+info "در حال ایجاد فایل پیکربندی..."
+cat <<EOF > $TEMP_DIR/.env
+# تنظیمات ادمین
+ADMIN_USERNAME='${ADMIN_USERNAME}'
+ADMIN_PASSWORD='${ADMIN_PASSWORD}'
+
+# تنظیمات پایگاه داده
+DB_PASSWORD='${DB_PASSWORD}'
+DATABASE_URL='postgresql://vpnuser:${DB_PASSWORD}@localhost/vpndb'
+
+# تنظیمات برنامه
+PORT=${PORT}
+DEBUG=false
+EOF
+
+mv $TEMP_DIR/.env $INSTALL_DIR/.env || error "خطا در انتقال فایل .env"
+chmod 600 $INSTALL_DIR/.env || error "خطا در تنظیم مجوز فایل .env"
+
+# تنظیم پایگاه داده و بررسی وجود قبلی
+info "تنظیم پایگاه داده و کاربر..."
+if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='vpndb'" | grep -q 1; then
+    sudo -u postgres psql -c "CREATE DATABASE vpndb;" || error "خطا در ایجاد پایگاه داده"
+else
+    info "پایگاه داده 'vpndb' از قبل وجود دارد."
+fi
+
+sudo -u postgres psql -d vpndb <<EOF || error "خطا در ایجاد نقش پایگاه داده"
+DO \$\$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'vpnuser') THEN
+        CREATE ROLE vpnuser WITH LOGIN PASSWORD '${DB_PASSWORD}';
+    END IF;
+END \$\$;
 GRANT ALL PRIVILEGES ON DATABASE vpndb TO vpnuser;
 EOF
 
-# تنظیمات احراز هویت PostgreSQL
-echo "host all all 127.0.0.1/32 md5" | sudo tee -a /etc/postgresql/*/main/pg_hba.conf
-sudo systemctl restart postgresql || error "خطا در راه‌اندازی مجدد PostgreSQL"
+# ادامه اسکریپت در پیام بعدی...# دانلود و نصب Xray
+info "دانلود و نصب Xray..."
+if [ -d "/usr/local/bin/xray" ]; then
+    info "دایرکتوری Xray از قبل وجود دارد، حذف و ایجاد مجدد..."
+    rm -rf /usr/local/bin/xray || error "خطا در حذف دایرکتوری Xray موجود"
+fi
+mkdir -p /usr/local/bin/xray || error "خطا در ایجاد دایرکتوری Xray"
+curl -sL https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip -o $TEMP_DIR/xray.zip || error "خطا در دانلود Xray"
+unzip $TEMP_DIR/xray.zip -d /usr/local/bin/xray || error "خطا در استخراج فایل‌های Xray"
+chmod +x /usr/local/bin/xray/xray || error "خطا در تنظیم مجوزهای Xray"
 
-# ایجاد محیط مجازی پایتون
-info "ایجاد محیط مجازی پایتون..."
-python3 -m venv $INSTALL_DIR/venv || error "خطا در ایجاد محیط مجازی"
-source $INSTALL_DIR/venv/bin/activate || error "خطا در فعال سازی محیط مجازی"
+# ایجاد فایل تنظیمات Xray
+info "ایجاد فایل تنظیمات Xray..."
+cat > /etc/xray/config.json <<EOF
+{
+  "log": {
+    "loglevel": "warning"
+  },
+  "inbounds": [
+    {
+      "port": 443,
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "$(uuidgen)",
+            "level": 0,
+            "email": "user@example.com"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "tls",
+        "tlsSettings": {
+          "allowInsecure": false
+        }
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "freedom",
+      "settings": {}
+    }
+  ]
+}
+EOF
+systemctl restart xray || error "خطا در راه‌اندازی مجدد Xray"
+systemctl enable xray || error "خطا در فعال‌سازی Xray"
 
-# نصب وابستگی‌های پایتون
-info "نصب وابستگی‌های پایتون..."
-pip install --upgrade pip || error "خطا در به روزرسانی pip"
-pip install -r $TEMP_DIR/requirements.txt || error "خطا در نصب وابستگی‌ها"
-
-# ایجاد جداول دیتابیس از مدل‌ها
-info "ایجاد جداول پایگاه داده از فایل مدل‌ها..."
-python3 $TEMP_DIR/backend/models.py || error "خطا در ایجاد جداول"
-
-# پیکربندی Nginx
+# تنظیم Nginx
 info "پیکربندی Nginx..."
-cp $TEMP_DIR/nginx.conf /etc/nginx/sites-available/zhina || error "خطا در کپی فایل Nginx"
+cat > /etc/nginx/sites-available/zhina <<EOF
+server {
+    listen 80;
+    server_name ${DOMAIN:-localhost};
+
+    location / {
+        proxy_pass http://127.0.0.1:${PORT};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+
+    access_log /var/log/nginx/zhina_access.log;
+    error_log /var/log/nginx/zhina_error.log;
+
+    listen 443 ssl;
+    ssl_certificate /etc/nginx/ssl/nginx.crt;
+    ssl_certificate_key /etc/nginx/ssl/nginx.key;
+}
+EOF
+
+mkdir -p /etc/nginx/ssl || error "خطا در ایجاد دایرکتوری SSL"
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout /etc/nginx/ssl/nginx.key -out /etc/nginx/ssl/nginx.crt \
+  -subj "/CN=${DOMAIN:-$(curl -s ifconfig.me)}" || error "خطا در ایجاد گواهی Self-Signed"
+
 ln -sf /etc/nginx/sites-available/zhina /etc/nginx/sites-enabled/ || error "خطا در ایجاد لینک نمادین"
+rm -f /etc/nginx/sites-enabled/default || info "حذف فایل پیش‌فرض Nginx"
 nginx -t || error "تنظیمات Nginx نامعتبر است"
 systemctl restart nginx || error "خطا در راه‌اندازی مجدد Nginx"
 
-# پاکسازی
-cleanup
+# باز کردن پورت‌ها
+info "پیکربندی فایروال..."
+if command -v ufw &> /dev/null; then
+    ufw allow 80/tcp || error "خطا در باز کردن پورت 80"
+    ufw allow 443/tcp || error "خطا در باز کردن پورت 443"
+    ufw reload || error "خطا در بارگذاری مجدد فایروال"
+fi
 
-success "نصب با موفقیت انجام شد!"
+# پاکسازی فایل‌های موقت
+info "پاکسازی فایل‌های موقت..."
+rm -rf $TEMP_DIR || error "خطا در پاکسازی فایل‌های موقت"
+
+# نمایش مشخصات نهایی
+success "نصب و تنظیم کامل شد!"
 echo -e "\n====== اطلاعات دسترسی ======"
 echo "• آدرس پنل: http://${DOMAIN:-$(curl -s ifconfig.me)}:${PORT}"
-echo "• یوزرنیم ادمین: admin"
+echo "• یوزرنیم ادمین: $ADMIN_USERNAME"
 echo "• پسورد ادمین: $ADMIN_PASSWORD"
 echo "============================"
+echo "لاگ نصب در $LOG_FILE ذخیره شده است."
