@@ -1,17 +1,17 @@
 #!/bin/bash
 set -euo pipefail
 
-# ----- تنظیمات اصلی -----
+# ----- Configuration -----
 INSTALL_DIR="/var/lib/zhina"
 TEMP_DIR="/tmp/zhina_temp"
 XRAY_DIR="/usr/local/bin/xray"
 DB_NAME="zhina_db"
 DB_USER="zhina_user"
-DOMAIN="your-domain.com"  # جایگزین کنید
 XRAY_PORT=443
 PANEL_PORT=8000
+DOMAIN="${1:-$(curl -s ifconfig.me)}"  # Use IP if no domain provided
 
-# ----- رنگ‌ها و توابع پیام -----
+# ----- Colors & Messages -----
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -21,67 +21,54 @@ error() { echo -e "${RED}[ERROR] $1${NC}" >&2; exit 1; }
 success() { echo -e "${GREEN}[SUCCESS] $1${NC}"; }
 info() { echo -e "${YELLOW}[INFO] $1${NC}"; }
 
-# ----- توابع کمکی -----
+# ----- Cleanup Function -----
 cleanup() {
-    info "پاکسازی محیط..."
     rm -rf "$TEMP_DIR"
-    rm -rf "$INSTALL_DIR/venv"
+    systemctl stop xray 2>/dev/null || true
 }
 
-check_root() {
-    [[ $EUID -ne 0 ]] && error "این اسکریپت نیاز به دسترسی root دارد!"
-}
+# ----- Main Installation -----
+main() {
+    # 1. Check root access
+    [[ $EUID -ne 0 ]] && error "Run with root privileges!"
 
-# ----- نصب پیش‌نیازها -----
-install_dependencies() {
-    info "نصب پیش‌نیازهای سیستم..."
+    # 2. Clean previous installs
+    info "Cleaning previous installations..."
+    cleanup
+    rm -rf "$INSTALL_DIR"
+    mkdir -p "$INSTALL_DIR"
+
+    # 3. Install dependencies
+    info "Installing dependencies..."
     apt-get update
     apt-get install -y \
         git python3 python3-venv python3-pip \
         postgresql postgresql-contrib \
         nginx curl wget openssl unzip
-}
 
-# ----- تنظیمات دیتابیس -----
-setup_database() {
-    info "تنظیم پایگاه داده PostgreSQL..."
+    # 4. Database Setup
+    info "Configuring database..."
     local DB_PASS=$(openssl rand -hex 16)
-
-    # حذف نسخه‌های قبلی
-    sudo -u postgres psql -c "DROP DATABASE IF EXISTS $DB_NAME;" 2>/dev/null || true
-    sudo -u postgres psql -c "DROP ROLE IF EXISTS $DB_USER;" 2>/dev/null || true
-
-    # ایجاد کاربر و دیتابیس جدید
     sudo -u postgres psql <<EOF
+    DROP DATABASE IF EXISTS $DB_NAME;
+    DROP ROLE IF EXISTS $DB_USER;
     CREATE USER $DB_USER WITH PASSWORD '$DB_PASS';
     CREATE DATABASE $DB_NAME;
     GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;
 EOF
-
-    # تنظیمات احراز هویت
-    sed -i '/host all all 127.0.0.1\/32 md5/d' /etc/postgresql/*/main/pg_hba.conf
     echo "host all all 127.0.0.1/32 md5" >> /etc/postgresql/*/main/pg_hba.conf
     systemctl restart postgresql
 
-    # ذخیره اطلاعات در فایل env
-    cat > "$INSTALL_DIR/.env" <<EOF
-DATABASE_URL=postgresql://$DB_USER:$DB_PASS@127.0.0.1:5432/$DB_NAME
-XRAY_UUID=$(uuidgen)
-XRAY_PANEL_PORT=$PANEL_PORT
-EOF
-}
-
-# ----- نصب و پیکربندی Xray -----
-install_xray() {
-    info "نصب Xray Core..."
-    local XRAY_VER="1.8.11"
-    
+    # 5. Xray Installation
+    info "Installing Xray..."
+    XRAY_VER="1.8.11"
     mkdir -p "$XRAY_DIR"
-    wget -qO "$TEMP_DIR/xray.zip" "https://github.com/XTLS/Xray-core/releases/download/v$XRAY_VER/Xray-linux-64.zip"
-    unzip -o "$TEMP_DIR/xray.zip" -d "$XRAY_DIR"
+    wget -qO /tmp/xray.zip "https://github.com/XTLS/Xray-core/releases/download/v$XRAY_VER/Xray-linux-64.zip"
+    unzip -o /tmp/xray.zip -d "$XRAY_DIR"
     chmod +x "$XRAY_DIR/xray"
 
-    # ایجاد فایل کانفیگ
+    # 6. Xray Configuration
+    XRAY_UUID=$(uuidgen)
     cat > "$XRAY_DIR/config.json" <<EOF
 {
     "log": {"loglevel": "warning"},
@@ -107,38 +94,16 @@ install_xray() {
 }
 EOF
 
-    # ایجاد سرویس سیستم
-    cat > /etc/systemd/system/xray.service <<EOF
-[Unit]
-Description=Xray Service
-After=network.target
-
-[Service]
-ExecStart=$XRAY_DIR/xray run -config $XRAY_DIR/config.json
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    systemctl daemon-reload
-    systemctl enable xray
-    systemctl start xray
-}
-
-# ----- تنظیمات SSL -----
-setup_ssl() {
-    info "تولید گواهی SSL..."
+    # 7. SSL Certificate
+    info "Generating SSL certificate..."
     mkdir -p /etc/nginx/ssl
     openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
         -keyout /etc/nginx/ssl/key.pem \
         -out /etc/nginx/ssl/cert.pem \
         -subj "/CN=$DOMAIN"
-}
 
-# ----- پیکربندی Nginx -----
-setup_nginx() {
-    info "پیکربندی Nginx..."
+    # 8. Nginx Configuration
+    info "Configuring Nginx..."
     cat > /etc/nginx/sites-available/zhina <<EOF
 server {
     listen 80;
@@ -160,44 +125,35 @@ server {
     }
 }
 EOF
-
     ln -sf /etc/nginx/sites-available/zhina /etc/nginx/sites-enabled/
     nginx -t && systemctl restart nginx
-}
 
-# ----- نصب پنل -----
-install_panel() {
-    info "نصب پنل مدیریتی..."
-    git clone https://github.com/naseh42/zhina.git "$INSTALL_DIR"
+    # 9. Panel Installation
+    info "Installing control panel..."
+    git clone https://github.com/naseh42/zhina.git "$TEMP_DIR"
+    cp -r "$TEMP_DIR"/* "$INSTALL_DIR"
     python3 -m venv "$INSTALL_DIR/venv"
     source "$INSTALL_DIR/venv/bin/activate"
     pip install -r "$INSTALL_DIR/requirements.txt"
 
-    # اجرای مهاجرت‌های دیتابیس
-    python3 "$INSTALL_DIR/manage.py" migrate
+    # 10. Final Configuration
+    cat > "$INSTALL_DIR/.env" <<EOF
+DATABASE_URL=postgresql://$DB_USER:$DB_PASS@127.0.0.1:5432/$DB_NAME
+XRAY_UUID=$XRAY_UUID
+PANEL_PORT=$PANEL_PORT
+EOF
+
+    # 11. Start Services
+    systemctl enable xray
+    systemctl start xray
+
+    success "Installation completed!"
+    echo -e "\n======================="
+    echo "Panel URL: https://$DOMAIN"
+    echo "UUID: $XRAY_UUID"
+    echo "DB Password: $DB_PASS"
+    echo "======================="
 }
 
-# ----- نمایش اطلاعات نهایی -----
-show_info() {
-    success "نصب کامل شد!"
-    echo -e "\n=== اطلاعات دسترسی ==="
-    echo "آدرس پنل: https://$DOMAIN"
-    echo "UUID Xray: $(grep XRAY_UUID "$INSTALL_DIR/.env" | cut -d= -f2)"
-    echo "پورت پنل: $PANEL_PORT"
-    echo "مسیر نصب: $INSTALL_DIR"
-}
-
-# ----- اجرای اصلی -----
-main() {
-    check_root
-    cleanup
-    install_dependencies
-    setup_database
-    setup_ssl
-    install_xray
-    setup_nginx
-    install_panel
-    show_info
-}
-
+# ----- Run Installation -----
 main
