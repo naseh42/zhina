@@ -16,20 +16,23 @@ if [ "$EUID" -ne 0 ]; then
     error "لطفاً با دسترسی root اجرا کنید."
 fi
 
+# تنظیم دایرکتوری نصب به‌صورت خودکار
+info "بررسی و تنظیم دایرکتوری نصب..."
+INSTALL_DIR="/var/lib/$(hostname -s)_setup"
+if [ -d "$INSTALL_DIR" ]; then
+    info "دایرکتوری نصب از قبل وجود دارد: $INSTALL_DIR"
+else
+    info "ایجاد دایرکتوری نصب..."
+    mkdir -p $INSTALL_DIR
+fi
+BACKEND_DIR="$INSTALL_DIR/backend"
+mkdir -p $BACKEND_DIR
+chmod -R 755 $INSTALL_DIR || error "خطا در تنظیم دسترسی‌ها."
+
 # نصب پیش‌نیازها
 info "در حال نصب پیش‌نیازها..."
 apt update
 apt install -y curl openssl nginx python3 python3-venv python3-pip postgresql postgresql-contrib certbot || error "خطا در نصب پیش‌نیازها."
-
-# تنظیم دایرکتوری پروژه
-read -p "نام دایرکتوری پروژه را وارد کنید (پیش‌فرض: zhina): " PROJECT_NAME
-PROJECT_DIR="/var/lib/${PROJECT_NAME:-zhina}"
-BACKEND_DIR="$PROJECT_DIR/backend"
-mkdir -p $BACKEND_DIR
-
-# اعطای دسترسی کامل به دایرکتوری
-info "اعطای دسترسی کامل به دایرکتوری نصب..."
-chmod -R 755 $PROJECT_DIR || error "خطا در تنظیم دسترسی‌ها."
 
 # دریافت اطلاعات کاربر
 read -p "دامنه خود را وارد کنید (اختیاری): " DOMAIN
@@ -64,16 +67,17 @@ else
 fi
 
 # اعطای دسترسی‌ها
+info "ایجاد دسترسی‌ها از طریق Temp..."
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE vpndb TO vpnuser;" || error "خطا در اعطای دسترسی‌ها."
-# بررسی فایل Nginx و حذف در صورت وجود
+# بررسی فایل Nginx و حذف خودکار در صورت وجود
 info "بررسی فایل تنظیمات Nginx..."
-if [ -f /etc/nginx/sites-enabled/zhina ]; then
-    info "فایل موجود است، حذف می‌شود..."
-    rm /etc/nginx/sites-enabled/zhina
+if [ -f /etc/nginx/sites-available/zhina ]; then
+    info "فایل Nginx از قبل وجود دارد. حذف می‌شود..."
+    rm /etc/nginx/sites-available/zhina
 fi
 
-# تنظیم فایل Nginx
-info "ایجاد فایل تنظیمات Nginx..."
+# ایجاد فایل تنظیمات Nginx
+info "ایجاد فایل تنظیمات جدید برای Nginx..."
 cat <<EOF > /etc/nginx/sites-available/zhina
 server {
     listen 80;
@@ -87,14 +91,10 @@ server {
 }
 EOF
 
-ln -s /etc/nginx/sites-available/zhina /etc/nginx/sites-enabled/
+ln -sf /etc/nginx/sites-available/zhina /etc/nginx/sites-enabled/
 sudo nginx -t || error "خطا در تنظیمات Nginx."
-sudo systemctl restart nginx
-# نصب Xray
-info "نصب Xray..."
-bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
-
-# تنظیم فایل Xray با تمام پروتکل‌ها
+sudo systemctl restart nginx || error "خطا در راه‌اندازی مجدد Nginx."
+# تنظیم فایل Xray با تمامی پروتکل‌ها
 info "تنظیم فایل Xray..."
 cat <<EOF > /etc/xray/config.json
 {
@@ -103,95 +103,49 @@ cat <<EOF > /etc/xray/config.json
     {
       "port": 443,
       "protocol": "vless",
-      "settings": {
-        "clients": [{"id": "$(uuidgen)", "flow": "xtls-rprx-vision"}],
-        "decryption": "none"
-      }
+      "settings": {"clients": [{"id": "$(uuidgen)"}]}
     },
     {
       "port": 8443,
       "protocol": "vmess",
-      "settings": {
-        "clients": [{"id": "$(uuidgen)"}]
-      },
-      "streamSettings": {
-        "network": "ws",
-        "wsSettings": {"path": "/vmess"}
-      }
+      "settings": {"clients": [{"id": "$(uuidgen)"}]}
     },
     {
       "port": 2083,
       "protocol": "trojan",
-      "settings": {
-        "clients": [{"password": "$(openssl rand -hex 16)"}]
-      }
+      "settings": {"clients": [{"password": "$(openssl rand -hex 16)"}]}
     },
     {
       "port": 8080,
-      "protocol": "http",
-      "settings": {}
+      "protocol": "http"
     },
     {
       "port": 9000,
-      "protocol": "tcp",
-      "settings": {}
+      "protocol": "tcp"
     },
     {
       "port": 1984,
-      "protocol": "kcp",
-      "settings": {"mtu": 1350, "tti": 20}
+      "protocol": "kcp"
     },
     {
       "port": 8989,
-      "protocol": "quic",
-      "settings": {"security": "aes-128-gcm"}
+      "protocol": "quic"
     },
     {
       "port": 2002,
-      "protocol": "grpc",
-      "settings": {}
+      "protocol": "grpc"
     }
   ],
   "outbounds": [{"protocol": "freedom"}]
 }
 EOF
 
-sudo systemctl restart xray
-
 # باز کردن پورت‌ها
-info "باز کردن پورت‌های Xray..."
-ufw allow 443/tcp
-ufw allow 8443/tcp
-ufw allow 2083/tcp
-ufw allow 8080/tcp
-ufw allow 9000/tcp
-ufw allow 1984/udp
-ufw allow 8989/udp
-ufw allow 2002/tcp
-# ایجاد فایل سرویس Uvicorn
-info "ایجاد فایل سرویس Uvicorn..."
-cat <<EOF > /etc/systemd/system/uvicorn.service
-[Unit]
-Description=Uvicorn Server
-After=network.target
-
-[Service]
-WorkingDirectory=$BACKEND_DIR
-ExecStart=$BACKEND_DIR/venv/bin/uvicorn app:app --host 0.0.0.0 --port $PORT
-Restart=always
-User=root
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# راه‌اندازی سرویس‌ها
-sudo systemctl daemon-reload
-sudo systemctl enable uvicorn
-sudo systemctl start uvicorn
-sudo systemctl enable xray
-sudo systemctl start xray
-
+info "باز کردن پورت‌های موردنیاز..."
+for port in 443 8443 2083 8080 9000 1984 8989 2002; do
+    ufw allow ${port}/tcp
+    ufw allow ${port}/udp
+done
 # نمایش اطلاعات دسترسی و پروتکل‌ها
 success "نصب کامل و موفقیت‌آمیز انجام شد!"
 info "====== اطلاعات دسترسی ======"
@@ -227,4 +181,4 @@ echo -e "  پورت: 8989${NC}"
 echo -e "${GREEN}🔗 GRPC:"
 echo -e "  پورت: 2002${NC}"
 
-success "اسکریپت با موفقیت اجرا شد و تمامی پروتکل‌های Xray به درستی تنظیم شدند. سرور آماده است!"
+success "تمامی پروتکل‌ها تنظیم شدند و سرور آماده استفاده است!"
