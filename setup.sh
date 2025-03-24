@@ -19,15 +19,16 @@ fi
 # تنظیم دایرکتوری نصب به‌صورت خودکار
 info "بررسی و تنظیم دایرکتوری نصب..."
 INSTALL_DIR="/var/lib/$(hostname -s)_setup"
-if [ -d "$INSTALL_DIR" ]; then
-    info "دایرکتوری نصب از قبل وجود دارد: $INSTALL_DIR"
-else
-    info "ایجاد دایرکتوری نصب..."
+TEMP_DIR="/tmp/$(hostname -s)_setup_temp"
+
+if [ ! -d "$INSTALL_DIR" ]; then
     mkdir -p $INSTALL_DIR
+    chmod -R 755 $INSTALL_DIR || error "خطا در تنظیم دسترسی دایرکتوری اصلی."
 fi
-BACKEND_DIR="$INSTALL_DIR/backend"
-mkdir -p $BACKEND_DIR
-chmod -R 755 $INSTALL_DIR || error "خطا در تنظیم دسترسی‌ها."
+
+# استفاده از دایرکتوری موقت برای عملیات
+mkdir -p $TEMP_DIR
+chmod -R 755 $TEMP_DIR || error "خطا در تنظیم دسترسی دایرکتوری موقت."
 
 # نصب پیش‌نیازها
 info "در حال نصب پیش‌نیازها..."
@@ -45,40 +46,48 @@ DB_PASSWORD=$(openssl rand -hex 12)
 
 # تنظیم فایل .env
 info "ایجاد فایل .env..."
-cat <<EOF > $BACKEND_DIR/.env
+cat <<EOF > $TEMP_DIR/.env
 ADMIN_USERNAME='${ADMIN_USERNAME:-admin}'
 ADMIN_PASSWORD='${ADMIN_PASSWORD:-admin}'
 DB_PASSWORD='$DB_PASSWORD'
 DATABASE_URL='postgresql://vpnuser:$DB_PASSWORD@localhost/vpndb'
 EOF
-chmod 600 $BACKEND_DIR/.env
+
+# انتقال فایل به مسیر نهایی
+mv $TEMP_DIR/.env $INSTALL_DIR/backend/.env || error "خطا در انتقال فایل .env."
+chmod 600 $INSTALL_DIR/backend/.env
 # تنظیم پایگاه داده
 info "تنظیم پایگاه داده و کاربر..."
 sudo -u postgres psql -c "CREATE DATABASE vpndb;" 2>/dev/null || info "پایگاه داده از قبل وجود دارد."
-
-# ایجاد یا ریست پسورد کاربر
 USER_EXISTS=$(sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='vpnuser'")
+
 if [ "$USER_EXISTS" == "1" ]; then
     info "کاربر vpnuser از قبل وجود دارد، پسورد ریست می‌شود..."
     sudo -u postgres psql -c "ALTER USER vpnuser WITH PASSWORD '$DB_PASSWORD';" || error "خطا در ریست پسورد کاربر vpnuser."
 else
-    info "کاربر vpnuser ایجاد می‌شود..."
+    info "ایجاد کاربر vpnuser..."
     sudo -u postgres psql -c "CREATE USER vpnuser WITH PASSWORD '$DB_PASSWORD';" || error "خطا در ایجاد کاربر vpnuser."
 fi
 
 # اعطای دسترسی‌ها
-info "ایجاد دسترسی‌ها از طریق Temp..."
+info "ایجاد دسترسی‌ها..."
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE vpndb TO vpnuser;" || error "خطا در اعطای دسترسی‌ها."
-# بررسی فایل Nginx و حذف خودکار در صورت وجود
-info "بررسی فایل تنظیمات Nginx..."
-if [ -f /etc/nginx/sites-available/zhina ]; then
+
+# افزودن جداول به دیتابیس
+info "ایجاد جداول پایگاه داده..."
+python3 $TEMP_DIR/setup_db.py || error "خطا در اجرای اسکریپت ساخت جداول پایگاه داده."
+# بررسی فایل Nginx
+info "بررسی و مدیریت فایل‌های Nginx..."
+NGINX_CONFIG="/etc/nginx/sites-available/zhina"
+
+if [ -f "$NGINX_CONFIG" ]; then
     info "فایل Nginx از قبل وجود دارد. حذف می‌شود..."
-    rm /etc/nginx/sites-available/zhina
+    rm -f $NGINX_CONFIG
 fi
 
-# ایجاد فایل تنظیمات Nginx
-info "ایجاد فایل تنظیمات جدید برای Nginx..."
-cat <<EOF > /etc/nginx/sites-available/zhina
+# ایجاد فایل جدید
+info "ایجاد فایل جدید برای Nginx..."
+cat <<EOF > $NGINX_CONFIG
 server {
     listen 80;
     server_name ${DOMAIN:-$(curl -s ifconfig.me)};
@@ -91,10 +100,15 @@ server {
 }
 EOF
 
-ln -sf /etc/nginx/sites-available/zhina /etc/nginx/sites-enabled/
+# فعال‌سازی فایل تنظیمات
+ln -sf $NGINX_CONFIG /etc/nginx/sites-enabled/zhina
 sudo nginx -t || error "خطا در تنظیمات Nginx."
-sudo systemctl restart nginx || error "خطا در راه‌اندازی مجدد Nginx."
-# تنظیم فایل Xray با تمامی پروتکل‌ها
+sudo systemctl reload nginx || error "خطا در راه‌اندازی مجدد Nginx."
+# نصب Xray
+info "نصب Xray..."
+bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+
+# تنظیم فایل Xray
 info "تنظیم فایل Xray..."
 cat <<EOF > /etc/xray/config.json
 {
@@ -139,13 +153,17 @@ cat <<EOF > /etc/xray/config.json
   "outbounds": [{"protocol": "freedom"}]
 }
 EOF
+sudo systemctl restart xray || error "خطا در راه‌اندازی Xray."
 
 # باز کردن پورت‌ها
 info "باز کردن پورت‌های موردنیاز..."
-for port in 443 8443 2083 8080 9000 1984 8989 2002; do
-    ufw allow ${port}/tcp
-    ufw allow ${port}/udp
+PORTS=(443 8443 2083 8080 9000 1984 8989 2002)
+
+for port in "${PORTS[@]}"; do
+    ufw allow $port/tcp || info "پورت $port/tcp از قبل باز است."
+    ufw allow $port/udp || info "پورت $port/udp از قبل باز است."
 done
+ufw reload
 # نمایش اطلاعات دسترسی و پروتکل‌ها
 success "نصب کامل و موفقیت‌آمیز انجام شد!"
 info "====== اطلاعات دسترسی ======"
