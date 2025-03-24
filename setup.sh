@@ -70,7 +70,6 @@ source $BACKEND_DIR/venv/bin/activate
 info "در حال نصب کتابخانه‌های پایتون..."
 pip install -r $BACKEND_DIR/requirements.txt || error "خطا در نصب کتابخانه‌ها."
 deactivate
-
 # نصب Xray
 info "نصب Xray..."
 bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
@@ -80,6 +79,8 @@ info "تنظیم پروتکل‌های Xray..."
 VMESS_UUID=$(uuidgen)
 VLESS_UUID=$(uuidgen)
 TROJAN_PWD=$(openssl rand -hex 16)
+HTTP_UUID=$(uuidgen)
+TCP_UUID=$(uuidgen)
 
 cat <<EOF > /etc/xray/config.json
 {
@@ -146,6 +147,28 @@ cat <<EOF > /etc/xray/config.json
           ]
         }
       }
+    },
+    {
+      "port": 8080,
+      "protocol": "http",
+      "settings": {
+        "clients": [{"id": "$HTTP_UUID"}]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "none"
+      }
+    },
+    {
+      "port": 9000,
+      "protocol": "tcp",
+      "settings": {
+        "clients": [{"id": "$TCP_UUID"}]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "none"
+      }
     }
   ],
   "outbounds": [{"protocol": "freedom"}]
@@ -154,8 +177,30 @@ EOF
 
 info "پروتکل‌های Xray با موفقیت تنظیم شدند!"
 
-# نمایش اطلاعات نهایی
-success "نصب با موفقیت انجام شد!"
+# ایجاد فایل‌های سیستم‌مد و راه‌اندازی سرویس‌ها
+info "ایجاد فایل سیستم‌مد برای Xray..."
+cat <<EOF > /etc/systemd/system/xray.service
+[Unit]
+Description=Xray Service
+After=network.target
+[Service]
+ExecStart=/usr/local/bin/xray run -config /etc/xray/config.json
+Restart=on-failure
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable xray
+systemctl start xray
+
+info "ایجاد فایل سیستم‌مد برای Nginx..."
+systemctl enable nginx
+systemctl restart nginx
+
+info "اجرای سیستم‌ها انجام شد!"
+
+success "نصب کامل و موفقیت‌آمیز انجام شد!"
 info "====== اطلاعات دسترسی ======"
 echo -e "${GREEN}• آدرس پنل: http://${DOMAIN:-$(curl -s ifconfig.me)}:${PORT}${NC}"
 echo -e "• یوزرنیم: ${ADMIN_USERNAME:-admin}"
@@ -173,3 +218,11 @@ echo -e "  UUID: $VMESS_UUID${NC}"
 echo -e "${GREEN}⚔️ Trojan:"
 echo -e "  پورت: 2083"
 echo -e "  پسورد: $TROJAN_PWD${NC}"
+
+echo -e "${GREEN}🌐 HTTP:"
+echo -e "  پورت: 8080"
+echo -e "  UUID: $HTTP_UUID${NC}"
+
+echo -e "${GREEN}📡 TCP:"
+echo -e "  پورت: 9000"
+echo -e "  UUID: $TCP_UUID${NC}"
