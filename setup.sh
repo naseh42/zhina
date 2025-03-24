@@ -33,6 +33,23 @@ read -s -p "پسورد ادمین: " ADMIN_PASSWORD
 echo ""
 DB_PASSWORD=$(openssl rand -base64 12)  # تولید پسورد تصادفی برای دیتابیس
 
+# نصب پیش‌نیازها
+info "در حال نصب پیش‌نیازها..."
+apt-get update
+apt-get install -y curl wget git python3 python3-pip nginx certbot postgresql postgresql-contrib openssl python3-venv ufw
+
+# ایجاد محیط مجازی برای پایتون
+info "در حال ایجاد محیط مجازی پایتون..."
+python3 -m venv $WORK_DIR/venv || error "خطا در ایجاد محیط مجازی!"
+source $WORK_DIR/venv/bin/activate || error "خطا در فعال‌سازی محیط مجازی!"
+
+# نصب کتابخانه‌های پایتون
+info "در حال نصب کتابخانه‌های پایتون..."
+pip install fastapi uvicorn sqlalchemy pydantic psycopg2-binary pydantic-settings || error "خطا در نصب کتابخانه‌های پایتون!"
+
+# تنظیم PYTHONPATH
+export PYTHONPATH=$WORK_DIR
+
 # ایجاد فایل .env
 info "در حال ایجاد فایل .env..."
 cat <<EOF > $BACKEND_DIR/.env
@@ -44,7 +61,7 @@ EOF
 chmod 600 $BACKEND_DIR/.env
 success "فایل .env ایجاد شد."
 
-# ایجاد فایل config.py جدید
+# ایجاد فایل config.py
 info "در حال ایجاد فایل config.py..."
 cat <<EOF > $BACKEND_DIR/config.py
 from pydantic_settings import BaseSettings
@@ -63,12 +80,9 @@ settings = Settings()
 EOF
 success "فایل config.py ایجاد شد."
 
-# نصب Xray
+# نصب و تنظیم Xray
 info "در حال نصب Xray..."
 bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install || error "خطا در نصب Xray!"
-
-# ایجاد کانفیگ Xray با تمام پروتکل‌ها
-info "در حال ایجاد کانفیگ Xray با تمام پروتکل‌ها..."
 
 # تولید UUID و کلیدهای تصادفی
 VMESS_UUID=$(uuidgen)
@@ -78,13 +92,14 @@ SHADOWSOCKS_PASSWORD=$(openssl rand -hex 16)
 HYSTERIA_OBFS=$(openssl rand -hex 8)
 HYSTERIA_AUTH=$(openssl rand -hex 16)
 
+# ایجاد کانفیگ Xray
+info "در حال ایجاد کانفیگ Xray با تمام پروتکل‌ها..."
 cat <<EOF > /etc/xray/config.json
 {
     "log": {
         "loglevel": "warning"
     },
     "inbounds": [
-        # VMESS
         {
             "port": 443,
             "protocol": "vmess",
@@ -111,7 +126,6 @@ cat <<EOF > /etc/xray/config.json
             },
             "tag": "vmess-tls"
         },
-        # VLESS
         {
             "port": 8443,
             "protocol": "vless",
@@ -139,7 +153,6 @@ cat <<EOF > /etc/xray/config.json
             },
             "tag": "vless-xtls"
         },
-        # Trojan
         {
             "port": 2083,
             "protocol": "trojan",
@@ -165,7 +178,6 @@ cat <<EOF > /etc/xray/config.json
             },
             "tag": "trojan-tls"
         },
-        # Shadowsocks
         {
             "port": 2095,
             "protocol": "shadowsocks",
@@ -176,7 +188,6 @@ cat <<EOF > /etc/xray/config.json
             },
             "tag": "shadowsocks"
         },
-        # Hysteria
         {
             "port": 2097,
             "protocol": "hysteria",
@@ -188,7 +199,6 @@ cat <<EOF > /etc/xray/config.json
             },
             "tag": "hysteria"
         },
-        # gRPC
         {
             "port": 2098,
             "protocol": "grpc",
@@ -220,6 +230,93 @@ cat <<EOF > /etc/xray/config.json
 }
 EOF
 
+# دریافت گواهی SSL اگر دامنه وارد شده باشد
+if [ -n "$DOMAIN" ]; then
+    info "در حال دریافت گواهی SSL برای دامنه $DOMAIN..."
+    certbot certonly --standalone -d $DOMAIN --non-interactive --agree-tos --email admin@$DOMAIN || error "خطا در دریافت گواهی SSL!"
+fi
+
+# تنظیمات دیتابیس PostgreSQL
+info "در حال تنظیم دیتابیس PostgreSQL..."
+
+sudo -u postgres psql -c "CREATE DATABASE vpndb;" || error "خطا در ایجاد پایگاه داده!"
+sudo -u postgres psql -c "CREATE USER vpnuser WITH PASSWORD '$DB_PASSWORD';" || error "خطا در ایجاد کاربر!"
+sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE vpndb TO vpnuser;" || error "خطا در اعطای دسترسی!"
+
+# ایجاد جداول دیتابیس
+info "در حال ایجاد جداول دیتابیس..."
+PGPASSWORD="$DB_PASSWORD" psql -U vpnuser -d vpndb -h 127.0.0.1 -c "
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    uuid VARCHAR(255) NOT NULL,
+    traffic_limit INT DEFAULT 0,
+    usage_duration INT DEFAULT 0,
+    simultaneous_connections INT DEFAULT 1,
+    is_active BOOLEAN DEFAULT TRUE
+);
+CREATE TABLE IF NOT EXISTS domains (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    cdn_enabled BOOLEAN DEFAULT FALSE
+);
+" || error "خطا در ایجاد جداول دیتابیس!"
+
+# تنظیمات Nginx
+info "در حال تنظیم Nginx..."
+cat <<EOF > /etc/nginx/sites-available/default
+server {
+    listen 80;
+    server_name ${DOMAIN:-$IP};
+
+    location / {
+        proxy_pass http://127.0.0.1:$PORT;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+}
+EOF
+
+systemctl restart nginx || error "خطا در ری‌استارت Nginx!"
+
+# ایجاد سرویس systemd برای Xray
+info "در حال ایجاد سرویس Xray..."
+cat <<EOF > /etc/systemd/system/xray.service
+[Unit]
+Description=Xray Service
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/xray run -config /etc/xray/config.json
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# ایجاد سرویس systemd برای FastAPI
+info "در حال ایجاد سرویس FastAPI..."
+cat <<EOF > /etc/systemd/system/fastapi.service
+[Unit]
+Description=FastAPI Service
+After=network.target
+
+[Service]
+ExecStart=$WORK_DIR/venv/bin/uvicorn app:app --host 0.0.0.0 --port $PORT --workers 4
+WorkingDirectory=$BACKEND_DIR
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# فعال‌سازی و راه‌اندازی سرویس‌ها
+systemctl daemon-reload
+systemctl enable xray fastapi
+systemctl start xray fastapi
+
 # باز کردن پورت‌ها در فایروال
 info "در حال باز کردن پورت‌ها در فایروال..."
 PORTS=(443 8443 2083 2095 2097 2098 $PORT)
@@ -229,13 +326,22 @@ for port in "${PORTS[@]}"; do
     success "پورت $port در فایروال باز شد."
 done
 
-# فعال کردن فایروال
 ufw --force enable >/dev/null 2>&1
 success "فایروال فعال شد."
 
-# نمایش اطلاعات اتصال
-success "\n\nتنظیمات Xray با موفقیت انجام شد!"
-info "اطلاعات پروتکل‌ها:"
+# نمایش اطلاعات نهایی
+success "\n\nنصب و پیکربندی با موفقیت انجام شد!"
+info "اطلاعات دسترسی به پنل:"
+if [ -n "$DOMAIN" ]; then
+    echo -e "${GREEN}آدرس وب پنل: https://$DOMAIN${NC}"
+else
+    echo -e "${GREEN}آدرس وب پنل: http://$IP:$PORT${NC}"
+fi
+echo -e "${GREEN}یوزرنیم: $ADMIN_USERNAME${NC}"
+echo -e "${GREEN}پسورد: $ADMIN_PASSWORD${NC}"
+echo -e "${GREEN}پسورد دیتابیس: $DB_PASSWORD${NC}"
+
+info "\nاطلاعات پروتکل‌های Xray:"
 echo -e "${GREEN}VMESS (TLS):"
 echo -e "  پورت: 443"
 echo -e "  UUID: $VMESS_UUID${NC}\n"
@@ -260,7 +366,4 @@ echo -e "  Obfs: $HYSTERIA_OBFS${NC}\n"
 
 echo -e "${GREEN}gRPC:"
 echo -e "  پورت: 2098"
-echo -e "  Service Name: grpc-service${NC}\n"
-
-# بقیه تنظیمات (دیتابیس، FastAPI و...) مانند قبل
-# ...
+echo -e "  Service Name: grpc-service${NC}"
