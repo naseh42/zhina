@@ -29,7 +29,7 @@ chmod -R 755 $TEMP_DIR || error "خطا در تنظیم دایرکتوری مو�
 # نصب پیش‌نیازها
 info "در حال نصب پیش‌نیازها..."
 apt update
-apt install -y curl openssl nginx python3 python3-venv python3-pip postgresql postgresql-contrib certbot || error "خطا در نصب پیش‌نیازها."
+apt install -y curl openssl nginx python3 python3-venv python3-pip postgresql postgresql-contrib || error "خطا در نصب پیش‌نیازها."
 
 # دریافت اطلاعات کاربر
 read -p "دامنه خود را وارد کنید (اختیاری): " DOMAIN
@@ -59,7 +59,7 @@ chmod 600 $INSTALL_DIR/backend/.env
 # تنظیم پایگاه داده
 info "تنظیم پایگاه داده و کاربر..."
 sudo -u postgres psql -c "CREATE DATABASE vpndb;" 2>/dev/null || info "پایگاه داده از قبل وجود دارد."
-sudo -u postgres psql -c "ALTER USER vpnuser WITH SUPERUSER;" || error "خطا در تنظیم دسترسی کاربر."
+sudo -u postgres psql -c "CREATE USER vpnuser WITH PASSWORD '$DB_PASSWORD';" || info "کاربر از قبل وجود دارد."
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE vpndb TO vpnuser;" || error "خطا در اعطای دسترسی‌ها."
 
 # بررسی و ساخت جداول از فایل مدلس
@@ -72,7 +72,7 @@ from backend.models import User, Domain, Subscription, Setting, Node
 engine = create_engine("postgresql://vpnuser:${DB_PASSWORD}@localhost/vpndb")
 Base.metadata.create_all(engine)
 print("[SUCCESS] تمام جداول پایگاه داده ساخته شدند!")
-EOF
+EOF || error "خطا در ساخت جداول."
 
 # حذف و بازسازی Nginx
 info "حذف و بازسازی Nginx..."
@@ -98,17 +98,7 @@ ln -sf $NGINX_CONFIG /etc/nginx/sites-enabled/zhina
 sudo nginx -t || error "خطا در تست تنظیمات Nginx."
 sudo systemctl reload nginx || error "خطا در راه‌اندازی مجدد Nginx."
 
-# نصب یا بررسی Xray
-info "بررسی نسخه Xray..."
-if command -v xray > /dev/null; then
-    info "Xray از قبل نصب شده است. راه‌اندازی مجدد انجام می‌شود..."
-    sudo systemctl restart xray || error "خطا در راه‌اندازی مجدد Xray."
-else
-    info "Xray پیدا نشد، در حال نصب..."
-    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install || error "خطا در نصب Xray."
-    sudo systemctl restart xray || error "خطا در راه‌اندازی Xray پس از نصب."
-fi
-
+# تنظیم کانفیگ Xray
 info "تنظیم کانفیگ کامل Xray..."
 cat <<EOF > /etc/xray/config.json
 {
