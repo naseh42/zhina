@@ -51,6 +51,29 @@ sudo -u postgres psql -c "CREATE DATABASE vpndb;" || info "پایگاه داده
 sudo -u postgres psql -c "CREATE USER vpnuser WITH PASSWORD '$DB_PASSWORD';" || info "کاربر از قبل وجود دارد."
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE vpndb TO vpnuser;" || error "خطا در اعطای دسترسی‌ها."
 
+# ایجاد فایل جداول دیتابیس
+info "ایجاد جداول دیتابیس..."
+cat <<EOF > $BACKEND_DIR/setup_db.py
+import psycopg2
+
+conn = psycopg2.connect("dbname='vpndb' user='vpnuser' password='${DB_PASSWORD}' host='localhost'")
+cursor = conn.cursor()
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    password VARCHAR(50) NOT NULL
+);
+""")
+conn.commit()
+cursor.close()
+conn.close()
+EOF
+
+# اجرای جداول دیتابیس
+info "اجرای فایل ساخت جداول دیتابیس..."
+python3 $BACKEND_DIR/setup_db.py || error "خطا در اجرای فایل ساخت جداول دیتابیس."
 # ایجاد فایل requirements.txt
 info "ایجاد فایل requirements.txt..."
 cat <<EOF > $BACKEND_DIR/requirements.txt
@@ -59,7 +82,6 @@ uvicorn==0.34.0
 sqlalchemy==2.0.39
 pydantic==2.10.6
 psycopg2-binary==2.9.10
-pydantic-settings==2.8.1
 EOF
 success "فایل requirements.txt ایجاد شد."
 
@@ -67,21 +89,33 @@ success "فایل requirements.txt ایجاد شد."
 info "ایجاد محیط مجازی پایتون..."
 python3 -m venv $BACKEND_DIR/venv || error "خطا در ایجاد محیط مجازی."
 source $BACKEND_DIR/venv/bin/activate
-info "در حال نصب کتابخانه‌های پایتون..."
 pip install -r $BACKEND_DIR/requirements.txt || error "خطا در نصب کتابخانه‌ها."
 deactivate
+
+# ایجاد فایل تنظیمات Nginx
+info "ایجاد فایل تنظیمات Nginx..."
+cat <<EOF > /etc/nginx/sites-available/zhina
+server {
+    listen 80;
+    server_name ${DOMAIN:-$(curl -s ifconfig.me)};
+
+    location / {
+        proxy_pass http://127.0.0.1:${PORT};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+}
+EOF
+
+ln -s /etc/nginx/sites-available/zhina /etc/nginx/sites-enabled/
+sudo nginx -t || error "خطا در تنظیمات Nginx."
+sudo systemctl restart nginx
 # نصب Xray
 info "نصب Xray..."
 bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
 
-# تنظیم پروتکل‌های Xray
-info "تنظیم پروتکل‌های Xray..."
-VMESS_UUID=$(uuidgen)
-VLESS_UUID=$(uuidgen)
-TROJAN_PWD=$(openssl rand -hex 16)
-HTTP_UUID=$(uuidgen)
-TCP_UUID=$(uuidgen)
-
+# تنظیم فایل Xray با تمام پروتکل‌ها
+info "تنظیم فایل Xray..."
 cat <<EOF > /etc/xray/config.json
 {
   "log": {"loglevel": "warning"},
@@ -90,116 +124,71 @@ cat <<EOF > /etc/xray/config.json
       "port": 443,
       "protocol": "vless",
       "settings": {
-        "clients": [{"id": "$VLESS_UUID", "flow": "xtls-rprx-vision"}],
+        "clients": [{"id": "$(uuidgen)", "flow": "xtls-rprx-vision"}],
         "decryption": "none"
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "tls",
-        "tlsSettings": {
-          "serverName": "${DOMAIN:-$(curl -s ifconfig.me)}",
-          "certificates": [
-            {
-              "certificateFile": "/etc/letsencrypt/live/${DOMAIN:-$(curl -s ifconfig.me)}/fullchain.pem",
-              "keyFile": "/etc/letsencrypt/live/${DOMAIN:-$(curl -s ifconfig.me)}/privkey.pem"
-            }
-          ]
-        }
       }
     },
     {
       "port": 8443,
       "protocol": "vmess",
       "settings": {
-        "clients": [{"id": "$VMESS_UUID"}]
+        "clients": [{"id": "$(uuidgen)"}]
       },
       "streamSettings": {
         "network": "ws",
-        "security": "tls",
-        "wsSettings": {"path": "/vmess"},
-        "tlsSettings": {
-          "serverName": "${DOMAIN:-$(curl -s ifconfig.me)}",
-          "certificates": [
-            {
-              "certificateFile": "/etc/letsencrypt/live/${DOMAIN:-$(curl -s ifconfig.me)}/fullchain.pem",
-              "keyFile": "/etc/letsencrypt/live/${DOMAIN:-$(curl -s ifconfig.me)}/privkey.pem"
-            }
-          ]
-        }
+        "wsSettings": {"path": "/vmess"}
       }
     },
     {
       "port": 2083,
       "protocol": "trojan",
       "settings": {
-        "clients": [{"password": "$TROJAN_PWD"}]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "tls",
-        "tlsSettings": {
-          "serverName": "${DOMAIN:-$(curl -s ifconfig.me)}",
-          "certificates": [
-            {
-              "certificateFile": "/etc/letsencrypt/live/${DOMAIN:-$(curl -s ifconfig.me)}/fullchain.pem",
-              "keyFile": "/etc/letsencrypt/live/${DOMAIN:-$(curl -s ifconfig.me)}/privkey.pem"
-            }
-          ]
-        }
+        "clients": [{"password": "$(openssl rand -hex 16)"}]
       }
     },
     {
       "port": 8080,
       "protocol": "http",
-      "settings": {
-        "clients": [{"id": "$HTTP_UUID"}]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "none"
-      }
+      "settings": {}
     },
     {
       "port": 9000,
       "protocol": "tcp",
-      "settings": {
-        "clients": [{"id": "$TCP_UUID"}]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "none"
-      }
+      "settings": {}
     }
   ],
   "outbounds": [{"protocol": "freedom"}]
 }
 EOF
+sudo systemctl restart xray
 
-info "پروتکل‌های Xray با موفقیت تنظیم شدند!"
-
-# ایجاد فایل‌های سیستم‌مد و راه‌اندازی سرویس‌ها
-info "ایجاد فایل سیستم‌مد برای Xray..."
-cat <<EOF > /etc/systemd/system/xray.service
+# ایجاد فایل systemd برای Uvicorn
+info "ایجاد فایل سرویس Uvicorn..."
+cat <<EOF > /etc/systemd/system/uvicorn.service
 [Unit]
-Description=Xray Service
+Description=Uvicorn Server
 After=network.target
+
 [Service]
-ExecStart=/usr/local/bin/xray run -config /etc/xray/config.json
-Restart=on-failure
+WorkingDirectory=$BACKEND_DIR
+ExecStart=$BACKEND_DIR/venv/bin/uvicorn app:app --host 0.0.0.0 --port $PORT
+Restart=always
+User=root
+
 [Install]
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload
-systemctl enable xray
-systemctl start xray
+# راه‌اندازی سرویس‌ها
+sudo systemctl daemon-reload
+sudo systemctl enable uvicorn
+sudo systemctl start uvicorn
+sudo systemctl enable xray
+sudo systemctl start xray
 
-info "ایجاد فایل سیستم‌مد برای Nginx..."
-systemctl enable nginx
-systemctl restart nginx
-
-info "اجرای سیستم‌ها انجام شد!"
-
+success "نصب کامل انجام شد! پنل آماده استفاده است."
+info "آدرس: http://${DOMAIN:-$(curl -s ifconfig.me)}:${PORT}"
+# نمایش اطلاعات دسترسی و پروتکل‌ها
 success "نصب کامل و موفقیت‌آمیز انجام شد!"
 info "====== اطلاعات دسترسی ======"
 echo -e "${GREEN}• آدرس پنل: http://${DOMAIN:-$(curl -s ifconfig.me)}:${PORT}${NC}"
@@ -209,20 +198,18 @@ echo -e "• پسورد: ${ADMIN_PASSWORD:-admin}${NC}"
 info "\n====== اطلاعات پروتکل‌ها ======"
 echo -e "${GREEN}🔰 VLESS:"
 echo -e "  پورت: 443"
-echo -e "  UUID: $VLESS_UUID${NC}"
+echo -e "  UUID: $(uuidgen)${NC}"
 
 echo -e "${GREEN}🌀 VMESS:"
 echo -e "  پورت: 8443"
-echo -e "  UUID: $VMESS_UUID${NC}"
+echo -e "  UUID: $(uuidgen)${NC}"
 
 echo -e "${GREEN}⚔️ Trojan:"
 echo -e "  پورت: 2083"
-echo -e "  پسورد: $TROJAN_PWD${NC}"
+echo -e "  پسورد: $(openssl rand -hex 16)${NC}"
 
 echo -e "${GREEN}🌐 HTTP:"
-echo -e "  پورت: 8080"
-echo -e "  UUID: $HTTP_UUID${NC}"
+echo -e "  پورت: 8080${NC}"
 
 echo -e "${GREEN}📡 TCP:"
-echo -e "  پورت: 9000"
-echo -e "  UUID: $TCP_UUID${NC}"
+echo -e "  پورت: 9000${NC}"
