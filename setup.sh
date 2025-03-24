@@ -70,19 +70,23 @@ chmod 600 $INSTALL_DIR/.env || error "خطا در تنظیم مجوز فایل .
 
 # تنظیم پایگاه داده
 info "تنظیم پایگاه داده و کاربر..."
-sudo -u postgres psql <<EOF || error "خطا در اجرای دستورات پایگاه داده"
+if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='vpndb'" | grep -q 1; then
+    sudo -u postgres psql -c "CREATE DATABASE vpndb;" || error "خطا در ایجاد پایگاه داده"
+else
+    info "پایگاه داده 'vpndb' از قبل وجود دارد."
+fi
+
+sudo -u postgres psql -d vpndb <<EOF || error "خطا در ایجاد نقش پایگاه داده"
 DO \$\$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'vpnuser') THEN
         CREATE ROLE vpnuser WITH LOGIN PASSWORD '${DB_PASSWORD}';
     END IF;
 END \$\$;
-
-CREATE DATABASE vpndb;
 GRANT ALL PRIVILEGES ON DATABASE vpndb TO vpnuser;
 EOF
 
-# ادامه در پیام دوم...
+# ادامه در پیام بعدی...
 # دانلود و نصب Xray
 info "دانلود و نصب Xray..."
 if [ -d "/usr/local/bin/xray" ]; then
@@ -151,17 +155,22 @@ server {
 
     access_log /var/log/nginx/zhina_access.log;
     error_log /var/log/nginx/zhina_error.log;
+
+    listen 443 ssl;
+    ssl_certificate /etc/nginx/ssl/nginx.crt;
+    ssl_certificate_key /etc/nginx/ssl/nginx.key;
 }
 EOF
+
+mkdir -p /etc/nginx/ssl || error "خطا در ایجاد دایرکتوری SSL"
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout /etc/nginx/ssl/nginx.key -out /etc/nginx/ssl/nginx.crt \
+  -subj "/CN=${DOMAIN:-$(curl -s ifconfig.me)}" || error "خطا در ایجاد گواهی Self-Signed"
 
 ln -sf /etc/nginx/sites-available/zhina /etc/nginx/sites-enabled/ || error "خطا در ایجاد لینک نمادین"
 rm -f /etc/nginx/sites-enabled/default || info "حذف فایل پیش‌فرض Nginx"
 nginx -t || error "تنظیمات Nginx نامعتبر است"
 systemctl restart nginx || error "خطا در راه‌اندازی مجدد Nginx"
-
-# ایجاد گواهی Self-Signed برای دامنه یا IP
-info "ایجاد گواهی Self-Signed..."
-openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout /etc/nginx/ssl/nginx.key -out /etc/nginx/ssl/nginx.crt -subj "/CN=${DOMAIN:-$(curl -s ifconfig.me)}" || error "خطا در ایجاد گواهی Self-Signed"
 
 # باز کردن پورت‌ها
 info "پیکربندی فایروال..."
