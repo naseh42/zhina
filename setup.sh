@@ -68,7 +68,25 @@ EOF
 mv $TEMP_DIR/.env $INSTALL_DIR/.env || error "خطا در انتقال فایل .env"
 chmod 600 $INSTALL_DIR/.env || error "خطا در تنظیم مجوز فایل .env"
 
-# ادامه اسکریپت در پیام دوم ارسال می‌شود.
+# تنظیم پایگاه داده و بررسی وجود قبلی
+info "تنظیم پایگاه داده و کاربر..."
+if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='vpndb'" | grep -q 1; then
+    sudo -u postgres psql -c "CREATE DATABASE vpndb;" || error "خطا در ایجاد پایگاه داده"
+else
+    info "پایگاه داده 'vpndb' از قبل وجود دارد."
+fi
+
+sudo -u postgres psql -d vpndb <<EOF || error "خطا در ایجاد نقش پایگاه داده"
+DO \$\$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'vpnuser') THEN
+        CREATE ROLE vpnuser WITH LOGIN PASSWORD '${DB_PASSWORD}';
+    END IF;
+END \$\$;
+GRANT ALL PRIVILEGES ON DATABASE vpndb TO vpnuser;
+EOF
+
+# ادامه در پیام بعدی...
 # دانلود و نصب Xray
 info "دانلود و نصب Xray..."
 if [ -d "/usr/local/bin/xray" ]; then
