@@ -54,6 +54,7 @@ DATABASE_URL='postgresql://vpnuser:$DB_PASSWORD@localhost/vpndb'
 EOF
 
 # انتقال فایل به مسیر نهایی
+mkdir -p $INSTALL_DIR/backend/
 mv $TEMP_DIR/.env $INSTALL_DIR/backend/.env || error "خطا در انتقال فایل .env."
 chmod 600 $INSTALL_DIR/backend/.env
 # تنظیم پایگاه داده
