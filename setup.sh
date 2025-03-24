@@ -24,6 +24,7 @@ success() { echo -e "${GREEN}[SUCCESS] $1${NC}"; }
 info() { echo -e "${YELLOW}[INFO] $1${NC}"; }
 
 # ------------------- نصب پیش‌نیازها -------------------
+echo "Installing system prerequisites..."
 install_prerequisites() {
     info "نصب پیش‌نیازهای سیستم..."
     apt-get update
@@ -31,6 +32,7 @@ install_prerequisites() {
     success "پیش‌نیازها با موفقیت نصب شدند!"
 }
 # ------------------- تنظیم پایگاه داده -------------------
+echo "Starting database setup..."
 setup_database() {
     info "تنظیم پایگاه داده..."
     sudo -u postgres psql <<EOF
@@ -41,8 +43,8 @@ setup_database() {
 EOF
     success "پایگاه داده با موفقیت تنظیم شد!"
 }
-
 # ------------------- ساخت و اجرای فایل requirements.txt -------------------
+echo "Creating and installing requirements..."
 setup_requirements() {
     info "ایجاد فایل requirements.txt..."
     if [[ ! -f "$INSTALL_DIR/requirements.txt" ]]; then
@@ -69,6 +71,7 @@ EOF
     success "وابستگی‌ها با موفقیت نصب شدند!"
 }
 # ------------------- نصب و تنظیم Xray -------------------
+echo "Installing and configuring Xray..."
 install_xray_with_all_protocols() {
     info "نصب Xray با تمام پروتکل‌ها..."
     
@@ -139,6 +142,7 @@ EOF
     success "Xray با تمام پروتکل‌ها با موفقیت نصب و تنظیم شد!"
 }
 # ------------------- تنظیم گواهی SSL -------------------
+echo "Setting up SSL certificates..."
 setup_ssl_certificates() {
     info "تنظیم گواهی SSL..."
     mkdir -p /etc/nginx/ssl
@@ -148,8 +152,8 @@ setup_ssl_certificates() {
         -subj "/CN=$(curl -s ifconfig.me)"
     success "گواهی SSL با موفقیت ایجاد شد!"
 }
-
 # ------------------- ایجاد جداول دیتابیس -------------------
+echo "Creating database tables..."
 create_database_tables() {
     info "ایجاد جداول دیتابیس..."
     sudo -u postgres psql -d $DB_NAME <<EOF
@@ -216,6 +220,7 @@ EOF
     success "جداول دیتابیس با موفقیت ایجاد شدند!"
 }
 # ------------------- سرویس‌های systemd -------------------
+echo "Creating and starting systemd services..."
 create_systemd_services() {
     info "ایجاد سرویس‌های systemd..."
 
@@ -257,8 +262,8 @@ EOF
     systemctl start xray zhina-panel
     success "سرویس‌های systemd با موفقیت ایجاد و راه‌اندازی شدند!"
 }
-
 # ------------------- نمایش اطلاعات نهایی -------------------
+echo "Showing final setup information..."
 show_final_info() {
     success "\n\n=== نصب کامل شد! ==="
     echo -e "دسترسی پنل مدیریتی:"
