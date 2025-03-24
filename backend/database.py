@@ -4,10 +4,10 @@ from sqlalchemy.orm import sessionmaker
 from backend.config import settings
 
 # تنظیمات اتصال به دیتابیس
-SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
+SQLALCHEMY_DATABASE_URL = settings.database_url
 
 # ایجاد موتور دیتابیس
-engine = create_engine(SQLALCHEMY_DATABASE_URL)
+engine = create_engine(settings.database_url)
 
 # ایجاد session برای تعامل با دیتابیس
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
