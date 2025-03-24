@@ -44,12 +44,39 @@ DB_PASSWORD='$DB_PASSWORD'
 DATABASE_URL='postgresql://vpnuser:$DB_PASSWORD@localhost/vpndb'
 EOF
 chmod 600 $BACKEND_DIR/.env
-
 # تنظیم دیتابیس
-info "تنظیم دیتابیس..."
-sudo -u postgres psql -c "CREATE DATABASE vpndb;" || info "پایگاه داده از قبل وجود دارد."
-sudo -u postgres psql -c "CREATE USER vpnuser WITH PASSWORD '$DB_PASSWORD';" || info "کاربر از قبل وجود دارد."
+info "تنظیم پایگاه داده و کاربر..."
+sudo -u postgres psql -c "CREATE DATABASE vpndb;" 2>/dev/null || info "پایگاه داده از قبل وجود دارد."
+
+# ایجاد یا ریست پسورد کاربر
+USER_EXISTS=$(sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='vpnuser'")
+if [ "$USER_EXISTS" == "1" ]; then
+    info "کاربر vpnuser از قبل وجود دارد، پسورد ریست می‌شود..."
+    sudo -u postgres psql -c "ALTER USER vpnuser WITH PASSWORD '$DB_PASSWORD';" || error "خطا در ریست پسورد کاربر vpnuser."
+else
+    info "کاربر vpnuser ایجاد می‌شود..."
+    sudo -u postgres psql -c "CREATE USER vpnuser WITH PASSWORD '$DB_PASSWORD';" || error "خطا در ایجاد کاربر vpnuser."
+fi
+
+# اعطای دسترسی‌ها
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE vpndb TO vpnuser;" || error "خطا در اعطای دسترسی‌ها."
+# ایجاد فایل requirements.txt
+info "ایجاد فایل requirements.txt..."
+cat <<EOF > $BACKEND_DIR/requirements.txt
+fastapi==0.115.12
+uvicorn==0.34.0
+sqlalchemy==2.0.39
+pydantic==2.10.6
+psycopg2-binary==2.9.10
+EOF
+success "فایل requirements.txt ایجاد شد."
+
+# ایجاد محیط مجازی و نصب کتابخانه‌ها
+info "ایجاد محیط مجازی پایتون..."
+python3 -m venv $BACKEND_DIR/venv || error "خطا در ایجاد محیط مجازی."
+source $BACKEND_DIR/venv/bin/activate
+pip install -r $BACKEND_DIR/requirements.txt || error "خطا در نصب کتابخانه‌ها."
+deactivate
 
 # ایجاد فایل جداول دیتابیس
 info "ایجاد جداول دیتابیس..."
@@ -74,25 +101,7 @@ EOF
 # اجرای جداول دیتابیس
 info "اجرای فایل ساخت جداول دیتابیس..."
 python3 $BACKEND_DIR/setup_db.py || error "خطا در اجرای فایل ساخت جداول دیتابیس."
-# ایجاد فایل requirements.txt
-info "ایجاد فایل requirements.txt..."
-cat <<EOF > $BACKEND_DIR/requirements.txt
-fastapi==0.115.12
-uvicorn==0.34.0
-sqlalchemy==2.0.39
-pydantic==2.10.6
-psycopg2-binary==2.9.10
-EOF
-success "فایل requirements.txt ایجاد شد."
-
-# ایجاد محیط مجازی و نصب کتابخانه‌ها
-info "ایجاد محیط مجازی پایتون..."
-python3 -m venv $BACKEND_DIR/venv || error "خطا در ایجاد محیط مجازی."
-source $BACKEND_DIR/venv/bin/activate
-pip install -r $BACKEND_DIR/requirements.txt || error "خطا در نصب کتابخانه‌ها."
-deactivate
-
-# ایجاد فایل تنظیمات Nginx
+# تنظیم فایل Nginx
 info "ایجاد فایل تنظیمات Nginx..."
 cat <<EOF > /etc/nginx/sites-available/zhina
 server {
@@ -110,6 +119,7 @@ EOF
 ln -s /etc/nginx/sites-available/zhina /etc/nginx/sites-enabled/
 sudo nginx -t || error "خطا در تنظیمات Nginx."
 sudo systemctl restart nginx
+
 # نصب Xray
 info "نصب Xray..."
 bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
@@ -161,7 +171,6 @@ cat <<EOF > /etc/xray/config.json
 }
 EOF
 sudo systemctl restart xray
-
 # ایجاد فایل systemd برای Uvicorn
 info "ایجاد فایل سرویس Uvicorn..."
 cat <<EOF > /etc/systemd/system/uvicorn.service
@@ -186,9 +195,7 @@ sudo systemctl start uvicorn
 sudo systemctl enable xray
 sudo systemctl start xray
 
-success "نصب کامل انجام شد! پنل آماده استفاده است."
-info "آدرس: http://${DOMAIN:-$(curl -s ifconfig.me)}:${PORT}"
-# نمایش اطلاعات دسترسی و پروتکل‌ها
+# نمایش اطلاعات دسترسی
 success "نصب کامل و موفقیت‌آمیز انجام شد!"
 info "====== اطلاعات دسترسی ======"
 echo -e "${GREEN}• آدرس پنل: http://${DOMAIN:-$(curl -s ifconfig.me)}:${PORT}${NC}"
@@ -208,8 +215,4 @@ echo -e "${GREEN}⚔️ Trojan:"
 echo -e "  پورت: 2083"
 echo -e "  پسورد: $(openssl rand -hex 16)${NC}"
 
-echo -e "${GREEN}🌐 HTTP:"
-echo -e "  پورت: 8080${NC}"
-
-echo -e "${GREEN}📡 TCP:"
-echo -e "  پورت: 9000${NC}"
+echo -e "${GREEN}
