@@ -73,59 +73,70 @@ fi
 info "ایجاد دسترسی‌ها برای کاربر vpnuser..."
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE vpndb TO vpnuser;" || error "خطا در اعطای دسترسی‌ها."
 
-# ایجاد اسکریپت ساخت جداول
-info "ایجاد فایل اسکریپت جداول دیتابیس..."
-cat <<EOF > $TEMP_DIR/setup_db.py
+# ایجاد اسکریپت بررسی و ساخت جداول به‌صورت خودکار
+info "ایجاد فایل اسکریپت بررسی و ساخت جداول..."
+cat <<EOF > $TEMP_DIR/dynamic_setup_db.py
+import os
 import psycopg2
+import re
 
-try:
-    conn = psycopg2.connect("dbname='vpndb' user='vpnuser' password='${DB_PASSWORD}' host='localhost'")
-    cursor = conn.cursor()
+# اتصال به پایگاه داده
+conn = psycopg2.connect("dbname='vpndb' user='vpnuser' password='${DB_PASSWORD}' host='localhost'")
+cursor = conn.cursor()
 
-    # ایجاد جدول کاربران
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        username VARCHAR(50) UNIQUE NOT NULL,
-        password VARCHAR(50) NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-    """)
+# دایرکتوری پروژه
+project_dir = "${INSTALL_DIR}"
 
-    # ایجاد جدول تنظیمات
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS settings (
-        id SERIAL PRIMARY KEY,
-        setting_key VARCHAR(50) UNIQUE NOT NULL,
-        setting_value TEXT NOT NULL
-    );
-    """)
+# استخراج فایل‌هایی که نیاز به جدول دارند
+def find_model_files(directory):
+    model_files = []
+    for root, _, files in os.walk(directory):
+        for file in files:
+            if file.endswith(".py"):
+                file_path = os.path.join(root, file)
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    # تشخیص فایل‌هایی که شامل تعریف مدل هستند
+                    if "Base" in content and ("Column" in content or "Integer" in content or "String" in content):
+                        model_files.append(file_path)
+    return model_files
 
-    # ایجاد جدول لاگ‌ها
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS logs (
-        id SERIAL PRIMARY KEY,
-        user_id INTEGER REFERENCES users(id),
-        action VARCHAR(100) NOT NULL,
-        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-    """)
+# استخراج جداول از فایل‌های مدل
+def extract_table_definitions(file_path):
+    with open(file_path, "r", encoding="utf-8") as f:
+        content = f.read()
+        tables = re.findall(r"class\s+(\w+)\s*\(.*Base.*\):", content)
+        columns = re.findall(r"(\w+)\s*=\s*Column\((.*?)\)", content)
+        return tables, columns
+
+# بررسی فایل‌ها و ساخت جداول
+def create_tables():
+    model_files = find_model_files(project_dir)
+    print(f"فایل‌های مدل پیدا شد: {model_files}")
+
+    for model_file in model_files:
+        tables, columns = extract_table_definitions(model_file)
+        for table in tables:
+            print(f"ساخت جدول: {table}")
+            column_defs = ", ".join([f"{col[0]} {col[1]}" for col in columns])
+            create_table_query = f"CREATE TABLE IF NOT EXISTS {table} ({column_defs});"
+            cursor.execute(create_table_query)
 
     conn.commit()
     cursor.close()
     conn.close()
-    print("جداول با موفقیت ایجاد شدند.")
+    print("تمامی جداول موردنیاز با موفقیت ایجاد شدند.")
 
-except Exception as e:
-    print(f"خطا در اتصال یا ایجاد جداول: {e}")
+# اجرای فرآیند ساخت جداول
+create_tables()
 EOF
 
-# اجرای اسکریپت ساخت جداول
-info "اجرای اسکریپت ایجاد جداول..."
-if [ -f "$TEMP_DIR/setup_db.py" ]; then
-    python3 $TEMP_DIR/setup_db.py || error "خطا در اجرای اسکریپت ساخت جداول."
+# اجرای اسکریپت ساخت جداول به‌صورت خودکار
+info "اجرای اسکریپت بررسی و ساخت جداول..."
+if [ -f "$TEMP_DIR/dynamic_setup_db.py" ]; then
+    python3 $TEMP_DIR/dynamic_setup_db.py || error "خطا در اجرای اسکریپت بررسی و ساخت جداول."
 else
-    error "فایل setup_db.py پیدا نشد!"
+    error "فایل dynamic_setup_db.py پیدا نشد!"
 fi
 # بررسی فایل Nginx
 info "بررسی و مدیریت فایل‌های Nginx..."
@@ -204,6 +215,7 @@ cat <<EOF > /etc/xray/config.json
   "outbounds": [{"protocol": "freedom"}]
 }
 EOF
+
 sudo systemctl restart xray || error "خطا در راه‌اندازی Xray."
 
 # باز کردن پورت‌ها
