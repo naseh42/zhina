@@ -38,17 +38,65 @@ chmod -R 750 $TEMP_DIR || error "خطا در تنظیم مجوزهای دایر�
 # نصب پیش‌نیازها
 info "در حال نصب پیش‌نیازها..."
 apt-get update || error "خطا در به روزرسانی لیست پکیج‌ها"
-apt-get install -y curl openssl nginx python3 python3-venv python3-pip postgresql postgresql-contrib || error "خطا در نصب پیش‌نیازها"
+apt-get install -y curl openssl nginx python3 python3-venv python3-pip postgresql postgresql-contrib unzip || error "خطا در نصب پیش‌نیازها"
 
+# دریافت اطلاعات کاربر
+read -p "دامنه خود را وارد کنید (اختیاری): " DOMAIN
+read -p "پورت پنل را وارد کنید (پیش‌فرض: 8000): " PORT
+PORT=${PORT:-8000}
+
+# تولید پسورد تصادفی برای ادمین
+ADMIN_USERNAME="admin"
+ADMIN_PASSWORD=$(openssl rand -hex 12)
+DB_PASSWORD=$(openssl rand -hex 16)
+
+info "در حال ایجاد فایل پیکربندی..."
+cat <<EOF > $TEMP_DIR/.env
+# تنظیمات ادمین
+ADMIN_USERNAME='${ADMIN_USERNAME}'
+ADMIN_PASSWORD='${ADMIN_PASSWORD}'
+
+# تنظیمات پایگاه داده
+DB_PASSWORD='${DB_PASSWORD}'
+DATABASE_URL='postgresql://vpnuser:${DB_PASSWORD}@localhost/vpndb'
+
+# تنظیمات برنامه
+PORT=${PORT}
+DEBUG=false
+EOF
+
+mv $TEMP_DIR/.env $INSTALL_DIR/.env || error "خطا در انتقال فایل .env"
+chmod 600 $INSTALL_DIR/.env || error "خطا در تنظیم مجوز فایل .env"
+
+# تنظیم پایگاه داده
+info "تنظیم پایگاه داده و کاربر..."
+sudo -u postgres psql <<EOF || error "خطا در اجرای دستورات پایگاه داده"
+DO \$\$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'vpnuser') THEN
+        CREATE ROLE vpnuser WITH LOGIN PASSWORD '${DB_PASSWORD}';
+    END IF;
+END \$\$;
+
+CREATE DATABASE vpndb;
+GRANT ALL PRIVILEGES ON DATABASE vpndb TO vpnuser;
+EOF
+
+# ادامه اسکریپت در پیام دوم...
 # دانلود و نصب Xray
 info "دانلود و نصب Xray..."
+if [ -d "/usr/local/bin/xray" ]; then
+    info "دایرکتوری Xray از قبل وجود دارد، حذف و ایجاد مجدد..."
+    rm -rf /usr/local/bin/xray || error "خطا در حذف دایرکتوری Xray موجود"
+fi
+mkdir -p /usr/local/bin/xray || error "خطا در ایجاد دایرکتوری Xray"
 curl -sL https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip -o $TEMP_DIR/xray.zip || error "خطا در دانلود Xray"
 unzip $TEMP_DIR/xray.zip -d /usr/local/bin/xray || error "خطا در استخراج فایل‌های Xray"
 chmod +x /usr/local/bin/xray/xray || error "خطا در تنظیم مجوزهای Xray"
 
-# تنظیم Xray
+# ایجاد فایل تنظیمات Xray
 info "ایجاد فایل تنظیمات Xray..."
-cat > $XRAY_CONFIG <<EOF
+cat > /etc/xray/config.json <<EOF
 {
   "log": {
     "loglevel": "warning"
@@ -84,58 +132,8 @@ cat > $XRAY_CONFIG <<EOF
   ]
 }
 EOF
-
 systemctl restart xray || error "خطا در راه‌اندازی مجدد Xray"
 systemctl enable xray || error "خطا در فعال‌سازی Xray"
-
-# ادامه اسکریپت در پیام دوم...
-# ایجاد محیط مجازی پایتون
-info "ایجاد محیط مجازی پایتون..."
-python3 -m venv $INSTALL_DIR/venv || error "خطا در ایجاد محیط مجازی"
-source $INSTALL_DIR/venv/bin/activate || error "خطا در فعال‌سازی محیط مجازی"
-
-# نصب وابستگی‌های پایتون
-info "نصب وابستگی‌های پایتون..."
-pip install --upgrade pip || error "خطا در به‌روزرسانی pip"
-pip install sqlalchemy psycopg2-binary || error "خطا در نصب وابستگی‌های پایتون"
-
-# ایجاد مدل‌های دیتابیس
-info "ایجاد جداول پایگاه داده..."
-cat > $TEMP_DIR/create_tables.py <<EOF
-import os
-from sqlalchemy import create_engine, MetaData
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey
-
-# خواندن تنظیمات از فایل .env
-with open('$INSTALL_DIR/.env') as f:
-    for line in f:
-        if line.strip() and not line.startswith('#'):
-            key, value = line.strip().split('=', 1)
-            os.environ[key] = value.strip("'")
-
-DATABASE_URL = os.getenv('DATABASE_URL')
-engine = create_engine(DATABASE_URL)
-Base = declarative_base()
-
-class User(Base):
-    __tablename__ = 'users'
-    id = Column(Integer, primary_key=True)
-    username = Column(String(50), unique=True)
-    password = Column(String(100))
-    is_admin = Column(Boolean, default=False)
-
-class Domain(Base):
-    __tablename__ = 'domains'
-    id = Column(Integer, primary_key=True)
-    name = Column(String(100), unique=True)
-    user_id = Column(Integer, ForeignKey('users.id'))
-
-Base.metadata.create_all(engine)
-print("Database tables created successfully")
-EOF
-
-python3 $TEMP_DIR/create_tables.py || error "خطا در ایجاد جداول پایگاه داده"
 
 # تنظیم Nginx
 info "پیکربندی Nginx..."
