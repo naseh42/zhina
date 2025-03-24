@@ -35,16 +35,18 @@ apt install -y curl openssl nginx python3 python3-venv python3-pip postgresql po
 read -p "دامنه خود را وارد کنید (اختیاری): " DOMAIN
 read -p "پورت پنل را وارد کنید (پیش‌فرض: 8000): " PORT
 PORT=${PORT:-8000}
-read -p "یوزرنیم ادمین: " ADMIN_USERNAME
-read -s -p "پسورد ادمین: " ADMIN_PASSWORD
+read -p "یوزرنیم ادمین (پیش‌فرض: admin): " ADMIN_USERNAME
+ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+read -s -p "پسورد ادمین (پیش‌فرض: admin): " ADMIN_PASSWORD
+ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
 echo ""
 DB_PASSWORD=$(openssl rand -hex 12)
 
 # تنظیم فایل .env
 info "ایجاد فایل .env..."
 cat <<EOF > $TEMP_DIR/.env
-ADMIN_USERNAME='${ADMIN_USERNAME:-admin}'
-ADMIN_PASSWORD='${ADMIN_PASSWORD:-admin}'
+ADMIN_USERNAME='${ADMIN_USERNAME}'
+ADMIN_PASSWORD='${ADMIN_PASSWORD}'
 DB_PASSWORD='$DB_PASSWORD'
 DATABASE_URL='postgresql://vpnuser:$DB_PASSWORD@localhost/vpndb'
 EOF
@@ -60,26 +62,30 @@ sudo -u postgres psql -c "CREATE DATABASE vpndb;" 2>/dev/null || info "پایگ�
 sudo -u postgres psql -c "ALTER USER vpnuser WITH SUPERUSER;" || error "خطا در تنظیم دسترسی کاربر."
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE vpndb TO vpnuser;" || error "خطا در اعطای دسترسی‌ها."
 
-# بررسی فایل‌های مدل
-info "بررسی فایل‌های پروژه برای مدل‌ها..."
-PROJECT_DIR="${INSTALL_DIR}/models"
-if [ ! -d "$PROJECT_DIR" ]; then
-    mkdir -p $PROJECT_DIR
-    info "مسیر مدل‌ها ساخته شد: $PROJECT_DIR"
-fi
+# بررسی و ساخت جداول از فایل مدلس
+info "بررسی فایل‌های مدل برای ساخت جداول..."
+python3 <<EOF
+from sqlalchemy import create_engine
+from backend.database import Base
+from backend.models import User, Domain, Subscription, Setting, Node
 
-info "جستجوی فایل‌های مدل..."
-find $PROJECT_DIR -name "*.py" || error "هیچ فایلی یافت نشد!"
+engine = create_engine("postgresql://vpnuser:${DB_PASSWORD}@localhost/vpndb")
+Base.metadata.create_all(engine)
+print("[SUCCESS] تمام جداول پایگاه داده ساخته شدند!")
+EOF
 
-# تنظیم Nginx
-info "بررسی و مدیریت فایل‌های Nginx..."
+# حذف و بازسازی Nginx
+info "حذف و بازسازی Nginx..."
+apt remove --purge -y nginx || info "Nginx قبلاً حذف شده است."
+apt install -y nginx || error "خطا در نصب مجدد Nginx."
+
 NGINX_CONFIG="/etc/nginx/sites-available/zhina"
-
 rm -f /etc/nginx/sites-enabled/* || info "فایل‌های پیش‌فرض Nginx حذف شدند."
 cat <<EOF > $NGINX_CONFIG
 server {
     listen 80;
     server_name ${DOMAIN:-$(curl -s ifconfig.me)};
+
     location / {
         proxy_pass http://127.0.0.1:${PORT};
         proxy_set_header Host \$host;
@@ -92,34 +98,35 @@ ln -sf $NGINX_CONFIG /etc/nginx/sites-enabled/zhina
 sudo nginx -t || error "خطا در تست تنظیمات Nginx."
 sudo systemctl reload nginx || error "خطا در راه‌اندازی مجدد Nginx."
 
-# تنظیم Xray
-info "نصب و تنظیم Xray..."
-bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+# نصب یا بررسی Xray
+info "بررسی نسخه Xray..."
+if command -v xray > /dev/null; then
+    info "Xray از قبل نصب شده است. راه‌اندازی مجدد انجام می‌شود..."
+    sudo systemctl restart xray || error "خطا در راه‌اندازی مجدد Xray."
+else
+    info "Xray پیدا نشد، در حال نصب..."
+    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install || error "خطا در نصب Xray."
+    sudo systemctl restart xray || error "خطا در راه‌اندازی Xray پس از نصب."
+fi
+
+info "تنظیم کانفیگ کامل Xray..."
 cat <<EOF > /etc/xray/config.json
 {
   "log": {"loglevel": "warning"},
   "inbounds": [
-    {
-      "port": 443,
-      "protocol": "vless",
-      "settings": {"clients": [{"id": "$(uuidgen)"}]}
-    },
-    {
-      "port": 8443,
-      "protocol": "vmess",
-      "settings": {"clients": [{"id": "$(uuidgen)"}]}
-    },
-    {
-      "port": 2083,
-      "protocol": "trojan",
-      "settings": {"clients": [{"password": "$(openssl rand -hex 16)"}]}
-    }
+    {"port": 443, "protocol": "vless", "settings": {"clients": [{"id": "$(uuidgen)"}]}},
+    {"port": 8443, "protocol": "vmess", "settings": {"clients": [{"id": "$(uuidgen)"}]}},
+    {"port": 2083, "protocol": "trojan", "settings": {"clients": [{"password": "$(openssl rand -hex 16)"}]}},
+    {"port": 8989, "protocol": "tuic", "settings": {"auth": "public"}},
+    {"port": 8080, "protocol": "http"},
+    {"port": 9000, "protocol": "tcp"},
+    {"port": 1984, "protocol": "websocket"},
+    {"port": 2002, "protocol": "grpc"}
   ],
   "outbounds": [{"protocol": "freedom"}]
 }
 EOF
-
-sudo systemctl restart xray || error "خطا در راه‌اندازی Xray."
+sudo systemctl restart xray || error "خطا در اعمال کانفیگ Xray."
 
 # باز کردن پورت‌ها
 info "باز کردن پورت‌های موردنیاز..."
@@ -131,6 +138,16 @@ ufw reload || error "خطا در بارگذاری مجدد فایروال."
 
 # نمایش اطلاعات دسترسی
 success "نصب کامل شد!"
+echo -e "\n====== اطلاعات دسترسی ======"
 echo "• آدرس پنل: http://${DOMAIN:-$(curl -s ifconfig.me)}:${PORT}"
 echo "• یوزرنیم: ${ADMIN_USERNAME}"
 echo "• پسورد: ${ADMIN_PASSWORD}"
+echo -e "\n====== اطلاعات پروتکل‌ها ======"
+echo "🔰 VLESS: پورت 443"
+echo "🌀 VMESS: پورت 8443"
+echo "⚔️ Trojan: پورت 2083"
+echo "🌀 TUIC: پورت 8989"
+echo "🌐 HTTP: پورت 8080"
+echo "📡 TCP: پورت 9000"
+echo "🌐 WebSocket: پورت 1984"
+echo "🔗 gRPC: پورت 2002"
