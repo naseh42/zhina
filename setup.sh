@@ -47,7 +47,7 @@ chown -R root:root $WORK_DIR
 
 # انتقال فایل‌های پروژه به دایرکتوری کاری
 info "در حال انتقال فایل‌های پروژه..."
-cp -R /root/zhina/backend/* $BACKEND_DIR/ || error "خطا در انتقال فایل‌ها!"
+cp -R /zhina/backend/* $BACKEND_DIR/ || error "خطا در انتقال فایل‌ها!"
 
 # ایجاد فایل config.py به صورت داینامیک
 info "در حال ایجاد فایل config.py..."
