@@ -19,36 +19,12 @@ fi
 # نصب پیش‌نیازها
 info "در حال نصب پیش‌نیازها..."
 apt update
-apt install -y git curl openssl nginx python3 python3-venv python3-pip postgresql postgresql-contrib certbot || error "خطا در نصب پیش‌نیازها."
+apt install -y curl openssl nginx python3 python3-venv python3-pip postgresql postgresql-contrib certbot || error "خطا در نصب پیش‌نیازها."
 
 # تنظیم دایرکتوری پروژه
 WORK_DIR="/var/lib/zhina"
 BACKEND_DIR="$WORK_DIR/backend"
 mkdir -p $BACKEND_DIR
-
-# کلون کردن پروژه
-info "کلون کردن مخزن..."
-git clone https://github.com/naseh42/zhina.git $WORK_DIR || error "خطا در کلون کردن مخزن."
-
-# ساخت فایل requirements.txt
-info "ایجاد فایل requirements.txt..."
-cat <<EOF > $BACKEND_DIR/requirements.txt
-fastapi==0.115.12
-uvicorn==0.34.0
-sqlalchemy==2.0.39
-pydantic==2.10.6
-psycopg2-binary==2.9.10
-pydantic-settings==2.8.1
-EOF
-success "فایل requirements.txt ایجاد شد."
-
-# ایجاد محیط مجازی و نصب کتابخانه‌ها
-info "ایجاد محیط مجازی پایتون..."
-python3 -m venv $BACKEND_DIR/venv || error "خطا در ایجاد محیط مجازی."
-source $BACKEND_DIR/venv/bin/activate
-info "در حال نصب کتابخانه‌های پایتون..."
-pip install -r $BACKEND_DIR/requirements.txt || error "خطا در نصب کتابخانه‌ها."
-deactivate
 
 # دریافت اطلاعات کاربر
 read -p "دامنه خود را وارد کنید (اختیاری): " DOMAIN
@@ -75,10 +51,24 @@ sudo -u postgres psql -c "CREATE DATABASE vpndb;" || info "پایگاه داده
 sudo -u postgres psql -c "CREATE USER vpnuser WITH PASSWORD '$DB_PASSWORD';" || info "کاربر از قبل وجود دارد."
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE vpndb TO vpnuser;" || error "خطا در اعطای دسترسی‌ها."
 
-# ایجاد جداول دیتابیس
-info "ایجاد جداول دیتابیس..."
+# ایجاد فایل requirements.txt
+info "ایجاد فایل requirements.txt..."
+cat <<EOF > $BACKEND_DIR/requirements.txt
+fastapi==0.115.12
+uvicorn==0.34.0
+sqlalchemy==2.0.39
+pydantic==2.10.6
+psycopg2-binary==2.9.10
+pydantic-settings==2.8.1
+EOF
+success "فایل requirements.txt ایجاد شد."
+
+# ایجاد محیط مجازی و نصب کتابخانه‌ها
+info "ایجاد محیط مجازی پایتون..."
+python3 -m venv $BACKEND_DIR/venv || error "خطا در ایجاد محیط مجازی."
 source $BACKEND_DIR/venv/bin/activate
-python3 $BACKEND_DIR/setup_db.py || error "خطا در ایجاد جداول دیتابیس."
+info "در حال نصب کتابخانه‌های پایتون..."
+pip install -r $BACKEND_DIR/requirements.txt || error "خطا در نصب کتابخانه‌ها."
 deactivate
 
 # نصب Xray
@@ -90,46 +80,79 @@ info "تنظیم پروتکل‌های Xray..."
 VMESS_UUID=$(uuidgen)
 VLESS_UUID=$(uuidgen)
 TROJAN_PWD=$(openssl rand -hex 16)
+
 cat <<EOF > /etc/xray/config.json
 {
   "log": {"loglevel": "warning"},
   "inbounds": [
     {
       "port": 443,
-      "protocol": "vmess",
-      "settings": {"clients": [{"id": "$VMESS_UUID"}]}
+      "protocol": "vless",
+      "settings": {
+        "clients": [{"id": "$VLESS_UUID", "flow": "xtls-rprx-vision"}],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "tls",
+        "tlsSettings": {
+          "serverName": "${DOMAIN:-$(curl -s ifconfig.me)}",
+          "certificates": [
+            {
+              "certificateFile": "/etc/letsencrypt/live/${DOMAIN:-$(curl -s ifconfig.me)}/fullchain.pem",
+              "keyFile": "/etc/letsencrypt/live/${DOMAIN:-$(curl -s ifconfig.me)}/privkey.pem"
+            }
+          ]
+        }
+      }
     },
     {
       "port": 8443,
-      "protocol": "vless",
-      "settings": {"clients": [{"id": "$VLESS_UUID"}]}
+      "protocol": "vmess",
+      "settings": {
+        "clients": [{"id": "$VMESS_UUID"}]
+      },
+      "streamSettings": {
+        "network": "ws",
+        "security": "tls",
+        "wsSettings": {"path": "/vmess"},
+        "tlsSettings": {
+          "serverName": "${DOMAIN:-$(curl -s ifconfig.me)}",
+          "certificates": [
+            {
+              "certificateFile": "/etc/letsencrypt/live/${DOMAIN:-$(curl -s ifconfig.me)}/fullchain.pem",
+              "keyFile": "/etc/letsencrypt/live/${DOMAIN:-$(curl -s ifconfig.me)}/privkey.pem"
+            }
+          ]
+        }
+      }
     },
     {
       "port": 2083,
       "protocol": "trojan",
-      "settings": {"clients": [{"password": "$TROJAN_PWD"}]}
+      "settings": {
+        "clients": [{"password": "$TROJAN_PWD"}]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "tls",
+        "tlsSettings": {
+          "serverName": "${DOMAIN:-$(curl -s ifconfig.me)}",
+          "certificates": [
+            {
+              "certificateFile": "/etc/letsencrypt/live/${DOMAIN:-$(curl -s ifconfig.me)}/fullchain.pem",
+              "keyFile": "/etc/letsencrypt/live/${DOMAIN:-$(curl -s ifconfig.me)}/privkey.pem"
+            }
+          ]
+        }
+      }
     }
   ],
   "outbounds": [{"protocol": "freedom"}]
 }
 EOF
 
-# تنظیم Nginx
-info "تنظیم Nginx..."
-cat <<EOF > /etc/nginx/sites-available/zhina
-server {
-    listen 80;
-    server_name ${DOMAIN:-$(curl -s ifconfig.me)};
-
-    location / {
-        proxy_pass http://127.0.0.1:$PORT;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-    }
-}
-EOF
-ln -s /etc/nginx/sites-available/zhina /etc/nginx/sites-enabled/
-systemctl restart nginx
+info "پروتکل‌های Xray با موفقیت تنظیم شدند!"
 
 # نمایش اطلاعات نهایی
 success "نصب با موفقیت انجام شد!"
@@ -137,3 +160,16 @@ info "====== اطلاعات دسترسی ======"
 echo -e "${GREEN}• آدرس پنل: http://${DOMAIN:-$(curl -s ifconfig.me)}:${PORT}${NC}"
 echo -e "• یوزرنیم: ${ADMIN_USERNAME:-admin}"
 echo -e "• پسورد: ${ADMIN_PASSWORD:-admin}${NC}"
+
+info "\n====== اطلاعات پروتکل‌ها ======"
+echo -e "${GREEN}🔰 VLESS:"
+echo -e "  پورت: 443"
+echo -e "  UUID: $VLESS_UUID${NC}"
+
+echo -e "${GREEN}🌀 VMESS:"
+echo -e "  پورت: 8443"
+echo -e "  UUID: $VMESS_UUID${NC}"
+
+echo -e "${GREEN}⚔️ Trojan:"
+echo -e "  پورت: 2083"
+echo -e "  پسورد: $TROJAN_PWD${NC}"
