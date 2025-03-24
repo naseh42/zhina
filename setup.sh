@@ -23,9 +23,56 @@ error() { echo -e "${RED}[ERROR] $1${NC}" >&2; exit 1; }
 success() { echo -e "${GREEN}[SUCCESS] $1${NC}"; }
 info() { echo -e "${YELLOW}[INFO] $1${NC}"; }
 
-# ------------------- توابع پیشرفته -------------------
+# ------------------- نصب پیش‌نیازها -------------------
+install_prerequisites() {
+    info "نصب پیش‌نیازهای سیستم..."
+    apt-get update
+    apt-get install -y git python3 python3-venv python3-pip postgresql nginx curl wget openssl unzip
+    success "پیش‌نیازها با موفقیت نصب شدند!"
+}
+# ------------------- تنظیم پایگاه داده -------------------
+setup_database() {
+    info "تنظیم پایگاه داده..."
+    sudo -u postgres psql <<EOF
+    DROP DATABASE IF EXISTS $DB_NAME;
+    DROP USER IF EXISTS $DB_USER;
+    CREATE USER $DB_USER WITH PASSWORD '$(openssl rand -hex 16)';
+    CREATE DATABASE $DB_NAME OWNER $DB_USER;
+EOF
+    success "پایگاه داده با موفقیت تنظیم شد!"
+}
+
+# ------------------- ساخت و اجرای فایل requirements.txt -------------------
+setup_requirements() {
+    info "ایجاد فایل requirements.txt..."
+    if [[ ! -f "$INSTALL_DIR/requirements.txt" ]]; then
+        cat > "$INSTALL_DIR/requirements.txt" <<EOF
+sqlalchemy==2.0.28
+psycopg2-binary==2.9.9
+fastapi==0.103.2
+uvicorn==0.23.2
+python-multipart==0.0.6
+jinja2==3.1.2
+python-dotenv==1.0.0
+EOF
+        success "فایل requirements.txt ایجاد شد!"
+    else
+        info "فایل requirements.txt از قبل موجود است."
+    fi
+
+    info "نصب وابستگی‌های مورد نیاز..."
+    python3 -m venv $INSTALL_DIR/venv
+    source $INSTALL_DIR/venv/bin/activate
+    pip install -U pip setuptools wheel
+    pip install -r "$INSTALL_DIR/requirements.txt" || error "خطا در نصب وابستگی‌ها!"
+    deactivate
+    success "وابستگی‌ها با موفقیت نصب شدند!"
+}
+# ------------------- نصب و تنظیم Xray -------------------
 install_xray_with_all_protocols() {
     info "نصب Xray با تمام پروتکل‌ها..."
+    
+    # دانلود آخرین نسخه Xray
     wget "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" -O /tmp/xray.zip
     unzip -o /tmp/xray.zip -d "$XRAY_DIR"
     chmod +x "$XRAY_DIR/xray"
@@ -40,14 +87,10 @@ install_xray_with_all_protocols() {
 {
     "log": {"loglevel": "warning"},
     "inbounds": [
-        // ===== VLESS + Reality ===== //
         {
             "port": 443,
             "protocol": "vless",
-            "settings": {
-                "clients": [{"id": "$XRAY_UUID"}],
-                "decryption": "none"
-            },
+            "settings": {"clients": [{"id": "$XRAY_UUID"}], "decryption": "none"},
             "streamSettings": {
                 "network": "tcp",
                 "security": "reality",
@@ -59,58 +102,43 @@ install_xray_with_all_protocols() {
                 }
             }
         },
-        // ===== VMess + WS ===== //
         {
             "port": 8080,
             "protocol": "vmess",
-            "settings": {
-                "clients": [{"id": "$XRAY_UUID"}]
-            },
+            "settings": {"clients": [{"id": "$XRAY_UUID"}]},
             "streamSettings": {
                 "network": "ws",
                 "wsSettings": {"path": "$XRAY_PATH"}
             }
         },
-        // ===== Trojan ===== //
         {
             "port": 8443,
             "protocol": "trojan",
-            "settings": {
-                "clients": [{"password": "$XRAY_UUID"}]
-            }
+            "settings": {"clients": [{"password": "$XRAY_UUID"}]}
         },
-        // ===== Shadowsocks ===== //
         {
             "port": 8388,
             "protocol": "shadowsocks",
-            "settings": {
-                "method": "aes-256-gcm",
-                "password": "$XRAY_UUID"
-            }
+            "settings": {"method": "aes-256-gcm", "password": "$XRAY_UUID"}
         },
-        // ===== Hysteria ===== //
         {
             "port": 2095,
             "protocol": "hysteria",
-            "settings": {
-                "auth": "$XRAY_UUID",
-                "obfs": "$XRAY_PATH"
-            }
+            "settings": {"auth": "$XRAY_UUID", "obfs": "$XRAY_PATH"}
         },
-        // ===== TUIC ===== //
         {
             "port": 2096,
             "protocol": "tuic",
-            "settings": {
-                "token": "$XRAY_UUID"
-            }
+            "settings": {"token": "$XRAY_UUID"}
         }
     ],
     "outbounds": [{"protocol": "freedom"}]
 }
 EOF
-}
 
+    success "Xray با تمام پروتکل‌ها با موفقیت نصب و تنظیم شد!"
+}
+# ------------------- تنظیم گواهی SSL -------------------
 setup_ssl_certificates() {
     info "تنظیم گواهی SSL..."
     mkdir -p /etc/nginx/ssl
@@ -118,8 +146,10 @@ setup_ssl_certificates() {
         -keyout /etc/nginx/ssl/privkey.pem \
         -out /etc/nginx/ssl/fullchain.pem \
         -subj "/CN=$(curl -s ifconfig.me)"
+    success "گواهی SSL با موفقیت ایجاد شد!"
 }
 
+# ------------------- ایجاد جداول دیتابیس -------------------
 create_database_tables() {
     info "ایجاد جداول دیتابیس..."
     sudo -u postgres psql -d $DB_NAME <<EOF
@@ -183,9 +213,12 @@ create_database_tables() {
     INSERT INTO users (username, password, is_active) 
     VALUES ('$ADMIN_USER', crypt('$ADMIN_PASS', gen_salt('bf')), true);
 EOF
+    success "جداول دیتابیس با موفقیت ایجاد شدند!"
 }
-
+# ------------------- سرویس‌های systemd -------------------
 create_systemd_services() {
+    info "ایجاد سرویس‌های systemd..."
+
     # سرویس Xray
     cat > /etc/systemd/system/xray.service <<EOF
 [Unit]
@@ -222,36 +255,10 @@ EOF
     systemctl daemon-reload
     systemctl enable xray zhina-panel
     systemctl start xray zhina-panel
+    success "سرویس‌های systemd با موفقیت ایجاد و راه‌اندازی شدند!"
 }
 
-# ------------------- بخش ساخت و اجرای requirements.txt -------------------
-setup_requirements() {
-    info "ایجاد و نصب فایل requirements.txt..."
-    
-    # ایجاد فایل requirements.txt با محتوای مورد نیاز
-    cat > $INSTALL_DIR/requirements.txt <<EOF
-fastapi>=0.95.0
-uvicorn>=0.21.0
-python-multipart>=0.0.6
-psycopg2-binary>=2.9.5
-python-jose>=3.3.0
-passlib>=1.7.4
-python-dotenv>=1.0.0
-sqlalchemy>=2.0.0
-alembic>=1.10.0
-httpx>=0.24.0
-cryptography>=40.0.0
-pyotp>=2.8.0
-apscheduler>=3.9.0
-python-crontab>=2.6.0
-EOF
-
-    # نصب وابستگی‌ها
-    sudo -u $SERVICE_USER $INSTALL_DIR/venv/bin/pip install -r $INSTALL_DIR/requirements.txt
-    
-    success "فایل requirements.txt با موفقیت ایجاد و وابستگی‌ها نصب شدند."
-}
-
+# ------------------- نمایش اطلاعات نهایی -------------------
 show_final_info() {
     success "\n\n=== نصب کامل شد! ==="
     echo -e "دسترسی پنل مدیریتی:"
@@ -270,67 +277,8 @@ show_final_info() {
     echo -e "• UUID/پسورد مشترک: ${YELLOW}$XRAY_UUID${NC}"
     echo -e "• مسیر WS: ${YELLOW}$XRAY_PATH${NC}"
 
-    echo -e "\nاطلاعات requirements.txt:"
-    echo -e "• مسیر فایل: ${YELLOW}$INSTALL_DIR/requirements.txt${NC}"
-    echo -e "• تعداد وابستگی‌های نصب شده: ${YELLOW}$(wc -l < $INSTALL_DIR/requirements.txt)${NC}"
-
     echo -e "\nدستورات مدیریت:"
     echo -e "• وضعیت Xray: ${YELLOW}systemctl status xray${NC}"
     echo -e "• وضعیت پنل: ${YELLOW}systemctl status zhina-panel${NC}"
     echo -e "• مشاهده لاگ‌ها: ${YELLOW}journalctl -u xray -u zhina-panel -f${NC}"
-    echo -e "• بروزرسانی وابستگی‌ها: ${YELLOW}sudo -u $SERVICE_USER $INSTALL_DIR/venv/bin/pip install -r $INSTALL_DIR/requirements.txt --upgrade${NC}"
 }
-
-# ------------------- مراحل اصلی -------------------
-main() {
-    # 1. بررسی دسترسی root
-    [[ $EUID -ne 0 ]] && error "این اسکریپت نیاز به دسترسی root دارد!"
-
-    # 2. نصب پیش‌نیازها
-    info "نصب پیش‌نیازهای سیستم..."
-    apt-get update
-    apt-get install -y git python3 python3-venv python3-pip postgresql nginx curl wget openssl unzip uuid-runtime
-
-    # 3. ایجاد کاربر سرویس
-    if ! id "$SERVICE_USER" &>/dev/null; then
-        useradd -r -s /bin/false -d $INSTALL_DIR $SERVICE_USER
-    fi
-
-    # 4. تنظیمات دیتابیس
-    info "تنظیم پایگاه داده..."
-    sudo -u postgres psql <<EOF
-    DROP DATABASE IF EXISTS $DB_NAME;
-    DROP USER IF EXISTS $DB_USER;
-    CREATE USER $DB_USER WITH PASSWORD '$(openssl rand -hex 16)';
-    CREATE DATABASE $DB_NAME OWNER $DB_USER;
-EOF
-
-    # 5. کپی فایل‌های برنامه
-    info "کپی فایل‌های برنامه..."
-    git clone https://github.com/naseh42/zhina.git $INSTALL_DIR
-    chown -R $SERVICE_USER:$SERVICE_USER $INSTALL_DIR
-
-    # 6. محیط مجازی و وابستگی‌ها
-    info "ایجاد محیط مجازی..."
-    sudo -u $SERVICE_USER python3 -m venv $INSTALL_DIR/venv
-    
-    # 6.1 ساخت و نصب requirements.txt
-    setup_requirements
-
-    # 7. نصب و پیکربندی Xray
-    install_xray_with_all_protocols
-
-    # 8. تنظیمات SSL
-    setup_ssl_certificates
-
-    # 9. ایجاد جداول دیتابیس
-    create_database_tables
-
-    # 10. سرویس‌های سیستم
-    create_systemd_services
-
-    # 11. نمایش اطلاعات نهایی
-    show_final_info
-}
-
-main
