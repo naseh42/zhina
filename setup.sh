@@ -153,11 +153,12 @@ configure_nginx() {
     
     rm -f /etc/nginx/sites-enabled/*
     
-    # کانفیگ اصلی
-    cat > /etc/nginx/conf.d/panel.conf <<EOF
+    # کانفیگ اصلی nginx.conf
+    cat > /etc/nginx/nginx.conf <<EOF
 user www-data;
 worker_processes auto;
 pid /run/nginx.pid;
+include /etc/nginx/modules-enabled/*.conf;
 
 events {
     worker_connections 768;
@@ -176,39 +177,43 @@ http {
     access_log /var/log/nginx/access.log;
     error_log /var/log/nginx/error.log;
     gzip on;
+    include /etc/nginx/conf.d/*.conf;
+}
+EOF
+
+    # کانفیگ پنل
+    cat > /etc/nginx/conf.d/panel.conf <<EOF
+server {
+    listen 80;
+    server_name ${PANEL_DOMAIN};
     
-    server {
-        listen 80;
-        server_name ${PANEL_DOMAIN};
-        
-        location / {
-            proxy_pass http://127.0.0.1:${PANEL_PORT};
-            proxy_set_header Host \$host;
-            proxy_set_header X-Real-IP \$remote_addr;
-            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        }
-        
-        location /.well-known/acme-challenge/ {
-            root /var/www/html;
-        }
+    location / {
+        proxy_pass http://127.0.0.1:${PANEL_PORT};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     }
     
-    server {
-        listen 443 ssl;
-        server_name ${PANEL_DOMAIN};
-        
-        ssl_certificate /etc/nginx/ssl/fullchain.pem;
-        ssl_certificate_key /etc/nginx/ssl/privkey.pem;
-        ssl_protocols TLSv1.2 TLSv1.3;
-        ssl_prefer_server_ciphers on;
-        
-        location / {
-            proxy_pass http://127.0.0.1:${PANEL_PORT};
-            proxy_set_header Host \$host;
-            proxy_set_header X-Real-IP \$remote_addr;
-            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto \$scheme;
-        }
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name ${PANEL_DOMAIN};
+    
+    ssl_certificate /etc/nginx/ssl/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    
+    location / {
+        proxy_pass http://127.0.0.1:${PANEL_PORT};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
     }
 }
 EOF
