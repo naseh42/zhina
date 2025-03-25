@@ -30,6 +30,7 @@ UVICORN_WORKERS=4
 XRAY_UUID=$(uuidgen)
 XRAY_PATH="/$(openssl rand -hex 8)"
 REALITY_SHORT_ID=$(openssl rand -hex 4)
+XRAY_PORT=8443  # Changed from 443 to avoid conflict with Nginx
 TELEGRAM_BOT_TOKEN=""
 TELEGRAM_CHAT_ID=""
 
@@ -95,6 +96,7 @@ install_prerequisites() {
     ufw allow ssh
     ufw allow http
     ufw allow https
+    ufw allow $XRAY_PORT
     ufw --force enable
     
     # تنظیمات اولیه fail2ban
@@ -244,7 +246,7 @@ setup_xray() {
     },
     "inbounds": [
         {
-            "port": 443,
+            "port": $XRAY_PORT,
             "protocol": "vless",
             "settings": {
                 "clients": [{"id": "$XRAY_UUID"}],
@@ -402,18 +404,23 @@ setup_ssl() {
         apt-get install -y certbot python3-certbot-nginx
     fi
     
-    # درخواست گواهی SSL
-    if certbot --nginx --non-interactive --agree-tos --email admin@example.com -d $(hostname); then
-        # تنظیم ربات تمدید خودکار
-        echo "0 12 * * * root certbot renew --quiet" >> /etc/crontab
-        success "گواهی SSL از Let's Encrypt دریافت شد"
+    # بررسی وجود دامنه
+    read -p "آیا دامنه ثبت شده دارید؟ (y/n) " has_domain
+    if [[ "$has_domain" =~ ^[Yy]$ ]]; then
+        read -p "نام دامنه خود را وارد کنید: " domain_name
+        
+        # درخواست گواهی SSL برای دامنه
+        if certbot --nginx --non-interactive --agree-tos --email admin@$domain_name -d $domain_name; then
+            # تنظیم ربات تمدید خودکار
+            echo "0 12 * * * root certbot renew --quiet" >> /etc/crontab
+            success "گواهی SSL از Let's Encrypt دریافت شد"
+        else
+            warning "دریافت گواهی SSL از Let's Encrypt ناموفق بود، استفاده از خودامضا"
+            create_self_signed_cert
+        fi
     else
-        warning "دریافت گواهی SSL از Let's Encrypt ناموفق بود، استفاده از خودامضا"
-        mkdir -p /etc/nginx/ssl
-        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-            -keyout /etc/nginx/ssl/privkey.pem \
-            -out /etc/nginx/ssl/fullchain.pem \
-            -subj "/CN=$(hostname)"
+        warning "استفاده از گواهی خودامضا برای IP سرور"
+        create_self_signed_cert
     fi
     
     # به‌روزرسانی کانفیگ Nginx برای SSL
@@ -422,8 +429,8 @@ server {
     listen 443 ssl http2;
     server_name _;
     
-    ssl_certificate /etc/letsencrypt/live/$(hostname)/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/$(hostname)/privkey.pem;
+    ssl_certificate $ssl_cert_path;
+    ssl_certificate_key $ssl_key_path;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256';
     ssl_prefer_server_ciphers on;
@@ -452,6 +459,18 @@ EOF
     systemctl restart nginx
     
     success "تنظیمات SSL کامل شد"
+}
+
+create_self_signed_cert() {
+    # ایجاد گواهی خودامضا
+    mkdir -p /etc/nginx/ssl
+    ssl_cert_path="/etc/nginx/ssl/fullchain.pem"
+    ssl_key_path="/etc/nginx/ssl/privkey.pem"
+    
+    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+        -keyout $ssl_key_path \
+        -out $ssl_cert_path \
+        -subj "/CN=$(curl -s ifconfig.me)"
 }
 
 # ----------------------------
@@ -539,6 +558,7 @@ REALITY_PUBLIC_KEY=$REALITY_PUBLIC_KEY
 REALITY_PRIVATE_KEY=$REALITY_PRIVATE_KEY
 REALITY_SHORT_ID=$REALITY_SHORT_ID
 XRAY_CONFIG_PATH=$XRAY_CONFIG
+XRAY_PORT=$XRAY_PORT
 
 # تنظیمات امنیتی
 SECRET_KEY=$(openssl rand -hex 32)
@@ -623,6 +643,8 @@ show_installation_info() {
     
     if [[ -f "/etc/letsencrypt/live/$(hostname)/fullchain.pem" ]]; then
         panel_url="https://$(hostname)"
+    elif [[ -f "/etc/nginx/ssl/fullchain.pem" ]]; then
+        panel_url="https://${public_ip}"
     fi
     
     echo -e "\n${GREEN}=== نصب با موفقیت کامل شد ===${NC}\n"
@@ -632,7 +654,7 @@ show_installation_info() {
     echo -e "  • یوزرنیم: ${YELLOW}${ADMIN_USER}${NC}"
     echo -e "  • رمز عبور: ${YELLOW}${ADMIN_PASS}${NC}"
     echo -e "\n${BLUE}تنظیمات Xray:${NC}"
-    echo -e "  • پروتکل VLESS+Reality (پورت 443)"
+    echo -e "  • پروتکل VLESS+Reality (پورت ${XRAY_PORT})"
     echo -e "    - UUID: ${YELLOW}${XRAY_UUID}${NC}"
     echo -e "    - Public Key: ${YELLOW}${REALITY_PUBLIC_KEY}${NC}"
     echo -e "    - Short ID: ${YELLOW}${REALITY_SHORT_ID}${NC}"
@@ -654,7 +676,7 @@ Admin Username: $ADMIN_USER
 Admin Password: $ADMIN_PASS
 
 Xray Settings:
-- VLESS+Reality (Port 443)
+- VLESS+Reality (Port $XRAY_PORT)
   • UUID: $XRAY_UUID
   • Public Key: $REALITY_PUBLIC_KEY
   • Short ID: $REALITY_SHORT_ID
