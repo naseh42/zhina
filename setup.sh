@@ -27,6 +27,61 @@ error() { echo -e "${RED}[ERROR] $1${NC}" >&2; exit 1; }
 success() { echo -e "${GREEN}[SUCCESS] $1${NC}"; }
 info() { echo -e "${YELLOW}[INFO] $1${NC}"; }
 
+# ------------------- اعمال اصلاحات ساختاری -------------------
+apply_project_fixes() {
+    info "اعمال اصلاحات ساختاری پروژه..."
+    
+    # اصلاح فایل config.py
+    cat > "$INSTALL_DIR/backend/config.py" <<'EOF'
+from pydantic_settings import BaseSettings
+from pathlib import Path
+
+class Settings(BaseSettings):
+    database_url: str = "postgresql://zhina_user:1fed62488ca9d549ca440eeb9cb4e6de@localhost/zhina_db"
+    xray_config_path: str = "/etc/xray/config.json"
+    admin_username: str = "admin"
+    admin_password: str = "ade5140fb315cfa3"
+    
+    class Config:
+        env_file = "/etc/zhina/.env"
+        env_file_encoding = 'utf-8'
+        extra = 'ignore'
+
+settings = Settings()
+EOF
+
+    # اصلاح فایل database.py
+    cat > "$INSTALL_DIR/backend/database.py" <<'EOF'
+from sqlalchemy import create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from backend.config import settings
+
+SQLALCHEMY_DATABASE_URL = settings.database_url
+
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    pool_size=20,
+    max_overflow=30,
+    pool_pre_ping=True
+)
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+EOF
+
+    # تنظیم مجوزها
+    chown -R $SERVICE_USER:$SERVICE_USER $INSTALL_DIR
+    success "اصلاحات ساختاری با موفقیت اعمال شدند!"
+}
+
 # ------------------- تنظیمات دامنه -------------------
 configure_domain() {
     info "تنظیمات دامنه..."
@@ -144,7 +199,6 @@ install_xray() {
 
     XRAY_UUID=$(uuidgen)
     XRAY_PATH="/$(openssl rand -hex 6)"
-    HTTP_PATH="/$(openssl rand -hex 4)"
     
     REALITY_KEYS=$($XRAY_EXECUTABLE x25519)
     REALITY_PRIVATE_KEY=$(echo "$REALITY_KEYS" | awk '/Private key:/ {print $3}')
@@ -363,7 +417,7 @@ setup_services() {
     # ایجاد فایل محیطی
     cat > "$CONFIG_DIR/.env" <<EOF
 # تنظیمات دیتابیس
-DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
+database_url=postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
 
 # تنظیمات امنیتی
 SECRET_KEY=$(openssl rand -hex 32)
@@ -463,6 +517,7 @@ main() {
     chown -R $SERVICE_USER:$SERVICE_USER $INSTALL_DIR
     success "کدهای برنامه با موفقیت دریافت شدند!"
 
+    apply_project_fixes
     setup_requirements
     configure_domain
     setup_ssl
