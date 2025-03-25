@@ -363,6 +363,7 @@ pydantic-settings==2.0.3
 pydantic[email]==2.4.2
 email-validator>=2.0.0
 passlib==1.7.4
+python-jose[cryptography]==3.3.0
 EOF
 
     # بازسازی محیط مجازی
