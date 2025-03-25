@@ -34,8 +34,10 @@ apply_project_fixes() {
     # اصلاح فایل config.py با بهبودهای جدید
     cat > "$INSTALL_DIR/backend/config.py" <<'EOF'
 from pydantic_settings import BaseSettings
-from pydantic import Field, EmailStr
+from pydantic import Field, EmailStr, validator
 from typing import Optional
+import warnings
+from pathlib import Path
 
 class Settings(BaseSettings):
     # تنظیمات دیتابیس
@@ -45,8 +47,8 @@ class Settings(BaseSettings):
     )
     
     # تنظیمات Xray
-    XRAY_CONFIG_PATH: str = Field(
-        default="/etc/xray/config.json",
+    XRAY_CONFIG_PATH: Path = Field(
+        default=Path("/etc/xray/config.json"),
         description="مسیر فایل پیکربندی Xray"
     )
     XRAY_UUID: str = Field(
@@ -63,6 +65,10 @@ class Settings(BaseSettings):
         ...,
         description="کلید عمومی برای پروتکل Reality"
     )
+    REALITY_PRIVATE_KEY: str = Field(
+        ...,
+        description="کلید خصوصی برای پروتکل Reality"
+    )
     REALITY_SHORT_ID: str = Field(
         ...,
         description="شناسه کوتاه برای Reality"
@@ -76,6 +82,16 @@ class Settings(BaseSettings):
     DEBUG: bool = Field(
         default=False,
         description="حالت دیباگ"
+    )
+    
+    # تنظیمات احراز هویت
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(
+        default=30,
+        description="مدت زمان اعتبار توکن دسترسی (دقیقه)"
+    )
+    JWT_ALGORITHM: str = Field(
+        default="HS256",
+        description="الگوریتم JWT"
     )
     
     # تنظیمات مدیریتی
@@ -109,7 +125,14 @@ class Settings(BaseSettings):
     class Config:
         env_file = "/etc/zhina/.env"
         env_file_encoding = 'utf-8'
-        extra = 'ignore'
+        extra = 'forbid'
+        case_sensitive = True
+
+    @validator('ADMIN_PASSWORD')
+    def validate_admin_password(cls, v):
+        if v == 'admin123':
+            warnings.warn('Default admin password detected! Please change immediately.', UserWarning)
+        return v
 
 settings = Settings()
 EOF
@@ -461,16 +484,20 @@ DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
 XRAY_UUID=$XRAY_UUID
 XRAY_PATH=$XRAY_PATH
 REALITY_PUBLIC_KEY=$REALITY_PUBLIC_KEY
+REALITY_PRIVATE_KEY=$REALITY_PRIVATE_KEY
 REALITY_SHORT_ID=$REALITY_SHORT_ID
 XRAY_CONFIG_PATH=/etc/xray/config.json
 
 # تنظیمات امنیتی
 SECRET_KEY=$(openssl rand -hex 32)
 DEBUG=False
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+JWT_ALGORITHM=HS256
 
 # تنظیمات مدیریتی
 ADMIN_USERNAME=$ADMIN_USER
 ADMIN_PASSWORD=$ADMIN_PASS
+ADMIN_EMAIL=admin@example.com
 
 # تنظیمات اضافی
 LANGUAGE=fa
@@ -556,6 +583,7 @@ show_info() {
     echo -e "  - ${YELLOW}Shadowsocks${NC} (پورت 8388)"
     echo -e "• UUID/پسورد مشترک: ${YELLOW}${XRAY_UUID}${NC}"
     echo -e "• کلید عمومی Reality: ${YELLOW}${REALITY_PUBLIC_KEY}${NC}"
+    echo -e "• کلید خصوصی Reality: ${RED}${REALITY_PRIVATE_KEY}${NC} (محرمانه!)"
 
     echo -e "\nدستورات مدیریت:"
     echo -e "• وضعیت سرویس‌ها: ${YELLOW}systemctl status {xray,zhina-panel,nginx}${NC}"
@@ -602,6 +630,7 @@ main() {
     if ! sudo -u $SERVICE_USER $INSTALL_DIR/venv/bin/python -c "
 from backend.config import settings
 assert settings.DATABASE_URL.startswith('postgresql://'), 'خطا در تنظیمات دیتابیس'
+assert len(settings.SECRET_KEY) >= 32, 'کلید امنیتی باید حداقل 32 کاراکتر باشد'
 print('✓ تست تنظیمات با موفقیت انجام شد')
 "; then
         error "خطا در تست نهایی پیکربندی"
