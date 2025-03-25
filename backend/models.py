@@ -65,3 +65,12 @@ class Node(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime)
     updated_at = Column(DateTime)
+
+class Inbound(Base):
+    __tablename__ = "inbounds"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    settings = Column(JSON, nullable=True)  # تنظیمات مرتبط با inbound
+    created_at = Column(DateTime)
+    updated_at = Column(DateTime)
