@@ -9,13 +9,12 @@ XRAY_CONFIG="$XRAY_DIR/config.json"
 SERVICE_USER="zhina"
 DB_NAME="zhina_db"
 DB_USER="zhina_user"
-PANEL_PORT=8001  # تغییر پورت از 8000 به 8001
+PANEL_PORT=8001
 ADMIN_USER="admin"
 ADMIN_PASS=$(openssl rand -hex 8)
 XRAY_VERSION="1.8.11"
 UVICORN_WORKERS=4
-APP_ENTRYPOINT="$INSTALL_DIR/backend/app.py"  # مسیر دقیق app.py
-CB_DIR="$INSTALL_DIR/backend/xray_config"     # مسیر دایرکتوری xray_config
+DB_PASSWORD=$(openssl rand -hex 16)  # رمز عبور دیتابیس
 
 # ------------------- رنگ‌ها و توابع -------------------
 RED='\033[0;31m'
@@ -155,13 +154,12 @@ install_xray() {
     REALITY_PUBLIC_KEY=$(echo "$REALITY_KEYS" | awk '/Public key:/ {print $3}')
     REALITY_SHORT_ID=$(openssl rand -hex 8)
 
-    # تغییر پورت اصلی Xray به 8443 برای جلوگیری از تداخل با Nginx
     cat > "$XRAY_CONFIG" <<EOF
 {
     "log": {"loglevel": "warning"},
     "inbounds": [
         {
-            "port": 8443,  # تغییر پورت از 443 به 8443
+            "port": 8443,
             "protocol": "vless",
             "settings": {
                 "clients": [{"id": "$XRAY_UUID"}],
@@ -264,7 +262,7 @@ setup_database() {
     sudo -u postgres psql <<EOF
     DROP DATABASE IF EXISTS $DB_NAME;
     DROP USER IF EXISTS $DB_USER;
-    CREATE USER $DB_USER WITH PASSWORD '$(openssl rand -hex 16)';
+    CREATE USER $DB_USER WITH PASSWORD '$DB_PASSWORD';
     CREATE DATABASE $DB_NAME OWNER $DB_USER;
 EOF
     sudo -u postgres psql -d $DB_NAME -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
@@ -364,7 +362,7 @@ setup_services() {
 
     # ایجاد فایل محیطی
     cat > "$INSTALL_DIR/backend/.env" <<EOF
-DATABASE_URL=postgresql://$DB_USER:$(sudo -u postgres psql -t -c "SELECT password FROM pg_shadow WHERE usename='$DB_USER'" | awk '{print $1}')@localhost/$DB_NAME
+DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
 SECRET_KEY=$(openssl rand -hex 32)
 DEBUG=False
 EOF
