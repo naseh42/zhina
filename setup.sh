@@ -3,6 +3,7 @@ set -euo pipefail
 
 # ------------------- تنظیمات اصلی -------------------
 INSTALL_DIR="/var/lib/zhina"
+CONFIG_DIR="/etc/zhina"
 XRAY_DIR="/usr/local/bin/xray"
 XRAY_EXECUTABLE="$XRAY_DIR/xray"
 XRAY_CONFIG="$XRAY_DIR/config.json"
@@ -14,7 +15,7 @@ ADMIN_USER="admin"
 ADMIN_PASS=$(openssl rand -hex 8)
 XRAY_VERSION="1.8.11"
 UVICORN_WORKERS=4
-DB_PASSWORD=$(openssl rand -hex 16)  # رمز عبور دیتابیس
+DB_PASSWORD=$(openssl rand -hex 16)
 
 # ------------------- رنگ‌ها و توابع -------------------
 RED='\033[0;31m'
@@ -50,20 +51,17 @@ setup_ssl() {
     mkdir -p /etc/nginx/ssl
     
     if [[ "$PANEL_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        # SSL خودامضا برای IP
         openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
             -keyout /etc/nginx/ssl/privkey.pem \
             -out /etc/nginx/ssl/fullchain.pem \
             -subj "/CN=${PANEL_DOMAIN}"
         SSL_TYPE="self-signed"
     else
-        # Let's Encrypt برای دامنه
         apt-get install -y certbot python3-certbot-nginx
         if certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --agree-tos --email admin@${PANEL_DOMAIN#*.}; then
             SSL_TYPE="letsencrypt"
             echo "0 12 * * * root certbot renew --quiet" >> /etc/crontab
         else
-            echo -e "${YELLOW}استفاده از SSL خودامضا${NC}"
             openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
                 -keyout /etc/nginx/ssl/privkey.pem \
                 -out /etc/nginx/ssl/fullchain.pem \
@@ -80,7 +78,6 @@ setup_ssl() {
 configure_nginx() {
     info "تنظیم Nginx..."
     
-    # توقف موقت Xray برای آزادسازی پورت 443
     systemctl stop xray || true
     
     rm -f /etc/nginx/sites-enabled/*
@@ -125,7 +122,7 @@ EOF
     chown -R www-data:www-data /var/www/html
     
     if ! nginx -t; then
-        error "خطا در کانفیگ Nginx. لطفاً خطاهای بالا را بررسی کنید."
+        error "خطا در کانفیگ Nginx"
     fi
     
     systemctl restart nginx
@@ -360,15 +357,34 @@ EOF
 setup_services() {
     info "تنظیم سرویس‌های سیستم..."
 
+    # ایجاد دایرکتوری کانفیگ
+    mkdir -p $CONFIG_DIR
+
     # ایجاد فایل محیطی
-    cat > "$INSTALL_DIR/backend/.env" <<EOF
+    cat > "$CONFIG_DIR/.env" <<EOF
+# تنظیمات دیتابیس
 DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
+
+# تنظیمات امنیتی
 SECRET_KEY=$(openssl rand -hex 32)
 DEBUG=False
+
+# تنظیمات Xray
+XRAY_UUID=$XRAY_UUID
+XRAY_PATH=$XRAY_PATH
+REALITY_PUBLIC_KEY=$REALITY_PUBLIC_KEY
+REALITY_SHORT_ID=$REALITY_SHORT_ID
+
+# تنظیمات مدیریتی
+ADMIN_USERNAME=$ADMIN_USER
+ADMIN_PASSWORD=$ADMIN_PASS
 EOF
 
-    chown $SERVICE_USER:$SERVICE_USER "$INSTALL_DIR/backend/.env"
-    chmod 600 "$INSTALL_DIR/backend/.env"
+    # لینک نمادین به فایل .env در دایرکتوری پروژه
+    ln -sf "$CONFIG_DIR/.env" "$INSTALL_DIR/backend/.env"
+
+    chown -R $SERVICE_USER:$SERVICE_USER $CONFIG_DIR
+    chmod 600 "$CONFIG_DIR/.env"
 
     cat > /etc/systemd/system/zhina-panel.service <<EOF
 [Unit]
