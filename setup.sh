@@ -281,6 +281,7 @@ uvicorn==0.23.2
 python-multipart==0.0.6
 jinja2==3.1.2
 python-dotenv==1.0.0
+pydantic-settings==2.0.3
 EOF
     success "فایل requirements.txt ایجاد شد!"
 
@@ -361,6 +362,16 @@ EOF
 setup_services() {
     info "تنظیم سرویس‌های سیستم..."
 
+    # ایجاد فایل محیطی
+    cat > "$INSTALL_DIR/backend/.env" <<EOF
+DATABASE_URL=postgresql://$DB_USER:$(sudo -u postgres psql -t -c "SELECT password FROM pg_shadow WHERE usename='$DB_USER'" | awk '{print $1}')@localhost/$DB_NAME
+SECRET_KEY=$(openssl rand -hex 32)
+DEBUG=False
+EOF
+
+    chown $SERVICE_USER:$SERVICE_USER "$INSTALL_DIR/backend/.env"
+    chmod 600 "$INSTALL_DIR/backend/.env"
+
     cat > /etc/systemd/system/zhina-panel.service <<EOF
 [Unit]
 Description=Zhina Panel Service
@@ -368,10 +379,13 @@ After=network.target postgresql.service
 
 [Service]
 User=$SERVICE_USER
+Group=$SERVICE_USER
 WorkingDirectory=$INSTALL_DIR/backend
 Environment="PATH=$INSTALL_DIR/venv/bin"
+Environment="PYTHONPATH=$INSTALL_DIR:$INSTALL_DIR/backend"
 ExecStart=$INSTALL_DIR/venv/bin/uvicorn app:app --host 0.0.0.0 --port $PANEL_PORT --workers $UVICORN_WORKERS
 Restart=always
+RestartSec=5s
 
 [Install]
 WantedBy=multi-user.target
