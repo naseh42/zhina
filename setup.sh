@@ -83,9 +83,14 @@ install_xray() {
     # تولید مقادیر تصادفی
     XRAY_UUID=$(uuidgen)
     XRAY_PATH="/$(openssl rand -hex 6)"
-    REALITY_KEY=$(/usr/local/bin/xray/xray x25519 | awk '/priv:/{print $2}')
+    
+    # تولید کلیدهای Reality به روش صحیح
+    REALITY_KEYS=$($XRAY_EXECUTABLE x25519)
+    REALITY_PRIVATE_KEY=$(echo "$REALITY_KEYS" | awk '/Private key:/ {print $3}')
+    REALITY_PUBLIC_KEY=$(echo "$REALITY_KEYS" | awk '/Public key:/ {print $3}')
+    REALITY_SHORT_ID=$(openssl rand -hex 8)
 
-    # ایجاد فایل کانفیگ
+    # ایجاد فایل کانفیگ با تنظیمات صحیح
     cat > "$XRAY_CONFIG" <<EOF
 {
     "log": {"loglevel": "warning"},
@@ -105,8 +110,8 @@ install_xray() {
                     "dest": "www.amazon.com:443",
                     "xver": 0,
                     "serverNames": ["www.amazon.com"],
-                    "privateKey": "$REALITY_KEY",
-                    "shortIds": ["$(openssl rand -hex 8)"]
+                    "privateKey": "$REALITY_PRIVATE_KEY",
+                    "shortIds": ["$REALITY_SHORT_ID"]
                 }
             }
         },
@@ -317,6 +322,7 @@ show_info() {
     echo -e "  - ${YELLOW}Hysteria${NC} (پورت 2095)"
     echo -e "  - ${YELLOW}TUIC${NC} (پورت 2096)"
     echo -e "• UUID/پسورد مشترک: ${YELLOW}${XRAY_UUID}${NC}"
+    echo -e "• کلید عمومی Reality: ${YELLOW}${REALITY_PUBLIC_KEY}${NC}"
 
     echo -e "\nدستورات مدیریت:"
     echo -e "• وضعیت Xray: ${YELLOW}systemctl status xray${NC}"
