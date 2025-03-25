@@ -8,14 +8,14 @@ import uuid
 from pathlib import Path
 
 class Settings(BaseSettings):
-    # 1. Database Configuration
+    # 1. Database Configuration (تنها تغییر: اضافه شدن پورت 5432)
     DATABASE_URL: str = Field(
-        default="postgresql://zhina_user:1b4becba55eab852259f6b0051414ace@localhost/zhina_db",
+        default="postgresql://zhina_user:1b4becba55eab852259f6b0051414ace@localhost:5432/zhina_db",
         description="Database connection URL in SQLAlchemy format",
         example="postgresql://user:password@localhost/dbname"
     )
     
-    # 2. Xray Core Settings
+    # 2. Xray Core Settings (بدون تغییر)
     XRAY_UUID: str = Field(
         default_factory=lambda: str(uuid.uuid4()),
         min_length=36,
@@ -32,7 +32,7 @@ class Settings(BaseSettings):
         description="Absolute path to Xray config file"
     )
     
-    # 3. Reality Protocol Settings
+    # 3. Reality Protocol Settings (بدون تغییر)
     REALITY_PUBLIC_KEY: str = Field(
         ...,
         min_length=43,
@@ -54,7 +54,7 @@ class Settings(BaseSettings):
         description="Short ID for Reality protocol"
     )
     
-    # 4. Security Settings
+    # 4. Security Settings (بدون تغییر)
     SECRET_KEY: str = Field(
         default_factory=lambda: secrets.token_urlsafe(64),
         min_length=64,
@@ -65,7 +65,7 @@ class Settings(BaseSettings):
         description="Debug mode (DO NOT enable in production)"
     )
     
-    # 5. JWT Authentication
+    # 5. JWT Authentication (بدون تغییر)
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(
         default=30,
         ge=5,
@@ -77,7 +77,7 @@ class Settings(BaseSettings):
         description="JWT signing algorithm"
     )
     
-    # 6. Admin Account
+    # 6. Admin Account (بدون تغییر)
     ADMIN_USERNAME: str = Field(
         default="admin",
         min_length=4,
@@ -94,7 +94,7 @@ class Settings(BaseSettings):
         description="Admin contact email"
     )
     
-    # 7. Panel Configuration
+    # 7. Panel Configuration (بدون تغییر)
     LANGUAGE: Literal["fa", "en"] = Field(
         default="fa",
         description="Panel interface language"
@@ -108,7 +108,7 @@ class Settings(BaseSettings):
         description="Enable system notifications"
     )
     
-    # 8. Server Network
+    # 8. Server Network (بدون تغییر)
     SERVER_IP: Optional[str] = Field(
         default=None,
         description="Public IP address for the server"
@@ -124,7 +124,7 @@ class Settings(BaseSettings):
         description="Host interface to bind to"
     )
     
-    # 9. SSL Configuration
+    # 9. SSL Configuration (بدون تغییر)
     SSL_CERT_PATH: Optional[Path] = Field(
         default=None,
         description="Path to SSL certificate file"
@@ -134,7 +134,7 @@ class Settings(BaseSettings):
         description="Path to SSL private key file"
     )
     
-    # 10. Rate Limiting
+    # 10. Rate Limiting (بدون تغییر)
     RATE_LIMIT: int = Field(
         default=100,
         ge=10,
@@ -149,7 +149,7 @@ class Settings(BaseSettings):
         env_prefix = "ZHINA_"
         secrets_dir = "/etc/zhina/secrets"
 
-    # Custom Validators
+    # Custom Validators (بدون تغییر)
     @validator("DATABASE_URL")
     def validate_db_url(cls, v):
         if "postgres:" in v:
