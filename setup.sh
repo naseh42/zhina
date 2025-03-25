@@ -32,34 +32,67 @@ info() { echo -e "${YELLOW}[INFO] $1${NC}"; }
 configure_nginx_sni() {
     info "تنظیم Nginx برای SNI-based分流"
     
-    # ایجاد کانفیگ Nginx
+    # حذف کانفیگ‌های قبلی
+    rm -f /etc/nginx/sites-enabled/*
+    
+    # ایجاد کانفیگ اصلی
     cat > /etc/nginx/nginx.conf <<EOF
 user www-data;
 worker_processes auto;
 pid /run/nginx.pid;
+include /etc/nginx/modules-enabled/*.conf;
+
+events {
+    worker_connections 768;
+}
+
+http {
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    access_log /var/log/nginx/access.log;
+    error_log /var/log/nginx/error.log;
+    gzip on;
+    include /etc/nginx/conf.d/*.conf;
+    include /etc/nginx/sites-enabled/*;
+}
 
 stream {
+    # Map SNI به بک‌اند مناسب
     map \$ssl_preread_server_name \$backend {
         ${PANEL_DOMAIN} 127.0.0.1:${PANEL_PORT};
         default 127.0.0.1:443_xray;
     }
 
+    # سرور اصلی برای شنود پورت 443
     server {
         listen 443 reuseport;
         listen [::]:443 reuseport;
-        ssl_preread on;
         proxy_pass \$backend;
-    }
-}
-
-http {
-    server {
-        listen 80;
-        server_name ${PANEL_DOMAIN};
-        return 301 https://\$host\$request_uri;
+        ssl_preread on;
     }
 }
 EOF
+
+    # ایجاد کانفیگ HTTP برای پنل
+    cat > /etc/nginx/conf.d/panel.conf <<EOF
+server {
+    listen 80;
+    server_name ${PANEL_DOMAIN};
+    return 301 https://\$host\$request_uri;
+}
+EOF
+
+    # تست کانفیگ
+    if ! nginx -t; then
+        error "خطا در کانفیگ Nginx. لطفاً خطاهای بالا را بررسی کنید."
+    fi
 
     systemctl restart nginx
     success "Nginx با موفقیت برای SNI تنظیم شد!"
@@ -72,20 +105,13 @@ modify_xray_for_sni() {
     sed -i 's/"port": 443/"port": 443_xray/g' "$XRAY_CONFIG"
     
     # اضافه کردن دامنه پنل به serverNames
-    sed -i '/"serverNames": \["www.amazon.com"/s/"/"'"${PANEL_DOMAIN}"', "/' "$XRAY_CONFIG"
+    if ! grep -q "$PANEL_DOMAIN" "$XRAY_CONFIG"; then
+        sed -i '/"serverNames": \["www.amazon.com"/s/"/"'"${PANEL_DOMAIN}"', "/' "$XRAY_CONFIG"
+    fi
     
     systemctl restart xray
     success "Xray برای کار با SNI به‌روزرسانی شد!"
 }
-
-setup_panel_ssl() {
-    info "تنظیم SSL برای پنل مدیریتی"
-    
-    apt-get install -y certbot python3-certbot-nginx
-    certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --agree-tos --email admin@${PANEL_DOMAIN#*.}
-    echo "0 12 * * * root certbot renew --quiet" >> /etc/crontab
-    
-    success "SSL برای پنل تنظیم شد!"
 }
 
 # ------------------- توابع اصلی (بدون تغییر) -------------------
