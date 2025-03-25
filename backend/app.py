@@ -9,11 +9,16 @@ from datetime import datetime, timedelta
 from typing import Optional
 import logging
 from pathlib import Path
+import sys
 
+# تنظیم مسیرهای پروژه
+sys.path.append(str(Path(__file__).parent.parent))
+
+# Importهای داخلی
 from . import schemas, models, utils
-from backend.database import get_db, engine, Base
-from backend.config import settings
-from backend.xray_config import xray_settings
+from .database import get_db, engine, Base
+from .config import settings
+from .xray_config import xray_settings
 
 # Initialize FastAPI
 app = FastAPI(
@@ -24,14 +29,14 @@ app = FastAPI(
     redoc_url=None
 )
 
-# Setup static files and templates
+# تنظیمات فایل‌های استاتیک و قالب‌ها
 STATIC_DIR = "/var/lib/zhina/frontend/static"
 TEMPLATE_DIR = "/var/lib/zhina/frontend/templates"
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATE_DIR)
 
-# CORS Configuration
+# تنظیمات CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -40,14 +45,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Helper Functions
+# توابع کمکی
 def authenticate_user(username: str, password: str, db: Session):
     user = db.query(models.User).filter(models.User.username == username).first()
     if not user or not utils.verify_password(password, user.hashed_password):
         return False
     return user
 
-# Database Initialization
+# راه‌اندازی پایگاه داده
 @app.on_event("startup")
 async def startup():
     try:
@@ -60,9 +65,10 @@ async def startup():
             logging.error(f"Database error: {str(e)}")
             raise
 
-# Routes
+# مسیرها
 @app.get("/", response_class=HTMLResponse)
 async def serve_home(request: Request):
+    """سرویس دهی صفحه اصلی داشبورد"""
     return templates.TemplateResponse("dashboard.html", {"request": request})
 
 @app.post("/token", response_model=schemas.Token)
@@ -70,6 +76,7 @@ async def login_for_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
+    """ایجاد توکن دسترسی"""
     user = authenticate_user(form_data.username, form_data.password, db)
     if not user:
         raise HTTPException(
@@ -85,6 +92,7 @@ async def login_for_access_token(
 
 @app.post("/users/", response_model=schemas.UserCreate)
 def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
+    """ایجاد کاربر جدید"""
     hashed_password = utils.get_password_hash(user.password)
     db_user = models.User(
         username=user.username,
@@ -103,6 +111,7 @@ def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
 
 @app.get("/xray/status")
 def get_xray_status():
+    """دریافت وضعیت Xray"""
     return {
         "status": "active",
         "settings": xray_settings.dict()
@@ -110,6 +119,7 @@ def get_xray_status():
 
 @app.get("/health")
 def health_check():
+    """بررسی سلامت سرویس"""
     return {
         "status": "OK",
         "timestamp": datetime.utcnow().isoformat(),
