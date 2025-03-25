@@ -4,7 +4,7 @@ set -euo pipefail
 # ------------------- تنظیمات اصلی -------------------
 INSTALL_DIR="/var/lib/zhina"
 XRAY_DIR="/usr/local/bin/xray"
-XRAY_EXECUTABLE="$XRAY_DIR/xray-core"  # تغییر نام فایل اجرایی برای جلوگیری از تداخل
+XRAY_EXECUTABLE="$XRAY_DIR/xray"
 XRAY_CONFIG="$XRAY_DIR/config.json"
 SERVICE_USER="zhina"
 DB_NAME="zhina_db"
@@ -41,7 +41,6 @@ setup_database() {
     CREATE USER $DB_USER WITH PASSWORD '$(openssl rand -hex 16)';
     CREATE DATABASE $DB_NAME OWNER $DB_USER;
 EOF
-    # نصب extension مورد نیاز برای تابع gen_salt
     sudo -u postgres psql -d $DB_NAME -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
     success "پایگاه داده با موفقیت تنظیم شد!"
 }
@@ -72,22 +71,19 @@ install_xray() {
     info "نصب و پیکربندی Xray..."
     
     # حذف نسخه قبلی اگر وجود دارد
-    sudo systemctl stop xray 2>/dev/null || true
+    systemctl stop xray 2>/dev/null || true
     rm -rf "$XRAY_DIR"
     
     # ایجاد دایرکتوری و دانلود Xray
     mkdir -p "$XRAY_DIR"
     wget "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" -O /tmp/xray.zip
     unzip -o /tmp/xray.zip -d "$XRAY_DIR"
-    
-    # تغییر نام فایل اجرایی برای جلوگیری از تداخل
-    mv "$XRAY_DIR/xray" "$XRAY_EXECUTABLE"
     chmod +x "$XRAY_EXECUTABLE"
 
     # تولید مقادیر تصادفی
     XRAY_UUID=$(uuidgen)
     XRAY_PATH="/$(openssl rand -hex 6)"
-    REALITY_KEY=$(openssl rand -hex 32)
+    REALITY_KEY=$(/usr/local/bin/xray/xray x25519 | awk '/priv:/{print $2}')
 
     # ایجاد فایل کانفیگ
     cat > "$XRAY_CONFIG" <<EOF
@@ -97,7 +93,10 @@ install_xray() {
         {
             "port": 443,
             "protocol": "vless",
-            "settings": {"clients": [{"id": "$XRAY_UUID"}], "decryption": "none"},
+            "settings": {
+                "clients": [{"id": "$XRAY_UUID"}],
+                "decryption": "none"
+            },
             "streamSettings": {
                 "network": "tcp",
                 "security": "reality",
@@ -105,38 +104,72 @@ install_xray() {
                     "show": false,
                     "dest": "www.amazon.com:443",
                     "xver": 0,
-                    "privateKey": "$REALITY_KEY"
+                    "serverNames": ["www.amazon.com"],
+                    "privateKey": "$REALITY_KEY",
+                    "shortIds": ["$(openssl rand -hex 8)"]
                 }
             }
         },
         {
             "port": 8080,
             "protocol": "vmess",
-            "settings": {"clients": [{"id": "$XRAY_UUID"}]},
+            "settings": {
+                "clients": [{"id": "$XRAY_UUID"}]
+            },
             "streamSettings": {
                 "network": "ws",
-                "wsSettings": {"path": "$XRAY_PATH"}
+                "security": "none",
+                "wsSettings": {
+                    "path": "$XRAY_PATH",
+                    "headers": {}
+                }
             }
         },
         {
             "port": 8443,
             "protocol": "trojan",
-            "settings": {"clients": [{"password": "$XRAY_UUID"}]}
+            "settings": {
+                "clients": [{"password": "$XRAY_UUID"}]
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "tls",
+                "tlsSettings": {
+                    "alpn": ["h2", "http/1.1"],
+                    "certificates": [{
+                        "certificateFile": "/etc/nginx/ssl/fullchain.pem",
+                        "keyFile": "/etc/nginx/ssl/privkey.pem"
+                    }]
+                }
+            }
         },
         {
             "port": 8388,
             "protocol": "shadowsocks",
-            "settings": {"method": "aes-256-gcm", "password": "$XRAY_UUID"}
+            "settings": {
+                "method": "aes-256-gcm",
+                "password": "$XRAY_UUID",
+                "network": "tcp,udp"
+            }
         },
         {
             "port": 2095,
             "protocol": "hysteria",
-            "settings": {"auth": "$XRAY_UUID", "obfs": "$XRAY_PATH"}
+            "settings": {
+                "auth": "$XRAY_UUID",
+                "obfs": "$XRAY_PATH",
+                "up": "100 Mbps",
+                "down": "100 Mbps"
+            }
         },
         {
             "port": 2096,
             "protocol": "tuic",
-            "settings": {"token": "$XRAY_UUID"}
+            "settings": {
+                "token": "$XRAY_UUID",
+                "certificate": "/etc/nginx/ssl/fullchain.pem",
+                "privateKey": "/etc/nginx/ssl/privkey.pem"
+            }
         }
     ],
     "outbounds": [{"protocol": "freedom"}]
@@ -152,6 +185,7 @@ setup_ssl() {
         -keyout /etc/nginx/ssl/privkey.pem \
         -out /etc/nginx/ssl/fullchain.pem \
         -subj "/CN=$(curl -s ifconfig.me)"
+    chmod 600 /etc/nginx/ssl/*
     success "گواهی SSL با موفقیت ایجاد شد!"
 }
 
@@ -223,10 +257,6 @@ EOF
 setup_services() {
     info "تنظیم سرویس‌های سیستم..."
 
-    # حذف تنظیمات قبلی اگر وجود دارد
-    rm -f /etc/systemd/system/xray.service
-    rm -rf /etc/systemd/system/xray.service.d
-
     # سرویس Xray
     cat > /etc/systemd/system/xray.service <<EOF
 [Unit]
@@ -236,12 +266,12 @@ After=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=$(dirname "$XRAY_EXECUTABLE")
+WorkingDirectory=$XRAY_DIR
 ExecStart=$XRAY_EXECUTABLE run -config $XRAY_CONFIG
 Restart=always
 RestartSec=3
 LimitNOFILE=65535
-Environment="XRAY_LOCATION_ASSET=$(dirname "$XRAY_EXECUTABLE")"
+Environment="XRAY_LOCATION_ASSET=$XRAY_DIR"
 
 [Install]
 WantedBy=multi-user.target
@@ -271,22 +301,22 @@ EOF
 }
 
 show_info() {
+    PUBLIC_IP=$(curl -s ifconfig.me)
     success "\n\n=== نصب کامل شد! ==="
     echo -e "دسترسی پنل مدیریتی:"
-    echo -e "• آدرس: http://$(curl -s ifconfig.me):$PANEL_PORT"
-    echo -e "• یوزرنیم ادمین: ${YELLOW}$ADMIN_USER${NC}"
-    echo -e "• پسورد ادمین: ${YELLOW}$ADMIN_PASS${NC}"
+    echo -e "• آدرس: http://${PUBLIC_IP}:${PANEL_PORT}"
+    echo -e "• یوزرنیم ادمین: ${YELLOW}${ADMIN_USER}${NC}"
+    echo -e "• پسورد ادمین: ${YELLOW}${ADMIN_PASS}${NC}"
 
     echo -e "\nتنظیمات Xray:"
     echo -e "• پروتکل‌های فعال:"
     echo -e "  - ${YELLOW}VLESS + Reality${NC} (پورت 443)"
-    echo -e "  - ${YELLOW}VMess + WS${NC} (پورت 8080)"
+    echo -e "  - ${YELLOW}VMess + WS${NC} (پورت 8080 - مسیر: ${XRAY_PATH})"
     echo -e "  - ${YELLOW}Trojan${NC} (پورت 8443)"
     echo -e "  - ${YELLOW}Shadowsocks${NC} (پورت 8388)"
     echo -e "  - ${YELLOW}Hysteria${NC} (پورت 2095)"
     echo -e "  - ${YELLOW}TUIC${NC} (پورت 2096)"
-    echo -e "• UUID/پسورد مشترک: ${YELLOW}$XRAY_UUID${NC}"
-    echo -e "• مسیر WS: ${YELLOW}$XRAY_PATH${NC}"
+    echo -e "• UUID/پسورد مشترک: ${YELLOW}${XRAY_UUID}${NC}"
 
     echo -e "\nدستورات مدیریت:"
     echo -e "• وضعیت Xray: ${YELLOW}systemctl status xray${NC}"
@@ -324,11 +354,11 @@ main() {
     # 5. نصب وابستگی‌ها
     setup_requirements
 
-    # 6. نصب Xray
-    install_xray
-
-    # 7. تنظیم SSL
+    # 6. تنظیم SSL
     setup_ssl
+
+    # 7. نصب Xray
+    install_xray
 
     # 8. ایجاد جداول
     create_tables
