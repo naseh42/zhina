@@ -9,13 +9,13 @@ XRAY_CONFIG="$XRAY_DIR/config.json"
 SERVICE_USER="zhina"
 DB_NAME="zhina_db"
 DB_USER="zhina_user"
-PANEL_PORT=8001
+PANEL_PORT=8001  # تغییر پورت از 8000 به 8001
 ADMIN_USER="admin"
 ADMIN_PASS=$(openssl rand -hex 8)
 XRAY_VERSION="1.8.11"
 UVICORN_WORKERS=4
-APP_ENTRYPOINT="$INSTALL_DIR/backend/app.py"
-CB_DIR="$INSTALL_DIR/backend/xray_config"
+APP_ENTRYPOINT="$INSTALL_DIR/backend/app.py"  # مسیر دقیق app.py
+CB_DIR="$INSTALL_DIR/backend/xray_config"     # مسیر دایرکتوری xray_config
 
 # ------------------- رنگ‌ها و توابع -------------------
 RED='\033[0;31m'
@@ -29,37 +29,16 @@ info() { echo -e "${YELLOW}[INFO] $1${NC}"; }
 
 # ------------------- تنظیمات دامنه -------------------
 configure_domain() {
-    echo -e "\n${YELLOW}=== تنظیمات دامنه ===${NC}"
+    info "تنظیمات دامنه..."
     read -p "آیا می‌خواهید از دامنه اختصاصی استفاده کنید؟ (y/n) " USE_DOMAIN
     
     if [[ "$USE_DOMAIN" =~ ^[Yy]$ ]]; then
-        while true; do
-            read -p "لطفا نام دامنه خود را وارد کنید (مثال: panel.example.com): " PANEL_DOMAIN
-            if [[ "$PANEL_DOMAIN" =~ ^[a-zA-Z0-9.-]+$ ]]; then
-                break
-            else
-                echo -e "${RED}نام دامنه نامعتبر است! لطفا دوباره وارد کنید.${NC}"
-            fi
-        done
-        
+        read -p "لطفا نام دامنه خود را وارد کنید (مثال: panel.example.com): " PANEL_DOMAIN
         PUBLIC_IP=$(curl -s ifconfig.me)
-        echo -e "\n${YELLOW}لطفا مراحل زیر را انجام دهید:${NC}"
-        echo -e "1. در پنل مدیریت دامنه خود، رکورد DNS زیر را ایجاد کنید:"
-        echo -e "   ${GREEN}${PANEL_DOMAIN} A ${PUBLIC_IP}${NC}"
-        echo -e "2. ممکن است انتشار DNS تا 24 ساعت طول بکشد"
-        echo -e "3. پس از تنظیم DNS، این اسکریپت را دوباره اجرا کنید"
-        
-        read -p "آیا می‌خواهید ادامه دهید؟ (y/n) " CONTINUE
-        [[ "$CONTINUE" =~ ^[Yy]$ ]] || exit 0
-        
-        # بررسی DNS
-        DNS_CHECK=$(dig +short "$PANEL_DOMAIN")
-        if [[ "$DNS_CHECK" != "$PUBLIC_IP" ]]; then
-            echo -e "${YELLOW}[WARNING] DNS هنوز تنظیم نشده یا propagate نشده است!${NC}"
-            read -p "آیا می‌خواهید با IP سرور ادامه دهید؟ (y/n) " USE_IP
-            [[ "$USE_IP" =~ ^[Yy]$ ]] || exit 1
-            PANEL_DOMAIN="$PUBLIC_IP"
-        fi
+        echo -e "\nلطفا رکورد DNS زیر را در پنل مدیریت دامنه خود تنظیم کنید:"
+        echo -e "${YELLOW}${PANEL_DOMAIN} A ${PUBLIC_IP}${NC}"
+        echo -e "پس از تنظیم DNS، 5 دقیقه صبر کنید و سپس Enter بزنید"
+        read -p "آیا DNS را تنظیم کرده‌اید؟ (Enter) "
     else
         PANEL_DOMAIN=$(curl -s ifconfig.me)
     fi
@@ -77,70 +56,21 @@ setup_ssl() {
             -keyout /etc/nginx/ssl/privkey.pem \
             -out /etc/nginx/ssl/fullchain.pem \
             -subj "/CN=${PANEL_DOMAIN}"
-        
         SSL_TYPE="self-signed"
     else
         # Let's Encrypt برای دامنه
-        if ! command -v certbot &> /dev/null; then
-            apt-get install -y certbot python3-certbot-nginx
-        fi
-        
-        # ایجاد کانفیگ موقت برای تایید دامنه
-        cat > /etc/nginx/conf.d/le_verify.conf <<EOF
-server {
-    listen 80;
-    server_name ${PANEL_DOMAIN};
-    location /.well-known/acme-challenge/ {
-        root /var/www/html;
-    }
-    location / {
-        return 301 https://\$host\$request_uri;
-    }
-}
-EOF
-        
-        systemctl restart nginx
-        
-        # دریافت گواهی با 3 روش مختلف
-        echo -e "${YELLOW}تلاش برای دریافت گواهی SSL...${NC}"
-        
-        # روش 1: Webroot
-        if certbot certonly --webroot -w /var/www/html -d "$PANEL_DOMAIN" \
-            --non-interactive --agree-tos --email admin@${PANEL_DOMAIN#*.} \
-            --preferred-challenges http; then
-            
+        apt-get install -y certbot python3-certbot-nginx
+        if certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --agree-tos --email admin@${PANEL_DOMAIN#*.}; then
             SSL_TYPE="letsencrypt"
+            echo "0 12 * * * root certbot renew --quiet" >> /etc/crontab
         else
-            # روش 2: Standalone
-            systemctl stop nginx
-            if certbot certonly --standalone -d "$PANEL_DOMAIN" \
-                --non-interactive --agree-tos --email admin@${PANEL_DOMAIN#*.}; then
-                
-                SSL_TYPE="letsencrypt"
-            else
-                # روش 3: DNS Manual
-                echo -e "${YELLOW}روش‌های خودکار ناموفق بودند، لطفا به صورت دستی تایید کنید:${NC}"
-                certbot certonly --manual --preferred-challenges dns -d "$PANEL_DOMAIN" \
-                    --non-interactive --agree-tos --email admin@${PANEL_DOMAIN#*.} || {
-                    
-                    echo -e "${YELLOW}دریافت گواهی Let's Encrypt ناموفق بود، از SSL خودامضا استفاده می‌شود${NC}"
-                    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-                        -keyout /etc/nginx/ssl/privkey.pem \
-                        -out /etc/nginx/ssl/fullchain.pem \
-                        -subj "/CN=${PANEL_DOMAIN}"
-                    SSL_TYPE="self-signed"
-                }
-            fi
-            systemctl start nginx
+            echo -e "${YELLOW}استفاده از SSL خودامضا${NC}"
+            openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+                -keyout /etc/nginx/ssl/privkey.pem \
+                -out /etc/nginx/ssl/fullchain.pem \
+                -subj "/CN=${PANEL_DOMAIN}"
+            SSL_TYPE="self-signed"
         fi
-        
-        if [[ "$SSL_TYPE" == "letsencrypt" ]]; then
-            ln -sf "/etc/letsencrypt/live/${PANEL_DOMAIN}/fullchain.pem" /etc/nginx/ssl/fullchain.pem
-            ln -sf "/etc/letsencrypt/live/${PANEL_DOMAIN}/privkey.pem" /etc/nginx/ssl/privkey.pem
-            echo "0 12 * * * root certbot renew --quiet && systemctl reload nginx" >> /etc/crontab
-        fi
-        
-        rm -f /etc/nginx/conf.d/le_verify.conf
     fi
     
     chmod 600 /etc/nginx/ssl/*
@@ -151,37 +81,11 @@ EOF
 configure_nginx() {
     info "تنظیم Nginx..."
     
+    # توقف موقت Xray برای آزادسازی پورت 443
+    systemctl stop xray || true
+    
     rm -f /etc/nginx/sites-enabled/*
     
-    # کانفیگ اصلی nginx.conf
-    cat > /etc/nginx/nginx.conf <<EOF
-user www-data;
-worker_processes auto;
-pid /run/nginx.pid;
-include /etc/nginx/modules-enabled/*.conf;
-
-events {
-    worker_connections 768;
-}
-
-http {
-    sendfile on;
-    tcp_nopush on;
-    tcp_nodelay on;
-    keepalive_timeout 65;
-    types_hash_max_size 2048;
-    include /etc/nginx/mime.types;
-    default_type application/octet-stream;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_prefer_server_ciphers on;
-    access_log /var/log/nginx/access.log;
-    error_log /var/log/nginx/error.log;
-    gzip on;
-    include /etc/nginx/conf.d/*.conf;
-}
-EOF
-
-    # کانفیگ پنل
     cat > /etc/nginx/conf.d/panel.conf <<EOF
 server {
     listen 80;
@@ -226,10 +130,128 @@ EOF
     fi
     
     systemctl restart nginx
+    systemctl start xray
     success "Nginx با موفقیت تنظیم شد!"
 }
 
-# ------------------- توابع اصلی -------------------
+# ------------------- نصب و تنظیم Xray -------------------
+install_xray() {
+    info "نصب و پیکربندی Xray..."
+    
+    systemctl stop xray 2>/dev/null || true
+    rm -rf "$XRAY_DIR"
+    
+    mkdir -p "$XRAY_DIR"
+    wget "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" -O /tmp/xray.zip
+    unzip -o /tmp/xray.zip -d "$XRAY_DIR"
+    chmod +x "$XRAY_EXECUTABLE"
+
+    XRAY_UUID=$(uuidgen)
+    XRAY_PATH="/$(openssl rand -hex 6)"
+    HTTP_PATH="/$(openssl rand -hex 4)"
+    
+    REALITY_KEYS=$($XRAY_EXECUTABLE x25519)
+    REALITY_PRIVATE_KEY=$(echo "$REALITY_KEYS" | awk '/Private key:/ {print $3}')
+    REALITY_PUBLIC_KEY=$(echo "$REALITY_KEYS" | awk '/Public key:/ {print $3}')
+    REALITY_SHORT_ID=$(openssl rand -hex 8)
+
+    # تغییر پورت اصلی Xray به 8443 برای جلوگیری از تداخل با Nginx
+    cat > "$XRAY_CONFIG" <<EOF
+{
+    "log": {"loglevel": "warning"},
+    "inbounds": [
+        {
+            "port": 8443,  # تغییر پورت از 443 به 8443
+            "protocol": "vless",
+            "settings": {
+                "clients": [{"id": "$XRAY_UUID"}],
+                "decryption": "none"
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                    "show": false,
+                    "dest": "www.amazon.com:443",
+                    "xver": 0,
+                    "serverNames": ["www.amazon.com", "${PANEL_DOMAIN}"],
+                    "privateKey": "$REALITY_PRIVATE_KEY",
+                    "shortIds": ["$REALITY_SHORT_ID"]
+                }
+            }
+        },
+        {
+            "port": 8080,
+            "protocol": "vmess",
+            "settings": {
+                "clients": [{"id": "$XRAY_UUID"}]
+            },
+            "streamSettings": {
+                "network": "ws",
+                "security": "none",
+                "wsSettings": {
+                    "path": "$XRAY_PATH",
+                    "headers": {}
+                }
+            }
+        },
+        {
+            "port": 8444,
+            "protocol": "trojan",
+            "settings": {
+                "clients": [{"password": "$XRAY_UUID"}]
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "tls",
+                "tlsSettings": {
+                    "alpn": ["h2", "http/1.1"],
+                    "certificates": [{
+                        "certificateFile": "/etc/nginx/ssl/fullchain.pem",
+                        "keyFile": "/etc/nginx/ssl/privkey.pem"
+                    }]
+                }
+            }
+        },
+        {
+            "port": 8388,
+            "protocol": "shadowsocks",
+            "settings": {
+                "method": "aes-256-gcm",
+                "password": "$XRAY_UUID",
+                "network": "tcp,udp"
+            }
+        }
+    ],
+    "outbounds": [{"protocol": "freedom"}]
+}
+EOF
+
+    cat > /etc/systemd/system/xray.service <<EOF
+[Unit]
+Description=Xray Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=$XRAY_DIR
+ExecStart=$XRAY_EXECUTABLE run -config $XRAY_CONFIG
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable xray
+    systemctl start xray
+    success "Xray با موفقیت نصب و پیکربندی شد!"
+}
+
+# ------------------- توابع باقی مانده -------------------
 install_prerequisites() {
     info "نصب پیش‌نیازهای سیستم..."
     apt-get update
@@ -269,125 +291,6 @@ EOF
     pip install -r "$INSTALL_DIR/requirements.txt"
     deactivate
     success "وابستگی‌ها با موفقیت نصب شدند!"
-}
-
-install_xray() {
-    info "نصب و پیکربندی Xray..."
-    
-    systemctl stop xray 2>/dev/null || true
-    rm -rf "$XRAY_DIR"
-    
-    mkdir -p "$XRAY_DIR"
-    wget "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" -O /tmp/xray.zip
-    unzip -o /tmp/xray.zip -d "$XRAY_DIR"
-    chmod +x "$XRAY_EXECUTABLE"
-
-    XRAY_UUID=$(uuidgen)
-    XRAY_PATH="/$(openssl rand -hex 6)"
-    HTTP_PATH="/$(openssl rand -hex 4)"
-    
-    REALITY_KEYS=$($XRAY_EXECUTABLE x25519)
-    REALITY_PRIVATE_KEY=$(echo "$REALITY_KEYS" | awk '/Private key:/ {print $3}')
-    REALITY_PUBLIC_KEY=$(echo "$REALITY_KEYS" | awk '/Public key:/ {print $3}')
-    REALITY_SHORT_ID=$(openssl rand -hex 8)
-
-    cat > "$XRAY_CONFIG" <<EOF
-{
-    "log": {"loglevel": "warning"},
-    "inbounds": [
-        {
-            "port": 443,
-            "protocol": "vless",
-            "settings": {
-                "clients": [{"id": "$XRAY_UUID"}],
-                "decryption": "none"
-            },
-            "streamSettings": {
-                "network": "tcp",
-                "security": "reality",
-                "realitySettings": {
-                    "show": false,
-                    "dest": "www.amazon.com:443",
-                    "xver": 0,
-                    "serverNames": ["www.amazon.com", "${PANEL_DOMAIN}"],
-                    "privateKey": "$REALITY_PRIVATE_KEY",
-                    "shortIds": ["$REALITY_SHORT_ID"]
-                }
-            }
-        },
-        {
-            "port": 8080,
-            "protocol": "vmess",
-            "settings": {
-                "clients": [{"id": "$XRAY_UUID"}]
-            },
-            "streamSettings": {
-                "network": "ws",
-                "security": "none",
-                "wsSettings": {
-                    "path": "$XRAY_PATH",
-                    "headers": {}
-                }
-            }
-        },
-        {
-            "port": 8443,
-            "protocol": "trojan",
-            "settings": {
-                "clients": [{"password": "$XRAY_UUID"}]
-            },
-            "streamSettings": {
-                "network": "tcp",
-                "security": "tls",
-                "tlsSettings": {
-                    "alpn": ["h2", "http/1.1"],
-                    "certificates": [{
-                        "certificateFile": "/etc/nginx/ssl/fullchain.pem",
-                        "keyFile": "/etc/nginx/ssl/privkey.pem"
-                    }]
-                }
-            }
-        },
-        {
-            "port": 8388,
-            "protocol": "shadowsocks",
-            "settings": {
-                "method": "aes-256-gcm",
-                "password": "$XRAY_UUID",
-                "network": "tcp,udp"
-            }
-        },
-        {
-            "port": 8081,
-            "protocol": "http",
-            "settings": {
-                "timeout": 300,
-                "allowTransparent": false
-            },
-            "streamSettings": {
-                "network": "tcp"
-            }
-        },
-        {
-            "port": 8082,
-            "protocol": "http",
-            "settings": {
-                "timeout": 300,
-                "allowTransparent": false
-            },
-            "streamSettings": {
-                "network": "h2",
-                "httpSettings": {
-                    "path": "$HTTP_PATH",
-                    "host": ["www.example.com"]
-                }
-            }
-        }
-    ],
-    "outbounds": [{"protocol": "freedom"}]
-}
-EOF
-    success "Xray با موفقیت نصب و پیکربندی شد!"
 }
 
 create_tables() {
@@ -458,25 +361,6 @@ EOF
 setup_services() {
     info "تنظیم سرویس‌های سیستم..."
 
-    cat > /etc/systemd/system/xray.service <<EOF
-[Unit]
-Description=Xray Service
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=$XRAY_DIR
-ExecStart=$XRAY_EXECUTABLE run -config $XRAY_CONFIG
-Restart=always
-RestartSec=3
-LimitNOFILE=65535
-Environment="XRAY_LOCATION_ASSET=$XRAY_DIR"
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
     cat > /etc/systemd/system/zhina-panel.service <<EOF
 [Unit]
 Description=Zhina Panel Service
@@ -494,17 +378,18 @@ WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
-    systemctl enable xray zhina-panel nginx
-    systemctl restart xray zhina-panel nginx
+    systemctl enable zhina-panel
+    systemctl start zhina-panel
     success "سرویس‌ها با موفقیت تنظیم و راه‌اندازی شدند!"
 }
 
 show_info() {
-    echo -e "\n${GREEN}=== نصب کامل شد! ===${NC}"
+    PUBLIC_IP=$(curl -s ifconfig.me)
+    success "\n\n=== نصب کامل شد! ==="
     
     if [[ "$PANEL_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         echo -e "دسترسی پنل مدیریتی:"
-        echo -e "• آدرس: ${YELLOW}http://${PANEL_DOMAIN}${NC}"
+        echo -e "• آدرس: ${YELLOW}http://${PANEL_DOMAIN}:${PANEL_PORT}${NC}"
     else
         echo -e "دسترسی پنل مدیریتی:"
         echo -e "• آدرس: ${GREEN}https://${PANEL_DOMAIN}${NC}"
@@ -513,37 +398,32 @@ show_info() {
     echo -e "• یوزرنیم ادمین: ${YELLOW}${ADMIN_USER}${NC}"
     echo -e "• پسورد ادمین: ${YELLOW}${ADMIN_PASS}${NC}"
 
-    echo -e "\n${YELLOW}تنظیمات Xray:${NC}"
+    echo -e "\nتنظیمات Xray:"
     echo -e "• پروتکل‌های فعال:"
-    echo -e "  - ${YELLOW}VLESS + Reality${NC} (پورت 443)"
+    echo -e "  - ${YELLOW}VLESS + Reality${NC} (پورت 8443)"
     echo -e "  - ${YELLOW}VMess + WS${NC} (پورت 8080 - مسیر: ${XRAY_PATH})"
-    echo -e "  - ${YELLOW}Trojan${NC} (پورت 8443)"
+    echo -e "  - ${YELLOW}Trojan${NC} (پورت 8444)"
     echo -e "  - ${YELLOW}Shadowsocks${NC} (پورت 8388)"
     echo -e "• UUID/پسورد مشترک: ${YELLOW}${XRAY_UUID}${NC}"
     echo -e "• کلید عمومی Reality: ${YELLOW}${REALITY_PUBLIC_KEY}${NC}"
 
-    echo -e "\n${YELLOW}دستورات مدیریت:${NC}"
+    echo -e "\nدستورات مدیریت:"
     echo -e "• وضعیت سرویس‌ها: ${YELLOW}systemctl status {xray,zhina-panel,nginx}${NC}"
     echo -e "• مشاهده لاگ‌ها: ${YELLOW}journalctl -u xray -u zhina-panel -f${NC}"
 }
 
 # ------------------- اجرای اصلی -------------------
 main() {
-    echo -e "${GREEN}\n=== شروع نصب Zhina Panel ===${NC}"
     [[ $EUID -ne 0 ]] && error "این اسکریپت نیاز به دسترسی root دارد!"
 
-    # 1. نصب پیش‌نیازها
     install_prerequisites
 
-    # 2. ایجاد کاربر سرویس
     if ! id "$SERVICE_USER" &>/dev/null; then
         useradd -r -s /bin/false -d $INSTALL_DIR $SERVICE_USER
     fi
 
-    # 3. تنظیم دیتابیس
     setup_database
 
-    # 4. دریافت کدهای برنامه
     info "دریافت کدهای برنامه..."
     if [ -d "$INSTALL_DIR/.git" ]; then
         cd "$INSTALL_DIR"
@@ -555,24 +435,13 @@ main() {
     chown -R $SERVICE_USER:$SERVICE_USER $INSTALL_DIR
     success "کدهای برنامه با موفقیت دریافت شدند!"
 
-    # 5. نصب وابستگی‌ها
     setup_requirements
-
-    # 6. تنظیم دامنه و SSL
     configure_domain
     setup_ssl
     configure_nginx
-
-    # 7. نصب Xray
     install_xray
-
-    # 8. ایجاد جداول
     create_tables
-
-    # 9. تنظیم سرویس‌ها
     setup_services
-
-    # 10. نمایش اطلاعات
     show_info
 }
 
