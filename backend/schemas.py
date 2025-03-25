@@ -2,7 +2,7 @@ from pydantic import BaseModel, EmailStr, validator
 from typing import Optional, List, Dict
 from datetime import datetime
 
-# مدل‌های احراز هویت جدید
+# Authentication Schemas
 class Token(BaseModel):
     access_token: str
     token_type: str
@@ -21,32 +21,132 @@ class UserCreate(UserBase):
     @validator("password")
     def validate_password(cls, v):
         if len(v) < 8:
-            raise ValueError("رمز عبور باید حداقل ۸ کاراکتر باشد")
+            raise ValueError("Password must be at least 8 characters")
         return v
 
 class UserInDB(UserBase):
     hashed_password: str
 
-# بقیه مدل‌های موجود (بدون تغییر)
+# User Schemas
 class UserCreate(BaseModel):
     name: str
     traffic_limit: int = 0
     usage_duration: int = 0
     simultaneous_connections: int = 1
 
-    # اعتبارسنجی‌های موجود...
-    
+    @validator("name")
+    def validate_name(cls, value):
+        if len(value) < 3:
+            raise ValueError("نام باید حداقل ۳ کاراکتر داشته باشد.")
+        return value
+
+    @validator("traffic_limit")
+    def validate_traffic_limit(cls, value):
+        if value < 0:
+            raise ValueError("محدودیت ترافیک باید بزرگ‌تر یا مساوی صفر باشد.")
+        return value
+
+    @validator("usage_duration")
+    def validate_usage_duration(cls, value):
+        if value < 0:
+            raise ValueError("مدت زمان استفاده باید بزرگ‌تر یا مساوی صفر باشد.")
+        return value
+
+    @validator("simultaneous_connections")
+    def validate_simultaneous_connections(cls, value):
+        if value < 1:
+            raise ValueError("حداقل تعداد اتصالات هم‌زمان باید ۱ باشد.")
+        return value
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    traffic_limit: Optional[int] = None
+    usage_duration: Optional[int] = None
+    simultaneous_connections: Optional[int] = None
+
+# Domain Schemas
 class DomainCreate(BaseModel):
-    # ... (بدون تغییر)
+    name: str
+    description: Optional[str] = None
+    cdn_enabled: Optional[bool] = False
 
+    @validator("name")
+    def validate_name(cls, value):
+        if len(value) < 3:
+            raise ValueError("نام دامنه باید حداقل ۳ کاراکتر داشته باشد.")
+        return value
+
+class DomainUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    cdn_enabled: Optional[bool] = None
+
+# Subscription Schemas
 class SubscriptionCreate(BaseModel):
-    # ... (بدون تغییر)
+    uuid: str
+    data_limit: int
+    expiry_date: datetime
+    max_connections: int
 
+    @validator("data_limit")
+    def validate_data_limit(cls, value):
+        if value < 0:
+            raise ValueError("محدودیت داده باید بزرگ‌تر یا مساوی صفر باشد.")
+        return value
+
+    @validator("max_connections")
+    def validate_max_connections(cls, value):
+        if value < 1:
+            raise ValueError("حداقل تعداد اتصالات هم‌زمان باید ۱ باشد.")
+        return value
+
+class SubscriptionUpdate(BaseModel):
+    data_limit: Optional[int] = None
+    expiry_date: Optional[datetime] = None
+    max_connections: Optional[int] = None
+
+# Node Schemas
 class NodeCreate(BaseModel):
-    # ... (بدون تغییر)
+    name: str
+    ip_address: str
+    port: int
+    protocol: str
 
+    @validator("port")
+    def validate_port(cls, value):
+        if value < 1 or value > 65535:
+            raise ValueError("پورت باید بین ۱ تا ۶۵۵۳۵ باشد.")
+        return value
+
+    @validator("protocol")
+    def validate_protocol(cls, value):
+        valid_protocols = ["vmess", "vless", "trojan", "shadowsocks", "http", "socks"]
+        if value not in valid_protocols:
+            raise ValueError(f"پروتکل {value} معتبر نیست.")
+        return value
+
+class NodeUpdate(BaseModel):
+    name: Optional[str] = None
+    ip_address: Optional[str] = None
+    port: Optional[int] = None
+    protocol: Optional[str] = None
+
+# Xray Settings
 class XraySettings(BaseModel):
-    # ... (بدون تغییر)
+    enable_tls: bool = True
+    tls_certificate: Optional[str] = None
+    tls_key: Optional[str] = None
+    tls_settings: Dict = {
+        "serverName": "example.com",
+        "alpn": ["h2", "http/1.1"],
+        "minVersion": "1.2",
+        "maxVersion": "1.3"
+    }
 
+# HTTP Settings
 class HTTPSettings(BaseModel):
-    # ... (بدون تغییر)
+    enable_http: bool = True
+    http_settings: Dict = {
+        "timeout": 300,
+        "allowTransparent": False
+    }
