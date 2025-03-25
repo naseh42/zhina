@@ -398,6 +398,8 @@ python-multipart==0.0.6
 jinja2==3.1.2
 python-dotenv==1.0.0
 pydantic-settings==2.0.3
+pydantic[email]==2.4.2
+email-validator>=2.0.0
 EOF
     success "فایل requirements.txt ایجاد شد!"
 
