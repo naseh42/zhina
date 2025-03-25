@@ -14,8 +14,10 @@ PANEL_PORT=8001
 ADMIN_USER="admin"
 ADMIN_PASS=$(openssl rand -hex 8)
 XRAY_VERSION="1.8.11"
-UVICORN_WORKERS=4
+UVICORN_WORKERS=2  # کاهش تعداد workerها برای جلوگیری از مشکلات multiprocessing
 DB_PASSWORD=$(openssl rand -hex 16)
+XRAY_UUID=$(uuidgen)
+XRAY_PATH="/$(openssl rand -hex 6)"
 
 # ------------------- رنگ‌ها و توابع -------------------
 RED='\033[0;31m'
@@ -31,6 +33,8 @@ info() { echo -e "${YELLOW}[INFO] $1${NC}"; }
 apply_project_fixes() {
     info "اعمال اصلاحات ساختاری پروژه..."
     
+    mkdir -p "$INSTALL_DIR/backend"
+    
     # اصلاح فایل config.py با بهبودهای جدید
     cat > "$INSTALL_DIR/backend/config.py" <<'EOF'
 from pydantic_settings import BaseSettings
@@ -42,17 +46,17 @@ from pathlib import Path
 class Settings(BaseSettings):
     # تنظیمات دیتابیس
     DATABASE_URL: str = Field(
-        default="postgresql://zhina_user:1fed62488ca9d549ca440eeb9cb4e6de@localhost/zhina_db",
+        default="postgresql://zhina_user:placeholder@localhost/zhina_db",
         description="URL اتصال به دیتابیس"
     )
     
     # تنظیمات Xray
     XRAY_CONFIG_PATH: Path = Field(
-        default=Path("/etc/xray/config.json"),
+        default=Path("/usr/local/bin/xray/config.json"),
         description="مسیر فایل پیکربندی Xray"
     )
     XRAY_UUID: str = Field(
-        ...,
+        default="placeholder",
         description="UUID اصلی برای اتصالات Xray"
     )
     XRAY_PATH: str = Field(
@@ -62,21 +66,21 @@ class Settings(BaseSettings):
     
     # تنظیمات Reality
     REALITY_PUBLIC_KEY: str = Field(
-        ...,
+        default="placeholder",
         description="کلید عمومی برای پروتکل Reality"
     )
     REALITY_PRIVATE_KEY: str = Field(
-        ...,
+        default="placeholder",
         description="کلید خصوصی برای پروتکل Reality"
     )
     REALITY_SHORT_ID: str = Field(
-        ...,
+        default="placeholder",
         description="شناسه کوتاه برای Reality"
     )
     
     # تنظیمات امنیتی
     SECRET_KEY: str = Field(
-        ...,
+        default="placeholder",
         description="کلید امنیتی برای JWT و رمزنگاری"
     )
     DEBUG: bool = Field(
@@ -206,7 +210,10 @@ setup_ssl() {
             -subj "/CN=${PANEL_DOMAIN}"
         SSL_TYPE="self-signed"
     else
-        apt-get install -y certbot python3-certbot-nginx
+        if ! command -v certbot &>/dev/null; then
+            apt-get install -y certbot python3-certbot-nginx
+        fi
+        
         if certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --agree-tos --email admin@${PANEL_DOMAIN#*.}; then
             SSL_TYPE="letsencrypt"
             echo "0 12 * * * root certbot renew --quiet" >> /etc/crontab
@@ -227,10 +234,14 @@ setup_ssl() {
 configure_nginx() {
     info "تنظیم Nginx..."
     
-    systemctl stop xray || true
+    # توقف سرویس‌های وابسته
+    systemctl stop xray 2>/dev/null || true
     
+    # حذف کانفیگ‌های قبلی
     rm -f /etc/nginx/sites-enabled/*
+    rm -f /etc/nginx/conf.d/panel.conf
     
+    # ایجاد کانفیگ جدید
     cat > /etc/nginx/conf.d/panel.conf <<EOF
 server {
     listen 80;
@@ -267,15 +278,26 @@ server {
 }
 EOF
     
+    # ایجاد دایرکتوری مورد نیاز
     mkdir -p /var/www/html/.well-known/acme-challenge
     chown -R www-data:www-data /var/www/html
     
+    # تست کانفیگ
     if ! nginx -t; then
+        journalctl -u nginx -n 20 --no-pager
         error "خطا در کانفیگ Nginx"
     fi
     
+    # راه‌اندازی مجدد سرویس‌ها
     systemctl restart nginx
-    systemctl start xray
+    
+    # راه‌اندازی Xray اگر وجود دارد
+    if [ -f "/etc/systemd/system/xray.service" ]; then
+        systemctl start xray || {
+            error "خطا در راه‌اندازی مجدد Xray"
+        }
+    fi
+    
     success "Nginx با موفقیت تنظیم شد!"
 }
 
@@ -291,18 +313,21 @@ install_xray() {
     mkdir -p "$XRAY_DIR"
     
     # دانلود و استخراج Xray
-    wget "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" -O /tmp/xray.zip || {
+    if ! wget "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" -O /tmp/xray.zip; then
         error "خطا در دانلود Xray"
-    }
-    unzip -o /tmp/xray.zip -d "$XRAY_DIR" || {
+    fi
+    
+    if ! unzip -o /tmp/xray.zip -d "$XRAY_DIR"; then
         error "خطا در استخراج Xray"
-    }
+    fi
+    
     chmod +x "$XRAY_EXECUTABLE"
 
     # تولید کلیدهای Reality
-    REALITY_KEYS=$($XRAY_EXECUTABLE x25519) || {
+    if ! REALITY_KEYS=$($XRAY_EXECUTABLE x25519); then
         error "خطا در تولید کلیدهای Reality"
-    }
+    fi
+    
     REALITY_PRIVATE_KEY=$(echo "$REALITY_KEYS" | awk '/Private key:/ {print $3}')
     REALITY_PUBLIC_KEY=$(echo "$REALITY_KEYS" | awk '/Public key:/ {print $3}')
     REALITY_SHORT_ID=$(openssl rand -hex 8)
@@ -508,7 +533,7 @@ XRAY_PATH=$XRAY_PATH
 REALITY_PUBLIC_KEY=$REALITY_PUBLIC_KEY
 REALITY_PRIVATE_KEY=$REALITY_PRIVATE_KEY
 REALITY_SHORT_ID=$REALITY_SHORT_ID
-XRAY_CONFIG_PATH=/etc/xray/config.json
+XRAY_CONFIG_PATH=/usr/local/bin/xray/config.json
 
 # تنظیمات امنیتی
 SECRET_KEY=$(openssl rand -hex 32)
@@ -547,7 +572,7 @@ Group=$SERVICE_USER
 WorkingDirectory=$INSTALL_DIR/backend
 Environment="PATH=$INSTALL_DIR/venv/bin"
 Environment="PYTHONPATH=$INSTALL_DIR"
-ExecStart=$INSTALL_DIR/venv/bin/uvicorn app:app --host 0.0.0.0 --port $PANEL_PORT --workers $UVICORN_WORKERS
+ExecStart=$INSTALL_DIR/venv/bin/uvicorn app:app --host 0.0.0.0 --port $PANEL_PORT --workers $UVICORN_WORKERS --loop uvloop --http httptools
 Restart=always
 RestartSec=5s
 StartLimitInterval=60s
@@ -568,14 +593,14 @@ EOF
     
     # راه‌اندازی سرویس با بررسی خطا
     if ! systemctl start zhina-panel; then
-        journalctl -u zhina-panel -n 20 --no-pager
+        journalctl -u zhina-panel -n 50 --no-pager
         error "خطا در راه‌اندازی سرویس zhina-panel"
     fi
     
     # بررسی سلامت سرویس
-    sleep 3
+    sleep 5
     if ! systemctl is-active --quiet zhina-panel; then
-        journalctl -u zhina-panel -n 30 --no-pager
+        journalctl -u zhina-panel -n 50 --no-pager
         error "سرویس zhina-panel پس از راه‌اندازی غیرفعال است"
     fi
     
@@ -616,34 +641,39 @@ show_info() {
 main() {
     [[ $EUID -ne 0 ]] && error "این اسکریپت نیاز به دسترسی root دارد!"
 
+    # نصب پیش‌نیازها
     install_prerequisites
 
+    # ایجاد کاربر سرویس
     if ! id "$SERVICE_USER" &>/dev/null; then
         useradd -r -s /bin/false -d $INSTALL_DIR $SERVICE_USER
     fi
 
+    # تنظیم دیتابیس
     setup_database
 
+    # دریافت کدهای برنامه
     info "دریافت کدهای برنامه..."
     if [ -d "$INSTALL_DIR/.git" ]; then
         cd "$INSTALL_DIR"
         git pull || error "خطا در بروزرسانی کدها"
     else
-        rm -rf "$INSTALL_DIR"
+        rm -rf "$INSTALL_DIR" 2>/dev/null || true
         git clone https://github.com/naseh42/zhina.git "$INSTALL_DIR" || error "خطا در دریافت کدها"
     fi
     
-    # تنظیم مجوزها قبل از ادامه
+    # تنظیم مجوزها
     chown -R $SERVICE_USER:$SERVICE_USER $INSTALL_DIR
     find $INSTALL_DIR -type d -exec chmod 755 {} \;
     find $INSTALL_DIR -type f -exec chmod 644 {} \;
 
+    # اجرای مراحل نصب
     apply_project_fixes
     setup_requirements
     configure_domain
     setup_ssl
-    configure_nginx
     install_xray
+    configure_nginx
     create_tables
     setup_services
     
@@ -658,6 +688,7 @@ print('✓ تست تنظیمات با موفقیت انجام شد')
         error "خطا در تست نهایی پیکربندی"
     fi
     
+    # نمایش اطلاعات نصب
     show_info
 }
 
