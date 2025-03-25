@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings
-from pydantic import Field, validator, HttpUrl, EmailStr
+from pydantic import Field, field_validator, HttpUrl, EmailStr
 from typing import Optional, Literal
 import os
 import secrets
@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     XRAY_PATH: str = Field(
         default_factory=lambda: f"/{secrets.token_hex(8)}",
         description="Base path for Xray connections",
-        pattern=r'^/[a-zA-Z0-9]{16}$'  # تغییر از regex به pattern
+        pattern=r'^/[a-zA-Z0-9]{16}$'
     )
     XRAY_CONFIG_PATH: Path = Field(
         default=Path("/etc/xray/config.json"),
@@ -38,14 +38,14 @@ class Settings(BaseSettings):
         min_length=43,
         max_length=43,
         description="Public key for Reality protocol",
-        pattern=r'^[A-Za-z0-9-_]{43}$'  # تغییر از regex به pattern
+        pattern=r'^[A-Za-z0-9-_]{43}$'
     )
     REALITY_PRIVATE_KEY: str = Field(
         ...,
         min_length=43,
         max_length=43,
         description="Private key for Reality protocol",
-        pattern=r'^[A-Za-z0-9-_]{43}$'  # تغییر از regex به pattern
+        pattern=r'^[A-Za-z0-9-_]{43}$'
     )
     REALITY_SHORT_ID: str = Field(
         default_factory=lambda: secrets.token_hex(8),
@@ -141,41 +141,44 @@ class Settings(BaseSettings):
         description="Requests per minute per IP"
     )
 
-    class Config:
-        env_file = "/etc/zhina/.env"
-        env_file_encoding = "utf-8"
-        extra = "forbid"
-        case_sensitive = True
-        env_prefix = "ZHINA_"
-        secrets_dir = "/etc/zhina/secrets"
+    model_config = {
+        "env_file": "/etc/zhina/.env",
+        "env_file_encoding": "utf-8",
+        "extra": "forbid",
+        "env_prefix": "ZHINA_",
+        "secrets_dir": "/etc/zhina/secrets"
+    }
 
-    # Custom Validators
-    @validator("DATABASE_URL")
-    def validate_db_url(cls, v):
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def validate_db_url(cls, v: str) -> str:
         if "postgres:" in v:
             raise ValueError("Use postgresql:// instead of postgres://")
         if "sqlite:" in v and not v.startswith("sqlite:///"):
             raise ValueError("SQLite requires absolute path (sqlite:////path/to/db)")
         return v
 
-    @validator("ADMIN_PASSWORD")
-    def validate_admin_password(cls, v):
+    @field_validator("ADMIN_PASSWORD")
+    @classmethod
+    def validate_admin_password(cls, v: str) -> str:
         if v == "ChangeMe123!":
             warnings.warn("Default admin password detected! Please change immediately.", UserWarning)
         if len(v) < 12:
             raise ValueError("Password must be at least 12 characters")
         return v
 
-    @validator("DEBUG")
-    def validate_debug(cls, v, values):
-        if v and values.get("SERVER_HOST") == "0.0.0.0":
+    @field_validator("DEBUG")
+    @classmethod
+    def validate_debug(cls, v: bool, info) -> bool:
+        if v and info.data.get("SERVER_HOST") == "0.0.0.0":
             warnings.warn("Debug mode is enabled with public host binding!", RuntimeWarning)
         return v
 
-    @validator("SSL_CERT_PATH", "SSL_KEY_PATH")
-    def validate_ssl_paths(cls, v, field):
+    @field_validator("SSL_CERT_PATH", "SSL_KEY_PATH")
+    @classmethod
+    def validate_ssl_paths(cls, v: Optional[Path], info) -> Optional[Path]:
         if v and not v.exists():
-            raise ValueError(f"{field.name} path does not exist: {v}")
+            raise ValueError(f"{info.field_name} path does not exist: {v}")
         return v
 
 settings = Settings()
