@@ -28,11 +28,11 @@ error() { echo -e "${RED}[ERROR] $1${NC}" >&2; exit 1; }
 success() { echo -e "${GREEN}[SUCCESS] $1${NC}"; }
 info() { echo -e "${YELLOW}[INFO] $1${NC}"; }
 
-# ------------------- توابع جدید برای مدیریت تداخل پورت -------------------
+# ------------------- توابع اصلی -------------------
 configure_nginx_sni() {
     info "تنظیم Nginx برای SNI-based分流"
     
-    # حذف کانفیگ‌های قبلی
+    # حذف کانفیگ‌های قدیمی
     rm -f /etc/nginx/sites-enabled/*
     
     # ایجاد کانفیگ اصلی
@@ -64,13 +64,11 @@ http {
 }
 
 stream {
-    # Map SNI به بک‌اند مناسب
     map \$ssl_preread_server_name \$backend {
         ${PANEL_DOMAIN} 127.0.0.1:${PANEL_PORT};
         default 127.0.0.1:443_xray;
     }
 
-    # سرور اصلی برای شنود پورت 443
     server {
         listen 443 reuseport;
         listen [::]:443 reuseport;
@@ -80,7 +78,7 @@ stream {
 }
 EOF
 
-    # ایجاد کانفیگ HTTP برای پنل
+    # ایجاد کانفیگ HTTP
     cat > /etc/nginx/conf.d/panel.conf <<EOF
 server {
     listen 80;
@@ -101,7 +99,7 @@ EOF
 modify_xray_for_sni() {
     info "به‌روزرسانی Xray برای کار با SNI"
     
-    # تغییر پورت Xray به پورت داخلی
+    # تغییر پورت Xray
     sed -i 's/"port": 443/"port": 443_xray/g' "$XRAY_CONFIG"
     
     # اضافه کردن دامنه پنل به serverNames
@@ -113,7 +111,16 @@ modify_xray_for_sni() {
     success "Xray برای کار با SNI به‌روزرسانی شد!"
 }
 
-# ------------------- توابع اصلی (بدون تغییر) -------------------
+setup_panel_ssl() {
+    info "تنظیم SSL برای پنل مدیریتی"
+    
+    apt-get install -y certbot python3-certbot-nginx
+    certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --agree-tos --email admin@${PANEL_DOMAIN#*.}
+    echo "0 12 * * * root certbot renew --quiet" >> /etc/crontab
+    
+    success "SSL برای پنل تنظیم شد!"
+}
+
 install_prerequisites() {
     info "نصب پیش‌نیازهای سیستم..."
     apt-get update
@@ -420,18 +427,14 @@ show_info() {
 main() {
     [[ $EUID -ne 0 ]] && error "این اسکریپت نیاز به دسترسی root دارد!"
 
-    # 1. نصب پیش‌نیازها
     install_prerequisites
 
-    # 2. ایجاد کاربر سرویس
     if ! id "$SERVICE_USER" &>/dev/null; then
         useradd -r -s /bin/false -d $INSTALL_DIR $SERVICE_USER
     fi
 
-    # 3. تنظیم دیتابیس
     setup_database
 
-    # 4. دریافت کدهای برنامه
     info "دریافت کدهای برنامه..."
     if [ -d "$INSTALL_DIR/.git" ]; then
         cd "$INSTALL_DIR"
@@ -443,27 +446,14 @@ main() {
     chown -R $SERVICE_USER:$SERVICE_USER $INSTALL_DIR
     success "کدهای برنامه با موفقیت دریافت شدند!"
 
-    # 5. نصب وابستگی‌ها
     setup_requirements
-
-    # 6. تنظیم SSL
     setup_ssl
-
-    # 7. نصب Xray
     install_xray
-
-    # 8. تنظیم Nginx و SNI
     configure_nginx_sni
     modify_xray_for_sni
     setup_panel_ssl
-
-    # 9. ایجاد جداول
     create_tables
-
-    # 10. تنظیم سرویس‌ها
     setup_services
-
-    # 11. نمایش اطلاعات
     show_info
 }
 
