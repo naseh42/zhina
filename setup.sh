@@ -9,11 +9,14 @@ XRAY_CONFIG="$XRAY_DIR/config.json"
 SERVICE_USER="zhina"
 DB_NAME="zhina_db"
 DB_USER="zhina_user"
-PANEL_PORT=8000
+PANEL_DOMAIN="panel.yourdomain.com"  # تغییر به دامنه واقعی شما
+PANEL_PORT=8001
 ADMIN_USER="admin"
 ADMIN_PASS=$(openssl rand -hex 8)
 XRAY_VERSION="1.8.11"
 UVICORN_WORKERS=4
+APP_ENTRYPOINT="$INSTALL_DIR/backend/app.py"
+CB_DIR="$INSTALL_DIR/backend/xray_config"
 
 # ------------------- رنگ‌ها و توابع -------------------
 RED='\033[0;31m'
@@ -25,7 +28,67 @@ error() { echo -e "${RED}[ERROR] $1${NC}" >&2; exit 1; }
 success() { echo -e "${GREEN}[SUCCESS] $1${NC}"; }
 info() { echo -e "${YELLOW}[INFO] $1${NC}"; }
 
-# ------------------- توابع اصلی -------------------
+# ------------------- توابع جدید برای مدیریت تداخل پورت -------------------
+configure_nginx_sni() {
+    info "تنظیم Nginx برای SNI-based分流"
+    
+    # ایجاد کانفیگ Nginx
+    cat > /etc/nginx/nginx.conf <<EOF
+user www-data;
+worker_processes auto;
+pid /run/nginx.pid;
+
+stream {
+    map \$ssl_preread_server_name \$backend {
+        ${PANEL_DOMAIN} 127.0.0.1:${PANEL_PORT};
+        default 127.0.0.1:443_xray;
+    }
+
+    server {
+        listen 443 reuseport;
+        listen [::]:443 reuseport;
+        ssl_preread on;
+        proxy_pass \$backend;
+    }
+}
+
+http {
+    server {
+        listen 80;
+        server_name ${PANEL_DOMAIN};
+        return 301 https://\$host\$request_uri;
+    }
+}
+EOF
+
+    systemctl restart nginx
+    success "Nginx با موفقیت برای SNI تنظیم شد!"
+}
+
+modify_xray_for_sni() {
+    info "به‌روزرسانی Xray برای کار با SNI"
+    
+    # تغییر پورت Xray به پورت داخلی
+    sed -i 's/"port": 443/"port": 443_xray/g' "$XRAY_CONFIG"
+    
+    # اضافه کردن دامنه پنل به serverNames
+    sed -i '/"serverNames": \["www.amazon.com"/s/"/"'"${PANEL_DOMAIN}"', "/' "$XRAY_CONFIG"
+    
+    systemctl restart xray
+    success "Xray برای کار با SNI به‌روزرسانی شد!"
+}
+
+setup_panel_ssl() {
+    info "تنظیم SSL برای پنل مدیریتی"
+    
+    apt-get install -y certbot python3-certbot-nginx
+    certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --agree-tos --email admin@${PANEL_DOMAIN#*.}
+    echo "0 12 * * * root certbot renew --quiet" >> /etc/crontab
+    
+    success "SSL برای پنل تنظیم شد!"
+}
+
+# ------------------- توابع اصلی (بدون تغییر) -------------------
 install_prerequisites() {
     info "نصب پیش‌نیازهای سیستم..."
     apt-get update
@@ -70,28 +133,23 @@ EOF
 install_xray() {
     info "نصب و پیکربندی Xray..."
     
-    # حذف نسخه قبلی اگر وجود دارد
     systemctl stop xray 2>/dev/null || true
     rm -rf "$XRAY_DIR"
     
-    # ایجاد دایرکتوری و دانلود Xray
     mkdir -p "$XRAY_DIR"
     wget "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" -O /tmp/xray.zip
     unzip -o /tmp/xray.zip -d "$XRAY_DIR"
     chmod +x "$XRAY_EXECUTABLE"
 
-    # تولید مقادیر تصادفی
     XRAY_UUID=$(uuidgen)
     XRAY_PATH="/$(openssl rand -hex 6)"
     HTTP_PATH="/$(openssl rand -hex 4)"
     
-    # تولید کلیدهای Reality
     REALITY_KEYS=$($XRAY_EXECUTABLE x25519)
     REALITY_PRIVATE_KEY=$(echo "$REALITY_KEYS" | awk '/Private key:/ {print $3}')
     REALITY_PUBLIC_KEY=$(echo "$REALITY_KEYS" | awk '/Public key:/ {print $3}')
     REALITY_SHORT_ID=$(openssl rand -hex 8)
 
-    # ایجاد فایل کانفیگ با پروتکل‌های جدید
     cat > "$XRAY_CONFIG" <<EOF
 {
     "log": {"loglevel": "warning"},
@@ -270,7 +328,6 @@ EOF
 setup_services() {
     info "تنظیم سرویس‌های سیستم..."
 
-    # سرویس Xray
     cat > /etc/systemd/system/xray.service <<EOF
 [Unit]
 Description=Xray Service
@@ -290,7 +347,6 @@ Environment="XRAY_LOCATION_ASSET=$XRAY_DIR"
 WantedBy=multi-user.target
 EOF
 
-    # سرویس پنل
     cat > /etc/systemd/system/zhina-panel.service <<EOF
 [Unit]
 Description=Zhina Panel Service
@@ -298,7 +354,7 @@ After=network.target postgresql.service
 
 [Service]
 User=$SERVICE_USER
-WorkingDirectory=$INSTALL_DIR
+WorkingDirectory=$INSTALL_DIR/backend
 Environment="PATH=$INSTALL_DIR/venv/bin"
 ExecStart=$INSTALL_DIR/venv/bin/uvicorn app:app --host 0.0.0.0 --port $PANEL_PORT --workers $UVICORN_WORKERS
 Restart=always
@@ -317,24 +373,21 @@ show_info() {
     PUBLIC_IP=$(curl -s ifconfig.me)
     success "\n\n=== نصب کامل شد! ==="
     echo -e "دسترسی پنل مدیریتی:"
-    echo -e "• آدرس: http://${PUBLIC_IP}:${PANEL_PORT}"
+    echo -e "• آدرس: ${GREEN}https://${PANEL_DOMAIN}${NC}"
     echo -e "• یوزرنیم ادمین: ${YELLOW}${ADMIN_USER}${NC}"
     echo -e "• پسورد ادمین: ${YELLOW}${ADMIN_PASS}${NC}"
 
     echo -e "\nتنظیمات Xray:"
     echo -e "• پروتکل‌های فعال:"
-    echo -e "  - ${YELLOW}VLESS + Reality${NC} (پورت 443)"
+    echo -e "  - ${YELLOW}VLESS + Reality${NC} (پورت 443 با SNI)"
     echo -e "  - ${YELLOW}VMess + WS${NC} (پورت 8080 - مسیر: ${XRAY_PATH})"
     echo -e "  - ${YELLOW}Trojan${NC} (پورت 8443)"
     echo -e "  - ${YELLOW}Shadowsocks${NC} (پورت 8388)"
-    echo -e "  - ${YELLOW}HTTP/2${NC} (پورت 8082 - مسیر: ${HTTP_PATH})"
-    echo -e "  - ${YELLOW}HTTP معمولی${NC} (پورت 8081)"
     echo -e "• UUID/پسورد مشترک: ${YELLOW}${XRAY_UUID}${NC}"
     echo -e "• کلید عمومی Reality: ${YELLOW}${REALITY_PUBLIC_KEY}${NC}"
 
     echo -e "\nدستورات مدیریت:"
-    echo -e "• وضعیت Xray: ${YELLOW}systemctl status xray${NC}"
-    echo -e "• وضعیت پنل: ${YELLOW}systemctl status zhina-panel${NC}"
+    echo -e "• وضعیت سرویس‌ها: ${YELLOW}systemctl status {xray,zhina-panel,nginx}${NC}"
     echo -e "• مشاهده لاگ‌ها: ${YELLOW}journalctl -u xray -u zhina-panel -f${NC}"
 }
 
@@ -374,13 +427,18 @@ main() {
     # 7. نصب Xray
     install_xray
 
-    # 8. ایجاد جداول
+    # 8. تنظیم Nginx و SNI
+    configure_nginx_sni
+    modify_xray_for_sni
+    setup_panel_ssl
+
+    # 9. ایجاد جداول
     create_tables
 
-    # 9. تنظیم سرویس‌ها
+    # 10. تنظیم سرویس‌ها
     setup_services
 
-    # 10. نمایش اطلاعات
+    # 11. نمایش اطلاعات
     show_info
 }
 
