@@ -112,7 +112,6 @@ modify_xray_for_sni() {
     systemctl restart xray
     success "Xray برای کار با SNI به‌روزرسانی شد!"
 }
-}
 
 # ------------------- توابع اصلی (بدون تغییر) -------------------
 install_prerequisites() {
