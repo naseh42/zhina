@@ -1,38 +1,54 @@
 #!/bin/bash
-set -euo pipefail
+# ===============================================
+# نام اسکریپت: نصب کامل Zhina Panel + Xray-core
+# نسخه: 4.2.1
+# تاریخ آخرین بروزرسانی: 2025-03-26
+# ===============================================
 
-# ------------------- تنظیمات اصلی -------------------
+# ----------------------------
+# بخش 1: تنظیمات اصلی و توابع
+# ----------------------------
+set -euo pipefail
+exec 2> >(tee -a "/var/log/zhina-install.log")
+
+# تنظیمات سیستمی
 INSTALL_DIR="/var/lib/zhina"
 CONFIG_DIR="/etc/zhina"
 LOG_DIR="/var/log/zhina"
 XRAY_DIR="/usr/local/bin/xray"
+XRAY_EXECUTABLE="$XRAY_DIR/xray"
 XRAY_CONFIG="$XRAY_DIR/config.json"
 SERVICE_USER="zhina"
 DB_NAME="zhina_db"
 DB_USER="zhina_user"
+DB_PASSWORD=$(openssl rand -hex 24)
 PANEL_PORT=8001
 ADMIN_USER="admin"
 ADMIN_PASS=$(openssl rand -hex 12)
 XRAY_VERSION="1.8.11"
 UVICORN_WORKERS=4
-DB_PASSWORD=$(openssl rand -hex 24)
 XRAY_UUID=$(uuidgen)
 XRAY_PATH="/$(openssl rand -hex 8)"
 REALITY_SHORT_ID=$(openssl rand -hex 4)
+TELEGRAM_BOT_TOKEN=""
+TELEGRAM_CHAT_ID=""
 
-# ------------------- رنگ‌ها و توابع -------------------
+# رنگ‌های کنسول
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
+# توابع کمکی
 error() { echo -e "${RED}[✗] $1${NC}" >&2; exit 1; }
 success() { echo -e "${GREEN}[✓] $1${NC}"; }
 info() { echo -e "${BLUE}[i] $1${NC}"; }
 warning() { echo -e "${YELLOW}[!] $1${NC}"; }
 
-# ------------------- اعتبارسنجی سیستم -------------------
+# ----------------------------
+# بخش 2: اعتبارسنجی سیستم
+# ----------------------------
 validate_system() {
     info "بررسی پیش‌نیازهای سیستم..."
     
@@ -60,7 +76,9 @@ validate_system() {
     success "بررسی سیستم کامل شد"
 }
 
-# ------------------- نصب پیش‌نیازها -------------------
+# ----------------------------
+# بخش 3: نصب پیش‌نیازها
+# ----------------------------
 install_prerequisites() {
     info "نصب پیش‌نیازهای سیستم..."
     
@@ -86,7 +104,9 @@ install_prerequisites() {
     success "پیش‌نیازها با موفقیت نصب شدند"
 }
 
-# ------------------- تنظیم کاربر و دایرکتوری‌ها -------------------
+# ----------------------------
+# بخش 4: تنظیم کاربر و دایرکتوری‌ها
+# ----------------------------
 setup_directories() {
     info "تنظیم دایرکتوری‌ها و کاربر سیستم..."
     
@@ -112,7 +132,9 @@ setup_directories() {
     success "دایرکتوری‌ها و کاربر سیستم تنظیم شدند"
 }
 
-# ------------------- تنظیم دیتابیس -------------------
+# ----------------------------
+# بخش 5: تنظیم دیتابیس PostgreSQL
+# ----------------------------
 setup_database() {
     info "تنظیم پایگاه داده PostgreSQL..."
     
@@ -138,7 +160,9 @@ EOF
     success "پایگاه داده PostgreSQL تنظیم شد"
 }
 
-# ------------------- دریافت کدهای برنامه -------------------
+# ----------------------------
+# بخش 6: دریافت کدهای برنامه
+# ----------------------------
 clone_repository() {
     info "دریافت کدهای برنامه..."
     
@@ -158,7 +182,9 @@ clone_repository() {
     success "کدهای برنامه دریافت شدند"
 }
 
-# ------------------- تنظیم محیط مجازی -------------------
+# ----------------------------
+# بخش 7: تنظیم محیط مجازی Python
+# ----------------------------
 setup_virtualenv() {
     info "تنظیم محیط مجازی Python..."
     
@@ -175,24 +201,39 @@ setup_virtualenv() {
     success "محیط مجازی Python تنظیم شد"
 }
 
-# ------------------- تنظیمات Xray -------------------
+# ----------------------------
+# بخش 8: نصب و پیکربندی Xray-core
+# ----------------------------
 setup_xray() {
     info "نصب و پیکربندی Xray..."
     
     # توقف سرویس قبلی
     systemctl stop xray 2>/dev/null || true
     
-    # دانلود و نصب Xray
-    local xray_url="https://github.com/XTLS/Xray-core/releases/download/v$XRAY_VERSION/Xray-linux-64.zip"
-    wget "$xray_url" -O /tmp/xray.zip || error "خطا در دانلود Xray"
-    unzip -o /tmp/xray.zip -d "$XRAY_DIR" || error "خطا در استخراج Xray"
+    # حذف نسخه‌های قبلی
+    rm -rf "$XRAY_DIR"/*
+    mkdir -p "$XRAY_DIR"
+    
+    # دانلود و استخراج Xray
+    if ! wget "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" -O /tmp/xray.zip; then
+        error "خطا در دانلود Xray"
+    fi
+    
+    if ! unzip -o /tmp/xray.zip -d "$XRAY_DIR"; then
+        error "خطا در استخراج Xray"
+    fi
+    
     chmod +x "$XRAY_EXECUTABLE"
-    
+
     # تولید کلیدهای Reality
-    local reality_keys=$("$XRAY_EXECUTABLE" x25519)
-    REALITY_PRIVATE_KEY=$(echo "$reality_keys" | awk '/Private key:/ {print $3}')
-    REALITY_PUBLIC_KEY=$(echo "$reality_keys" | awk '/Public key:/ {print $3}')
+    if ! REALITY_KEYS=$("$XRAY_EXECUTABLE" x25519); then
+        error "خطا در تولید کلیدهای Reality"
+    fi
     
+    REALITY_PRIVATE_KEY=$(echo "$REALITY_KEYS" | awk '/Private key:/ {print $3}')
+    REALITY_PUBLIC_KEY=$(echo "$REALITY_KEYS" | awk '/Public key:/ {print $3}')
+    REALITY_SHORT_ID=$(openssl rand -hex 8)
+
     # ایجاد کانفیگ Xray
     cat > "$XRAY_CONFIG" <<EOF
 {
@@ -258,7 +299,7 @@ setup_xray() {
     }
 }
 EOF
-    
+
     # ایجاد سرویس systemd برای Xray
     cat > /etc/systemd/system/xray.service <<EOF
 [Unit]
@@ -294,9 +335,11 @@ EOF
     success "Xray با موفقیت نصب و پیکربندی شد"
 }
 
-# ------------------- تنظیمات Nginx -------------------
+# ----------------------------
+# بخش 9: تنظیمات Nginx
+# ----------------------------
 setup_nginx() {
-    info "پیکربندی Nginx..."
+    info "تنظیم Nginx..."
     
     # توقف سرویس Nginx
     systemctl stop nginx 2>/dev/null || true
@@ -348,7 +391,9 @@ EOF
     success "Nginx با موفقیت پیکربندی شد"
 }
 
-# ------------------- تنظیمات SSL -------------------
+# ----------------------------
+# بخش 10: تنظیمات SSL
+# ----------------------------
 setup_ssl() {
     info "تنظیم گواهی SSL..."
     
@@ -409,7 +454,9 @@ EOF
     success "تنظیمات SSL کامل شد"
 }
 
-# ------------------- ایجاد جداول دیتابیس -------------------
+# ----------------------------
+# بخش 11: ایجاد جداول دیتابیس
+# ----------------------------
 create_database_tables() {
     info "ایجاد جداول دیتابیس..."
     
@@ -475,7 +522,9 @@ EOF
     success "جداول دیتابیس ایجاد شدند"
 }
 
-# ------------------- تنظیم فایل محیطی -------------------
+# ----------------------------
+# بخش 12: تنظیم فایل محیطی
+# ----------------------------
 setup_environment() {
     info "تنظیم فایل محیطی..."
     
@@ -509,13 +558,18 @@ ENABLE_NOTIFICATIONS=True
 EOF
     
     # تنظیم مجوزهای امنیتی
-    chown "$SERVICE_USER":"$SERVICE_USER" "$CONFIG_DIR/.env"
+    chown -R "$SERVICE_USER":"$SERVICE_USER" "$CONFIG_DIR"
     chmod 600 "$CONFIG_DIR/.env"
+    
+    # ایجاد لینک نمادین
+    ln -sf "$CONFIG_DIR/.env" "$INSTALL_DIR/backend/.env"
     
     success "فایل محیطی تنظیم شد"
 }
 
-# ------------------- تنظیم سرویس پنل -------------------
+# ----------------------------
+# بخش 13: تنظیم سرویس پنل
+# ----------------------------
 setup_panel_service() {
     info "تنظیم سرویس پنل مدیریتی..."
     
@@ -547,7 +601,6 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 EOF
     
-    # راه‌اندازی سرویس
     systemctl daemon-reload
     systemctl enable --now zhina-panel
     
@@ -561,7 +614,9 @@ EOF
     success "سرویس پنل مدیریتی تنظیم شد"
 }
 
-# ------------------- نمایش اطلاعات نصب -------------------
+# ----------------------------
+# بخش 14: نمایش اطلاعات نصب
+# ----------------------------
 show_installation_info() {
     local public_ip=$(curl -s ifconfig.me)
     local panel_url="http://${public_ip}:${PANEL_PORT}"
@@ -623,7 +678,9 @@ EOF
     chown "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/installation-info.txt"
 }
 
-# ------------------- تابع اصلی -------------------
+# ----------------------------
+# بخش 15: تابع اصلی
+# ----------------------------
 main() {
     clear
     echo -e "${GREEN}\n=== شروع نصب Zhina Panel ===${NC}\n"
@@ -645,5 +702,7 @@ main() {
     echo -e "\n${GREEN}=== نصب با موفقیت کامل شد ===${NC}\n"
 }
 
-# ------------------- اجرای اسکریپت -------------------
+# ----------------------------
+# اجرای اسکریپت
+# ----------------------------
 main
