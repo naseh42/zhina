@@ -10,7 +10,7 @@ from typing import Optional
 import logging
 from pathlib import Path
 
-from backend import schemas, models, utils
+from . import schemas, models, utils
 from backend.database import get_db, engine, Base
 from backend.config import settings
 from backend.xray_config import xray_settings
