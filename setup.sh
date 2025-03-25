@@ -362,10 +362,10 @@ python-dotenv==1.0.0
 pydantic-settings==2.0.3
 pydantic[email]==2.4.2
 email-validator>=2.0.0
+passlib==1.7.4
 EOF
-    success "فایل requirements.txt ایجاد شد!"
 
-    # بازسازی محیط مجازی قبل از نصب ماژول‌ها
+    # بازسازی محیط مجازی
     info "بازسازی محیط مجازی..."
     rm -rf "$INSTALL_DIR/venv"
     python3 -m venv "$INSTALL_DIR/venv"
@@ -376,7 +376,6 @@ EOF
     pip install -r "$INSTALL_DIR/requirements.txt"
     deactivate
     
-    # تنظیم مجوزهای صحیح
     chown -R $SERVICE_USER:$SERVICE_USER "$INSTALL_DIR/venv"
     success "وابستگی‌ها با موفقیت نصب شدند!"
 }
