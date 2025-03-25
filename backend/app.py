@@ -63,7 +63,7 @@ async def startup():
 # Routes
 @app.get("/", response_class=HTMLResponse)
 async def serve_home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse("dashboard.html", {"request": request})
 
 @app.post("/token", response_model=schemas.Token)
 async def login_for_access_token(
