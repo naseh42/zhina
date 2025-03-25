@@ -7,6 +7,8 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
+    email = Column(String, unique=True, index=True)
+    hashed_password = Column(String)
     uuid = Column(String, unique=True, index=True)
     traffic_limit = Column(Integer, default=0)
     usage_duration = Column(Integer, default=0)
@@ -15,7 +17,6 @@ class User(Base):
     created_at = Column(DateTime)
     updated_at = Column(DateTime)
 
-    # رابطه با دامنه‌ها
     domains = relationship("Domain", back_populates="owner")
 
 class Domain(Base):
@@ -28,7 +29,6 @@ class Domain(Base):
     created_at = Column(DateTime)
     updated_at = Column(DateTime)
 
-    # رابطه با کاربر
     owner = relationship("User", back_populates="domains")
 
 class Subscription(Base):
@@ -71,6 +71,6 @@ class Inbound(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, index=True)
-    settings = Column(JSON, nullable=True)  # تنظیمات مرتبط با inbound
+    settings = Column(JSON, nullable=True)
     created_at = Column(DateTime)
     updated_at = Column(DateTime)
