@@ -83,14 +83,15 @@ install_xray() {
     # تولید مقادیر تصادفی
     XRAY_UUID=$(uuidgen)
     XRAY_PATH="/$(openssl rand -hex 6)"
+    HTTP_PATH="/$(openssl rand -hex 4)"
     
-    # تولید کلیدهای Reality به روش صحیح
+    # تولید کلیدهای Reality
     REALITY_KEYS=$($XRAY_EXECUTABLE x25519)
     REALITY_PRIVATE_KEY=$(echo "$REALITY_KEYS" | awk '/Private key:/ {print $3}')
     REALITY_PUBLIC_KEY=$(echo "$REALITY_KEYS" | awk '/Public key:/ {print $3}')
     REALITY_SHORT_ID=$(openssl rand -hex 8)
 
-    # ایجاد فایل کانفیگ با تنظیمات صحیح
+    # ایجاد فایل کانفیگ با پروتکل‌های جدید
     cat > "$XRAY_CONFIG" <<EOF
 {
     "log": {"loglevel": "warning"},
@@ -158,22 +159,29 @@ install_xray() {
             }
         },
         {
-            "port": 2095,
-            "protocol": "hysteria",
+            "port": 8081,
+            "protocol": "http",
             "settings": {
-                "auth": "$XRAY_UUID",
-                "obfs": "$XRAY_PATH",
-                "up": "100 Mbps",
-                "down": "100 Mbps"
+                "timeout": 300,
+                "allowTransparent": false
+            },
+            "streamSettings": {
+                "network": "tcp"
             }
         },
         {
-            "port": 2096,
-            "protocol": "tuic",
+            "port": 8082,
+            "protocol": "http",
             "settings": {
-                "token": "$XRAY_UUID",
-                "certificate": "/etc/nginx/ssl/fullchain.pem",
-                "privateKey": "/etc/nginx/ssl/privkey.pem"
+                "timeout": 300,
+                "allowTransparent": false
+            },
+            "streamSettings": {
+                "network": "h2",
+                "httpSettings": {
+                    "path": "$HTTP_PATH",
+                    "host": ["www.example.com"]
+                }
             }
         }
     ],
@@ -319,8 +327,8 @@ show_info() {
     echo -e "  - ${YELLOW}VMess + WS${NC} (پورت 8080 - مسیر: ${XRAY_PATH})"
     echo -e "  - ${YELLOW}Trojan${NC} (پورت 8443)"
     echo -e "  - ${YELLOW}Shadowsocks${NC} (پورت 8388)"
-    echo -e "  - ${YELLOW}Hysteria${NC} (پورت 2095)"
-    echo -e "  - ${YELLOW}TUIC${NC} (پورت 2096)"
+    echo -e "  - ${YELLOW}HTTP/2${NC} (پورت 8082 - مسیر: ${HTTP_PATH})"
+    echo -e "  - ${YELLOW}HTTP معمولی${NC} (پورت 8081)"
     echo -e "• UUID/پسورد مشترک: ${YELLOW}${XRAY_UUID}${NC}"
     echo -e "• کلید عمومی Reality: ${YELLOW}${REALITY_PUBLIC_KEY}${NC}"
 
