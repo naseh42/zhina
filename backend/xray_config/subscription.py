@@ -1,5 +1,5 @@
-from pydantic import BaseModel, validator, field_validator
-from typing import Dict, List, Optional
+from pydantic import BaseModel, validator, Field
+from typing import Optional
 from datetime import datetime
 from backend.database import get_db
 from backend.models import Subscription
@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 class SubscriptionCreate(BaseModel):
     """
     مدل ایجاد سابسکریپشن جدید
-    شامل اعتبارسنجی‌های لازم برای فیلدها
     """
     uuid: str
     data_limit: int
@@ -16,37 +15,32 @@ class SubscriptionCreate(BaseModel):
     max_connections: int
 
     @validator("data_limit")
-    def validate_data_limit(cls, value):
-        """اعتبارسنجی محدودیت داده"""
-        if value < 0:
-            raise ValueError("محدودیت داده باید بزرگ‌تر از صفر باشد.")
-        return value
+    def validate_data_limit(cls, v):
+        if v < 0:
+            raise ValueError("محدودیت داده باید بزرگ‌تر از صفر باشد")
+        return v
 
     @validator("max_connections")
-    def validate_max_connections(cls, value):
-        """اعتبارسنجی حداکثر اتصالات"""
-        if value < 1:
-            raise ValueError("حداکثر اتصالات باید حداقل ۱ باشد.")
-        return value
+    def validate_max_connections(cls, v):
+        if v < 1:
+            raise ValueError("حداکثر اتصالات باید حداقل ۱ باشد")
+        return v
 
     @validator("expiry_date")
-    def validate_expiry_date(cls, value):
-        """اعتبارسنجی تاریخ انقضا"""
+    def validate_expiry_date(cls, v):
         try:
-            datetime.strptime(value, "%Y-%m-%d")
+            datetime.strptime(v, "%Y-%m-%d")
         except ValueError:
             raise ValueError("فرمت تاریخ باید YYYY-MM-DD باشد")
-        return value
+        return v
 
 class SubscriptionUpdate(BaseModel):
     """
     مدل به‌روزرسانی سابسکریپشن
-    تمام فیلدها اختیاری هستند
     """
     data_limit: Optional[int] = Field(
         default=None,
-        gt=0,
-        description="محدودیت ترافیک به بایت (باید بزرگتر از صفر باشد)"
+        description="محدودیت داده به بایت"
     )
     expiry_date: Optional[str] = Field(
         default=None,
@@ -54,31 +48,21 @@ class SubscriptionUpdate(BaseModel):
     )
     max_connections: Optional[int] = Field(
         default=None,
-        gt=0,
-        description="حداکثر اتصالات همزمان (باید بزرگتر از صفر باشد)"
+        description="حداکثر اتصالات همزمان"
     )
 
-    @field_validator("expiry_date")
-    @classmethod
-    def validate_expiry_date(cls, value):
-        """اعتبارسنجی تاریخ انقضا برای به‌روزرسانی"""
-        if value is not None:
+    @validator("expiry_date")
+    def validate_expiry_date(cls, v):
+        if v is not None:
             try:
-                datetime.strptime(value, "%Y-%m-%d")
+                datetime.strptime(v, "%Y-%m-%d")
             except ValueError:
                 raise ValueError("فرمت تاریخ باید YYYY-MM-DD باشد")
-        return value
+        return v
 
 def create_subscription(db: Session, subscription: SubscriptionCreate) -> Subscription:
     """
     ایجاد سابسکریپشن جدید در دیتابیس
-    
-    Args:
-        db: جلسه دیتابیس
-        subscription: مدل ایجاد سابسکریپشن
-    
-    Returns:
-        شیء Subscription ایجاد شده
     """
     db_subscription = Subscription(
         uuid=subscription.uuid,
@@ -92,20 +76,12 @@ def create_subscription(db: Session, subscription: SubscriptionCreate) -> Subscr
     return db_subscription
 
 def update_subscription(
-    db: Session, 
-    subscription_id: int, 
+    db: Session,
+    subscription_id: int,
     subscription: SubscriptionUpdate
 ) -> Optional[Subscription]:
     """
     به‌روزرسانی سابسکریپشن موجود
-    
-    Args:
-        db: جلسه دیتابیس
-        subscription_id: ID سابسکریپشن
-        subscription: مدل به‌روزرسانی
-    
-    Returns:
-        شیء Subscription به‌روز شده یا None اگر پیدا نشد
     """
     db_subscription = db.query(Subscription).filter(Subscription.id == subscription_id).first()
     if not db_subscription:
@@ -125,13 +101,6 @@ def update_subscription(
 def delete_subscription(db: Session, subscription_id: int) -> bool:
     """
     حذف سابسکریپشن از دیتابیس
-    
-    Args:
-        db: جلسه دیتابیس
-        subscription_id: ID سابسکریپشن
-    
-    Returns:
-        True اگر حذف موفق بود، False اگر سابسکریپشن پیدا نشد
     """
     db_subscription = db.query(Subscription).filter(Subscription.id == subscription_id).first()
     if not db_subscription:
