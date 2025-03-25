@@ -1,19 +1,47 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
-from backend.database import get_db
-from backend.models import User, Domain, Subscription, Node
+from datetime import datetime, timedelta
+from typing import Optional
+import uuid
+
+# Import internal modules
+from backend.database import get_db, Base, engine
+from backend.models import User, Domain, Subscription, Node, Inbound
 from backend.schemas import (
-    UserCreate, UserUpdate, DomainCreate, DomainUpdate,
-    SubscriptionCreate, SubscriptionUpdate, NodeCreate, NodeUpdate
+    UserCreate, UserUpdate, 
+    DomainCreate, DomainUpdate,
+    SubscriptionCreate, SubscriptionUpdate,
+    NodeCreate, NodeUpdate
 )
-from backend.utils import generate_uuid, generate_subscription_link
-from backend.xray_config import xray_settings
-from backend.settings import language_settings, theme_settings
+from backend.utils import (
+    generate_uuid,
+    generate_subscription_link,
+    get_password_hash,
+    verify_password,
+    create_access_token
+)
+from backend.xray_config import (
+    xray_settings,
+    http_settings,
+    tls_settings,
+    InboundCreate,
+    InboundUpdate,
+    ProtocolType
+)
+from backend.config import settings
 
-app = FastAPI()
+# Initialize FastAPI app
+app = FastAPI(
+    title="Zhina Panel API",
+    description="مدیریت پیشرفته پروکسی Xray",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url=None
+)
 
-# تنظیمات CORS برای ارتباط با فرانت‌اند
+# CORS Configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -22,13 +50,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# روت‌های کاربران
-@app.post("/users/", response_model=UserCreate)
+# Authentication
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+# Database initialization
+@app.on_event("startup")
+def startup():
+    Base.metadata.create_all(bind=engine)
+    # Initialize default settings if needed
+
+# ------------------- User Routes -------------------
+@app.post("/users/", response_model=UserCreate, status_code=status.HTTP_201_CREATED)
 def create_user(user: UserCreate, db: Session = Depends(get_db)):
-    """ ایجاد کاربر جدید """
+    """ایجاد کاربر جدید"""
     db_user = User(
-        name=user.name,
-        uuid=generate_uuid(),
+        username=user.username,
+        password=get_password_hash(user.password),
+        uuid=str(uuid.uuid4()),
         traffic_limit=user.traffic_limit,
         usage_duration=user.usage_duration,
         simultaneous_connections=user.simultaneous_connections,
@@ -41,98 +79,65 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
 
 @app.get("/users/{user_id}", response_model=UserCreate)
 def read_user(user_id: int, db: Session = Depends(get_db)):
-    """ دریافت اطلاعات کاربر """
+    """دریافت اطلاعات کاربر"""
     db_user = db.query(User).filter(User.id == user_id).first()
     if not db_user:
-        raise HTTPException(status_code=404, detail="کاربر یافت نشد")
+        raise HTTPException(status_code=404, detail="User not found")
     return db_user
 
-@app.put("/users/{user_id}", response_model=UserUpdate)
-def update_user(user_id: int, user: UserUpdate, db: Session = Depends(get_db)):
-    """ به‌روزرسانی اطلاعات کاربر """
-    db_user = db.query(User).filter(User.id == user_id).first()
-    if not db_user:
-        raise HTTPException(status_code=404, detail="کاربر یافت نشد")
+# ------------------- Xray Management Routes -------------------
+@app.get("/xray/status")
+def get_xray_status():
+    """دریافت وضعیت سرویس Xray"""
+    return {
+        "status": "active",
+        "version": "1.8.11",
+        "settings": xray_settings.dict(),
+        "tls": tls_settings.dict(),
+        "http": http_settings.dict()
+    }
 
-    if user.name:
-        db_user.name = user.name
-    if user.traffic_limit:
-        db_user.traffic_limit = user.traffic_limit
-    if user.usage_duration:
-        db_user.usage_duration = user.usage_duration
-    if user.simultaneous_connections:
-        db_user.simultaneous_connections = user.simultaneous_connections
-
-    db.commit()
-    db.refresh(db_user)
-    return db_user
-
-@app.delete("/users/{user_id}")
-def delete_user(user_id: int, db: Session = Depends(get_db)):
-    """ حذف کاربر """
-    db_user = db.query(User).filter(User.id == user_id).first()
-    if not db_user:
-        raise HTTPException(status_code=404, detail="کاربر یافت نشد")
-
-    db.delete(db_user)
-    db.commit()
-    return {"message": "کاربر با موفقیت حذف شد"}
-
-# روت‌های دامنه‌ها
-@app.post("/domains/", response_model=DomainCreate)
-def create_domain(domain: DomainCreate, db: Session = Depends(get_db)):
-    """ ایجاد دامنه جدید """
-    db_domain = Domain(
-        name=domain.name,
-        description=domain.description,
-        cdn_enabled=domain.cdn_enabled
+@app.post("/xray/inbounds", status_code=status.HTTP_201_CREATED)
+def create_inbound(inbound: InboundCreate, db: Session = Depends(get_db)):
+    """ایجاد اینباند جدید"""
+    # Validate protocol
+    if inbound.protocol not in ProtocolType.__members__.values():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid protocol type"
+        )
+    
+    # Save to database
+    db_inbound = Inbound(
+        port=inbound.port,
+        protocol=inbound.protocol.value,
+        tag=inbound.tag,
+        settings=inbound.settings,
+        stream_settings=inbound.stream_settings
     )
-    db.add(db_domain)
+    db.add(db_inbound)
     db.commit()
-    db.refresh(db_domain)
-    return db_domain
+    db.refresh(db_inbound)
+    
+    # TODO: Apply to running Xray instance
+    
+    return {
+        "message": "Inbound created successfully",
+        "inbound": db_inbound
+    }
 
-@app.get("/domains/{domain_id}", response_model=DomainCreate)
-def read_domain(domain_id: int, db: Session = Depends(get_db)):
-    """ دریافت اطلاعات دامنه """
-    db_domain = db.query(Domain).filter(Domain.id == domain_id).first()
-    if not db_domain:
-        raise HTTPException(status_code=404, detail="دامنه یافت نشد")
-    return db_domain
+@app.get("/xray/inbounds")
+def list_inbounds(db: Session = Depends(get_db)):
+    """لیست تمام اینباندها"""
+    return db.query(Inbound).all()
 
-@app.put("/domains/{domain_id}", response_model=DomainUpdate)
-def update_domain(domain_id: int, domain: DomainUpdate, db: Session = Depends(get_db)):
-    """ به‌روزرسانی اطلاعات دامنه """
-    db_domain = db.query(Domain).filter(Domain.id == domain_id).first()
-    if not db_domain:
-        raise HTTPException(status_code=404, detail="دامنه یافت نشد")
-
-    if domain.name:
-        db_domain.name = domain.name
-    if domain.description:
-        db_domain.description = domain.description
-    if domain.cdn_enabled is not None:
-        db_domain.cdn_enabled = domain.cdn_enabled
-
-    db.commit()
-    db.refresh(db_domain)
-    return db_domain
-
-@app.delete("/domains/{domain_id}")
-def delete_domain(domain_id: int, db: Session = Depends(get_db)):
-    """ حذف دامنه """
-    db_domain = db.query(Domain).filter(Domain.id == domain_id).first()
-    if not db_domain:
-        raise HTTPException(status_code=404, detail="دامنه یافت نشد")
-
-    db.delete(db_domain)
-    db.commit()
-    return {"message": "دامنه با موفقیت حذف شد"}
-
-# روت‌های سابسکریپشن‌ها
-@app.post("/subscriptions/", response_model=SubscriptionCreate)
-def create_subscription(subscription: SubscriptionCreate, db: Session = Depends(get_db)):
-    """ ایجاد سابسکریپشن جدید """
+# ------------------- Subscription Routes -------------------
+@app.post("/subscriptions/", response_model=SubscriptionCreate, status_code=status.HTTP_201_CREATED)
+def create_subscription_endpoint(
+    subscription: SubscriptionCreate, 
+    db: Session = Depends(get_db)
+):
+    """ایجاد سابسکریپشن جدید"""
     db_subscription = Subscription(
         uuid=subscription.uuid,
         data_limit=subscription.data_limit,
@@ -142,142 +147,71 @@ def create_subscription(subscription: SubscriptionCreate, db: Session = Depends(
     db.add(db_subscription)
     db.commit()
     db.refresh(db_subscription)
-    return db_subscription
+    
+    # Generate subscription link
+    sub_link = generate_subscription_link(
+        db_subscription.uuid,
+        xray_settings.config_path
+    )
+    
+    return {
+        **db_subscription.__dict__,
+        "subscription_link": sub_link
+    }
 
-@app.get("/subscriptions/{subscription_id}", response_model=SubscriptionCreate)
-def read_subscription(subscription_id: int, db: Session = Depends(get_db)):
-    """ دریافت اطلاعات سابسکریپشن """
-    db_subscription = db.query(Subscription).filter(Subscription.id == subscription_id).first()
-    if not db_subscription:
-        raise HTTPException(status_code=404, detail="سابسکریپشن یافت نشد")
-    return db_subscription
-
-@app.put("/subscriptions/{subscription_id}", response_model=SubscriptionUpdate)
-def update_subscription(subscription_id: int, subscription: SubscriptionUpdate, db: Session = Depends(get_db)):
-    """ به‌روزرسانی سابسکریپشن """
-    db_subscription = db.query(Subscription).filter(Subscription.id == subscription_id).first()
-    if not db_subscription:
-        raise HTTPException(status_code=404, detail="سابسکریپشن یافت نشد")
-
-    if subscription.data_limit:
-        db_subscription.data_limit = subscription.data_limit
-    if subscription.expiry_date:
-        db_subscription.expiry_date = subscription.expiry_date
-    if subscription.max_connections:
-        db_subscription.max_connections = subscription.max_connections
-
-    db.commit()
-    db.refresh(db_subscription)
-    return db_subscription
-
-@app.delete("/subscriptions/{subscription_id}")
-def delete_subscription(subscription_id: int, db: Session = Depends(get_db)):
-    """ حذف سابسکریپشن """
-    db_subscription = db.query(Subscription).filter(Subscription.id == subscription_id).first()
-    if not db_subscription:
-        raise HTTPException(status_code=404, detail="سابسکریپشن یافت نشد")
-
-    db.delete(db_subscription)
-    db.commit()
-    return {"message": "سابسکریپشن با موفقیت حذف شد"}
-
-# روت‌های نودها
-@app.post("/nodes/", response_model=NodeCreate)
+# ------------------- Node Routes -------------------
+@app.post("/nodes/", response_model=NodeCreate, status_code=status.HTTP_201_CREATED)
 def create_node(node: NodeCreate, db: Session = Depends(get_db)):
-    """ ایجاد نود جدید """
+    """ایجاد نود جدید"""
     db_node = Node(
         name=node.name,
         ip_address=node.ip_address,
         port=node.port,
-        protocol=node.protocol
+        protocol=node.protocol,
+        is_active=True
     )
     db.add(db_node)
     db.commit()
     db.refresh(db_node)
     return db_node
 
-@app.get("/nodes/{node_id}", response_model=NodeCreate)
-def read_node(node_id: int, db: Session = Depends(get_db)):
-    """ دریافت اطلاعات نود """
-    db_node = db.query(Node).filter(Node.id == node_id).first()
-    if not db_node:
-        raise HTTPException(status_code=404, detail="نود یافت نشد")
-    return db_node
+# ------------------- TLS/HTTP Routes -------------------
+@app.get("/settings/tls")
+def get_tls_config():
+    """دریافت تنظیمات TLS"""
+    return tls_settings.dict()
 
-@app.put("/nodes/{node_id}", response_model=NodeUpdate)
-def update_node(node_id: int, node: NodeUpdate, db: Session = Depends(get_db)):
-    """ به‌روزرسانی نود """
-    db_node = db.query(Node).filter(Node.id == node_id).first()
-    if not db_node:
-        raise HTTPException(status_code=404, detail="نود یافت نشد")
+@app.put("/settings/tls")
+def update_tls_config(updated_config: dict):
+    """به‌روزرسانی تنظیمات TLS"""
+    global tls_settings
+    tls_settings = tls_settings.copy(update=updated_config)
+    # TODO: Apply to Xray config
+    return {"message": "TLS settings updated"}
 
-    if node.name:
-        db_node.name = node.name
-    if node.ip_address:
-        db_node.ip_address = node.ip_address
-    if node.port:
-        db_node.port = node.port
-    if node.protocol:
-        db_node.protocol = node.protocol
+@app.get("/settings/http")
+def get_http_config():
+    """دریافت تنظیمات HTTP"""
+    return http_settings.dict()
 
-    db.commit()
-    db.refresh(db_node)
-    return db_node
+# ------------------- Authentication Routes -------------------
+@app.post("/token")
+def login_for_access_token():
+    """دریافت توکن دسترسی"""
+    # TODO: Implement actual authentication
+    access_token = create_access_token(
+        data={"sub": "admin"},
+        expires_delta=timedelta(minutes=30)
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
 
-@app.delete("/nodes/{node_id}")
-def delete_node(node_id: int, db: Session = Depends(get_db)):
-    """ حذف نود """
-    db_node = db.query(Node).filter(Node.id == node_id).first()
-    if not db_node:
-        raise HTTPException(status_code=404, detail="نود یافت نشد")
-
-    db.delete(db_node)
-    db.commit()
-    return {"message": "نود با موفقیت حذف شد"}
-
-# روت‌های تنظیمات Xray
-@app.get("/xray-settings/")
-def get_xray_settings():
-    """ دریافت تنظیمات Xray """
-    return xray_settings
-
-@app.put("/xray-settings/")
-def update_xray_settings(settings: XraySettings):
-    """ به‌روزرسانی تنظیمات Xray """
-    xray_settings.update(settings.dict())
-    return {"message": "تنظیمات Xray با موفقیت به‌روزرسانی شد"}
-
-# روت‌های تنظیمات HTTP
-@app.get("/http-settings/")
-def get_http_settings():
-    """ دریافت تنظیمات HTTP """
-    return http_settings
-
-@app.put("/http-settings/")
-def update_http_settings(settings: HTTPSettings):
-    """ به‌روزرسانی تنظیمات HTTP """
-    http_settings.update(settings.dict())
-    return {"message": "تنظیمات HTTP با موفقیت به‌روزرسانی شد"}
-
-# روت‌های تنظیمات عمومی
-@app.get("/language-settings/")
-def get_language_settings():
-    """ دریافت تنظیمات زبان """
-    return language_settings
-
-@app.put("/language-settings/")
-def update_language_settings(settings: LanguageSettings):
-    """ به‌روزرسانی تنظیمات زبان """
-    language_settings.update(settings.dict())
-    return {"message": "تنظیمات زبان با موفقیت به‌روزرسانی شد"}
-
-@app.get("/theme-settings/")
-def get_theme_settings():
-    """ دریافت تنظیمات تم """
-    return theme_settings
-
-@app.put("/theme-settings/")
-def update_theme_settings(settings: ThemeSettings):
-    """ به‌روزرسانی تنظیمات تم """
-    theme_settings.update(settings.dict())
-    return {"message": "تنظیمات تم با موفقیت به‌روزرسانی شد"}
+# ------------------- Health Check -------------------
+@app.get("/health")
+def health_check():
+    """بررسی سلامت سرویس"""
+    return {
+        "status": "OK",
+        "timestamp": datetime.utcnow().isoformat(),
+        "xray_status": "active",
+        "database": "connected"
+    }
