@@ -283,22 +283,31 @@ EOF
 install_xray() {
     info "نصب و پیکربندی Xray..."
     
+    # توقف سرویس قبلی اگر وجود دارد
     systemctl stop xray 2>/dev/null || true
-    rm -rf "$XRAY_DIR"
     
+    # حذف نسخه‌های قبلی
+    rm -rf "$XRAY_DIR"
     mkdir -p "$XRAY_DIR"
-    wget "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" -O /tmp/xray.zip
-    unzip -o /tmp/xray.zip -d "$XRAY_DIR"
+    
+    # دانلود و استخراج Xray
+    wget "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" -O /tmp/xray.zip || {
+        error "خطا در دانلود Xray"
+    }
+    unzip -o /tmp/xray.zip -d "$XRAY_DIR" || {
+        error "خطا در استخراج Xray"
+    }
     chmod +x "$XRAY_EXECUTABLE"
 
-    XRAY_UUID=$(uuidgen)
-    XRAY_PATH="/$(openssl rand -hex 6)"
-    
-    REALITY_KEYS=$($XRAY_EXECUTABLE x25519)
+    # تولید کلیدهای Reality
+    REALITY_KEYS=$($XRAY_EXECUTABLE x25519) || {
+        error "خطا در تولید کلیدهای Reality"
+    }
     REALITY_PRIVATE_KEY=$(echo "$REALITY_KEYS" | awk '/Private key:/ {print $3}')
     REALITY_PUBLIC_KEY=$(echo "$REALITY_KEYS" | awk '/Public key:/ {print $3}')
     REALITY_SHORT_ID=$(openssl rand -hex 8)
 
+    # ایجاد کانفیگ Xray
     cat > "$XRAY_CONFIG" <<EOF
 {
     "log": {"loglevel": "warning"},
@@ -328,6 +337,7 @@ install_xray() {
 }
 EOF
 
+    # ایجاد سرویس systemd
     cat > /etc/systemd/system/xray.service <<EOF
 [Unit]
 Description=Xray Service
@@ -346,9 +356,21 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 EOF
 
+    # بارگذاری و راه‌اندازی سرویس
     systemctl daemon-reload
     systemctl enable xray
-    systemctl start xray
+    
+    if ! systemctl start xray; then
+        journalctl -u xray -n 20 --no-pager
+        error "خطا در راه‌اندازی سرویس Xray"
+    fi
+    
+    sleep 2
+    if ! systemctl is-active --quiet xray; then
+        journalctl -u xray -n 30 --no-pager
+        error "سرویس Xray پس از راه‌اندازی غیرفعال است"
+    fi
+    
     success "Xray با موفقیت نصب و پیکربندی شد!"
 }
 
