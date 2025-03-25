@@ -4,7 +4,8 @@ set -euo pipefail
 # ------------------- تنظیمات اصلی -------------------
 INSTALL_DIR="/var/lib/zhina"
 XRAY_DIR="/usr/local/bin/xray"
-XRAY_CONFIG="/usr/local/bin/xray/config.json"
+XRAY_EXECUTABLE="$XRAY_DIR/xray-core"  # تغییر نام فایل اجرایی برای جلوگیری از تداخل
+XRAY_CONFIG="$XRAY_DIR/config.json"
 SERVICE_USER="zhina"
 DB_NAME="zhina_db"
 DB_USER="zhina_user"
@@ -70,11 +71,18 @@ EOF
 install_xray() {
     info "نصب و پیکربندی Xray..."
     
+    # حذف نسخه قبلی اگر وجود دارد
+    sudo systemctl stop xray 2>/dev/null || true
+    rm -rf "$XRAY_DIR"
+    
     # ایجاد دایرکتوری و دانلود Xray
-    mkdir -p $XRAY_DIR
+    mkdir -p "$XRAY_DIR"
     wget "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" -O /tmp/xray.zip
     unzip -o /tmp/xray.zip -d "$XRAY_DIR"
-    chmod +x "$XRAY_DIR/xray"
+    
+    # تغییر نام فایل اجرایی برای جلوگیری از تداخل
+    mv "$XRAY_DIR/xray" "$XRAY_EXECUTABLE"
+    chmod +x "$XRAY_EXECUTABLE"
 
     # تولید مقادیر تصادفی
     XRAY_UUID=$(uuidgen)
@@ -215,6 +223,10 @@ EOF
 setup_services() {
     info "تنظیم سرویس‌های سیستم..."
 
+    # حذف تنظیمات قبلی اگر وجود دارد
+    rm -f /etc/systemd/system/xray.service
+    rm -rf /etc/systemd/system/xray.service.d
+
     # سرویس Xray
     cat > /etc/systemd/system/xray.service <<EOF
 [Unit]
@@ -224,11 +236,12 @@ After=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=$XRAY_DIR
-ExecStart=$XRAY_DIR/xray run -config $XRAY_CONFIG
+WorkingDirectory=$(dirname "$XRAY_EXECUTABLE")
+ExecStart=$XRAY_EXECUTABLE run -config $XRAY_CONFIG
 Restart=always
 RestartSec=3
 LimitNOFILE=65535
+Environment="XRAY_LOCATION_ASSET=$(dirname "$XRAY_EXECUTABLE")"
 
 [Install]
 WantedBy=multi-user.target
