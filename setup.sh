@@ -4,13 +4,14 @@ set -euo pipefail
 # ------------------- تنظیمات اصلی -------------------
 INSTALL_DIR="/var/lib/zhina"
 XRAY_DIR="/usr/local/bin/xray"
+XRAY_CONFIG="/usr/local/bin/xray/config.json"
 SERVICE_USER="zhina"
 DB_NAME="zhina_db"
 DB_USER="zhina_user"
 PANEL_PORT=8000
 ADMIN_USER="admin"
 ADMIN_PASS=$(openssl rand -hex 8)
-XRAY_VERSION="1.8.11"  # نسخه Xray
+XRAY_VERSION="1.8.11"
 UVICORN_WORKERS=4
 
 # ------------------- رنگ‌ها و توابع -------------------
@@ -39,13 +40,14 @@ setup_database() {
     CREATE USER $DB_USER WITH PASSWORD '$(openssl rand -hex 16)';
     CREATE DATABASE $DB_NAME OWNER $DB_USER;
 EOF
+    # نصب extension مورد نیاز برای تابع gen_salt
+    sudo -u postgres psql -d $DB_NAME -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
     success "پایگاه داده با موفقیت تنظیم شد!"
 }
 
 setup_requirements() {
     info "ایجاد فایل requirements.txt..."
-    if [[ ! -f "$INSTALL_DIR/requirements.txt" ]]; then
-        cat > "$INSTALL_DIR/requirements.txt" <<EOF
+    cat > "$INSTALL_DIR/requirements.txt" <<EOF
 sqlalchemy==2.0.28
 psycopg2-binary==2.9.9
 fastapi==0.103.2
@@ -54,33 +56,33 @@ python-multipart==0.0.6
 jinja2==3.1.2
 python-dotenv==1.0.0
 EOF
-        success "فایل requirements.txt ایجاد شد!"
-    else
-        info "فایل requirements.txt از قبل موجود است."
-    fi
+    success "فایل requirements.txt ایجاد شد!"
 
     info "نصب وابستگی‌های مورد نیاز..."
     python3 -m venv $INSTALL_DIR/venv
     source $INSTALL_DIR/venv/bin/activate
     pip install -U pip setuptools wheel
-    pip install -r "$INSTALL_DIR/requirements.txt" || error "خطا در نصب وابستگی‌ها!"
+    pip install -r "$INSTALL_DIR/requirements.txt"
     deactivate
     success "وابستگی‌ها با موفقیت نصب شدند!"
 }
 
-install_xray_with_all_protocols() {
-    info "نصب Xray با تمام پروتکل‌ها..."
+install_xray() {
+    info "نصب و پیکربندی Xray..."
     
+    # ایجاد دایرکتوری و دانلود Xray
     mkdir -p $XRAY_DIR
     wget "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" -O /tmp/xray.zip
     unzip -o /tmp/xray.zip -d "$XRAY_DIR"
     chmod +x "$XRAY_DIR/xray"
 
+    # تولید مقادیر تصادفی
     XRAY_UUID=$(uuidgen)
     XRAY_PATH="/$(openssl rand -hex 6)"
     REALITY_KEY=$(openssl rand -hex 32)
 
-    cat > "$XRAY_DIR/config.json" <<EOF
+    # ایجاد فایل کانفیگ
+    cat > "$XRAY_CONFIG" <<EOF
 {
     "log": {"loglevel": "warning"},
     "inbounds": [
@@ -132,10 +134,10 @@ install_xray_with_all_protocols() {
     "outbounds": [{"protocol": "freedom"}]
 }
 EOF
-    success "Xray با تمام پروتکل‌ها با موفقیت نصب و تنظیم شد!"
+    success "Xray با موفقیت نصب و پیکربندی شد!"
 }
 
-setup_ssl_certificates() {
+setup_ssl() {
     info "تنظیم گواهی SSL..."
     mkdir -p /etc/nginx/ssl
     openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
@@ -145,7 +147,7 @@ setup_ssl_certificates() {
     success "گواهی SSL با موفقیت ایجاد شد!"
 }
 
-create_database_tables() {
+create_tables() {
     info "ایجاد جداول دیتابیس..."
     sudo -u postgres psql -d $DB_NAME <<EOF
     CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -210,8 +212,8 @@ EOF
     success "جداول دیتابیس با موفقیت ایجاد شدند!"
 }
 
-create_systemd_services() {
-    info "ایجاد سرویس‌های systemd..."
+setup_services() {
+    info "تنظیم سرویس‌های سیستم..."
 
     # سرویس Xray
     cat > /etc/systemd/system/xray.service <<EOF
@@ -220,16 +222,19 @@ Description=Xray Service
 After=network.target
 
 [Service]
+Type=simple
 User=root
-ExecStart=$XRAY_DIR/xray run -config $XRAY_DIR/config.json
+WorkingDirectory=$XRAY_DIR
+ExecStart=$XRAY_DIR/xray run -config $XRAY_CONFIG
 Restart=always
+RestartSec=3
 LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-    # سرویس پنل مدیریتی
+    # سرویس پنل
     cat > /etc/systemd/system/zhina-panel.service <<EOF
 [Unit]
 Description=Zhina Panel Service
@@ -249,10 +254,10 @@ EOF
     systemctl daemon-reload
     systemctl enable xray zhina-panel
     systemctl start xray zhina-panel
-    success "سرویس‌های systemd با موفقیت ایجاد و راه‌اندازی شدند!"
+    success "سرویس‌ها با موفقیت تنظیم و راه‌اندازی شدند!"
 }
 
-show_final_info() {
+show_info() {
     success "\n\n=== نصب کامل شد! ==="
     echo -e "دسترسی پنل مدیریتی:"
     echo -e "• آدرس: http://$(curl -s ifconfig.me):$PANEL_PORT"
@@ -278,44 +283,48 @@ show_final_info() {
 
 # ------------------- اجرای اصلی -------------------
 main() {
-    # 1. بررسی دسترسی root
     [[ $EUID -ne 0 ]] && error "این اسکریپت نیاز به دسترسی root دارد!"
 
-    # 2. نصب پیش‌نیازها
+    # 1. نصب پیش‌نیازها
     install_prerequisites
 
-    # 3. ایجاد کاربر سرویس
+    # 2. ایجاد کاربر سرویس
     if ! id "$SERVICE_USER" &>/dev/null; then
         useradd -r -s /bin/false -d $INSTALL_DIR $SERVICE_USER
     fi
 
-    # 4. تنظیمات دیتابیس
+    # 3. تنظیم دیتابیس
     setup_database
 
-    # 5. کپی فایل‌های برنامه
-    info "کپی فایل‌های برنامه..."
-    git clone https://github.com/naseh42/zhina.git $INSTALL_DIR || error "خطا در کپی فایل‌های برنامه"
+    # 4. دریافت کدهای برنامه
+    info "دریافت کدهای برنامه..."
+    if [ -d "$INSTALL_DIR/.git" ]; then
+        cd "$INSTALL_DIR"
+        git pull || error "خطا در بروزرسانی کدها"
+    else
+        rm -rf "$INSTALL_DIR"
+        git clone https://github.com/naseh42/zhina.git "$INSTALL_DIR" || error "خطا در دریافت کدها"
+    fi
     chown -R $SERVICE_USER:$SERVICE_USER $INSTALL_DIR
-    success "فایل‌های برنامه با موفقیت کپی شدند!"
+    success "کدهای برنامه با موفقیت دریافت شدند!"
 
-    # 6. نصب وابستگی‌ها
+    # 5. نصب وابستگی‌ها
     setup_requirements
 
-    # 7. نصب و پیکربندی Xray
-    install_xray_with_all_protocols
+    # 6. نصب Xray
+    install_xray
 
-    # 8. تنظیمات SSL
-    setup_ssl_certificates
+    # 7. تنظیم SSL
+    setup_ssl
 
-    # 9. ایجاد جداول دیتابیس
-    create_database_tables
+    # 8. ایجاد جداول
+    create_tables
 
-    # 10. سرویس‌های سیستم
-    create_systemd_services
+    # 9. تنظیم سرویس‌ها
+    setup_services
 
-    # 11. نمایش اطلاعات نهایی
-    show_final_info
+    # 10. نمایش اطلاعات
+    show_info
 }
 
-# اجرای تابع main
 main
