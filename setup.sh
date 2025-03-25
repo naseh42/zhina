@@ -9,7 +9,6 @@ XRAY_CONFIG="$XRAY_DIR/config.json"
 SERVICE_USER="zhina"
 DB_NAME="zhina_db"
 DB_USER="zhina_user"
-PANEL_DOMAIN="panel.yourdomain.com"  # تغییر به دامنه واقعی شما
 PANEL_PORT=8001
 ADMIN_USER="admin"
 ADMIN_PASS=$(openssl rand -hex 8)
@@ -28,99 +27,129 @@ error() { echo -e "${RED}[ERROR] $1${NC}" >&2; exit 1; }
 success() { echo -e "${GREEN}[SUCCESS] $1${NC}"; }
 info() { echo -e "${YELLOW}[INFO] $1${NC}"; }
 
-# ------------------- توابع اصلی -------------------
-configure_nginx_sni() {
-    info "تنظیم Nginx برای SNI-based分流"
+# ------------------- تنظیمات دامنه -------------------
+configure_domain() {
+    read -p "آیا می‌خواهید از دامنه اختصاصی استفاده کنید؟ (y/n) " USE_DOMAIN
+    
+    if [[ "$USE_DOMAIN" =~ ^[Yy]$ ]]; then
+        read -p "لطفا نام دامنه خود را وارد کنید (مثال: panel.example.com): " PANEL_DOMAIN
+        PUBLIC_IP=$(curl -s ifconfig.me)
+        echo -e "\nلطفا رکورد DNS زیر را در پنل مدیریت دامنه خود تنظیم کنید:"
+        echo -e "${YELLOW}${PANEL_DOMAIN} A ${PUBLIC_IP}${NC}"
+        echo -e "پس از تنظیم DNS، 5 دقیقه صبر کنید و سپس Enter بزنید"
+        read -p "آیا DNS را تنظیم کرده‌اید؟ (Enter) "
+        
+        # بررسی DNS
+        if ! dig +short "$PANEL_DOMAIN" | grep -q "$PUBLIC_IP"; then
+            echo -e "${YELLOW}[WARNING] DNS هنوز تنظیم نشده یا propagate نشده است.${NC}"
+            echo -e "ممکن است دریافت گواهی SSL با مشکل مواجه شود."
+            read -p "آیا ادامه می‌دهید؟ (y/n) " CONTINUE
+            [[ "$CONTINUE" =~ ^[Yy]$ ]] || exit 1
+        fi
+        
+        return 0
+    else
+        PANEL_DOMAIN=$(curl -s ifconfig.me)
+        return 1
+    fi
+}
+
+# ------------------- تنظیمات SSL -------------------
+setup_ssl() {
+    info "تنظیم گواهی SSL..."
+    
+    mkdir -p /etc/nginx/ssl
+    
+    if [[ "$PANEL_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        # استفاده از SSL خودامضا برای IP
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+            -keyout /etc/nginx/ssl/privkey.pem \
+            -out /etc/nginx/ssl/fullchain.pem \
+            -subj "/CN=${PANEL_DOMAIN}"
+        
+        SSL_TYPE="self-signed"
+    else
+        # استفاده از Let's Encrypt برای دامنه
+        apt-get install -y certbot python3-certbot-nginx
+        
+        if certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --agree-tos --email admin@${PANEL_DOMAIN#*.}; then
+            SSL_TYPE="letsencrypt"
+            echo "0 12 * * * root certbot renew --quiet" >> /etc/crontab
+        else
+            echo -e "${YELLOW}[WARNING] دریافت گواهی Let's Encrypt ناموفق بود، از SSL خودامضا استفاده می‌شود${NC}"
+            openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+                -keyout /etc/nginx/ssl/privkey.pem \
+                -out /etc/nginx/ssl/fullchain.pem \
+                -subj "/CN=${PANEL_DOMAIN}"
+            SSL_TYPE="self-signed"
+        fi
+    fi
+    
+    chmod 600 /etc/nginx/ssl/*
+    success "گواهی SSL با موفقیت تنظیم شد (نوع: ${SSL_TYPE})"
+}
+
+# ------------------- تنظیمات Nginx -------------------
+configure_nginx() {
+    info "تنظیم Nginx..."
     
     # حذف کانفیگ‌های قدیمی
     rm -f /etc/nginx/sites-enabled/*
     
-    # ایجاد کانفیگ اصلی
-    cat > /etc/nginx/nginx.conf <<EOF
-user www-data;
-worker_processes auto;
-pid /run/nginx.pid;
-include /etc/nginx/modules-enabled/*.conf;
-
-events {
-    worker_connections 768;
-}
-
-http {
-    sendfile on;
-    tcp_nopush on;
-    tcp_nodelay on;
-    keepalive_timeout 65;
-    types_hash_max_size 2048;
-    include /etc/nginx/mime.types;
-    default_type application/octet-stream;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_prefer_server_ciphers on;
-    access_log /var/log/nginx/access.log;
-    error_log /var/log/nginx/error.log;
-    gzip on;
-    include /etc/nginx/conf.d/*.conf;
-    include /etc/nginx/sites-enabled/*;
-}
-
-stream {
-    map \$ssl_preread_server_name \$backend {
-        ${PANEL_DOMAIN} 127.0.0.1:${PANEL_PORT};
-        default 127.0.0.1:443_xray;
-    }
-
-    server {
-        listen 443 reuseport;
-        listen [::]:443 reuseport;
-        proxy_pass \$backend;
-        ssl_preread on;
+    if [[ "$PANEL_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        # کانفیگ برای IP
+        cat > /etc/nginx/conf.d/panel.conf <<EOF
+server {
+    listen 80;
+    server_name ${PANEL_DOMAIN};
+    
+    location / {
+        proxy_pass http://127.0.0.1:${PANEL_PORT};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     }
 }
 EOF
-
-    # ایجاد کانفیگ HTTP
-    cat > /etc/nginx/conf.d/panel.conf <<EOF
+    else
+        # کانفیگ برای دامنه
+        cat > /etc/nginx/conf.d/panel.conf <<EOF
 server {
     listen 80;
     server_name ${PANEL_DOMAIN};
     return 301 https://\$host\$request_uri;
 }
-EOF
 
+server {
+    listen 443 ssl;
+    server_name ${PANEL_DOMAIN};
+    
+    ssl_certificate /etc/nginx/ssl/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    
+    location / {
+        proxy_pass http://127.0.0.1:${PANEL_PORT};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
+    fi
+    
     # تست کانفیگ
     if ! nginx -t; then
         error "خطا در کانفیگ Nginx. لطفاً خطاهای بالا را بررسی کنید."
     fi
-
+    
     systemctl restart nginx
-    success "Nginx با موفقیت برای SNI تنظیم شد!"
+    success "Nginx با موفقیت تنظیم شد!"
 }
 
-modify_xray_for_sni() {
-    info "به‌روزرسانی Xray برای کار با SNI"
-    
-    # تغییر پورت Xray
-    sed -i 's/"port": 443/"port": 443_xray/g' "$XRAY_CONFIG"
-    
-    # اضافه کردن دامنه پنل به serverNames
-    if ! grep -q "$PANEL_DOMAIN" "$XRAY_CONFIG"; then
-        sed -i '/"serverNames": \["www.amazon.com"/s/"/"'"${PANEL_DOMAIN}"', "/' "$XRAY_CONFIG"
-    fi
-    
-    systemctl restart xray
-    success "Xray برای کار با SNI به‌روزرسانی شد!"
-}
-
-setup_panel_ssl() {
-    info "تنظیم SSL برای پنل مدیریتی"
-    
-    apt-get install -y certbot python3-certbot-nginx
-    certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --agree-tos --email admin@${PANEL_DOMAIN#*.}
-    echo "0 12 * * * root certbot renew --quiet" >> /etc/crontab
-    
-    success "SSL برای پنل تنظیم شد!"
-}
-
+# ------------------- توابع اصلی (بقیه توابع بدون تغییر) -------------------
 install_prerequisites() {
     info "نصب پیش‌نیازهای سیستم..."
     apt-get update
@@ -279,17 +308,6 @@ install_xray() {
 }
 EOF
     success "Xray با موفقیت نصب و پیکربندی شد!"
-}
-
-setup_ssl() {
-    info "تنظیم گواهی SSL..."
-    mkdir -p /etc/nginx/ssl
-    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-        -keyout /etc/nginx/ssl/privkey.pem \
-        -out /etc/nginx/ssl/fullchain.pem \
-        -subj "/CN=$(curl -s ifconfig.me)"
-    chmod 600 /etc/nginx/ssl/*
-    success "گواهی SSL با موفقیت ایجاد شد!"
 }
 
 create_tables() {
