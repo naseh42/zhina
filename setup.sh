@@ -34,36 +34,78 @@ apply_project_fixes() {
     # اصلاح فایل config.py با بهبودهای جدید
     cat > "$INSTALL_DIR/backend/config.py" <<'EOF'
 from pydantic_settings import BaseSettings
-from pathlib import Path
+from pydantic import Field
+from typing import Optional
 
 class Settings(BaseSettings):
     # تنظیمات دیتابیس
-    database_url: str = "postgresql://zhina_user:1fed62488ca9d549ca440eeb9cb4e6de@localhost/zhina_db"
+    DATABASE_URL: str = Field(
+        default="postgresql://zhina_user:1fed62488ca9d549ca440eeb9cb4e6de@localhost/zhina_db",
+        description="URL اتصال به دیتابیس"
+    )
     
     # تنظیمات Xray
-    xray_config_path: str = "/etc/xray/config.json"
-    xray_uuid: str = ""
-    xray_path: str = ""
-    reality_public_key: str = ""
-    reality_short_id: str = ""
+    XRAY_CONFIG_PATH: str = Field(
+        default="/etc/xray/config.json",
+        description="مسیر فایل پیکربندی Xray"
+    )
+    XRAY_UUID: str = Field(
+        ...,
+        description="UUID اصلی برای اتصالات Xray"
+    )
+    XRAY_PATH: str = Field(
+        default="/xray",
+        description="مسیر پایه برای اتصالات Xray"
+    )
+    
+    # تنظیمات Reality
+    REALITY_PUBLIC_KEY: str = Field(
+        ...,
+        description="کلید عمومی برای پروتکل Reality"
+    )
+    REALITY_SHORT_ID: str = Field(
+        ...,
+        description="شناسه کوتاه برای Reality"
+    )
     
     # تنظیمات امنیتی
-    secret_key: str = ""
-    debug: bool = False
+    SECRET_KEY: str = Field(
+        ...,
+        description="کلید امنیتی برای JWT و رمزنگاری"
+    )
+    DEBUG: bool = Field(
+        default=False,
+        description="حالت دیباگ"
+    )
     
     # تنظیمات مدیریتی
-    admin_username: str = "admin"
-    admin_password: str = "ade5140fb315cfa3"
+    ADMIN_USERNAME: str = Field(
+        default="admin",
+        description="نام کاربری ادمین"
+    )
+    ADMIN_PASSWORD: str = Field(
+        default="admin123",
+        description="رمز عبور ادمین"
+    )
     
-    # تنظیمات اضافی برای جلوگیری از خطا
-    language: str = "fa"
-    theme: str = "dark"
-    enable_notifications: bool = True
+    # تنظیمات اضافی
+    LANGUAGE: str = Field(
+        default="fa",
+        description="زبان پیشفرض پنل"
+    )
+    THEME: str = Field(
+        default="dark",
+        description="تم پیشفرض"
+    )
+    ENABLE_NOTIFICATIONS: bool = Field(
+        default=True,
+        description="فعال بودن اعلان‌ها"
+    )
 
     class Config:
         env_file = "/etc/zhina/.env"
         env_file_encoding = 'utf-8'
-        extra = 'ignore'  # اجازه می‌دهد متغیرهای اضافی بدون خطا نادیده گرفته شوند
+        extra = 'ignore'
 
 settings = Settings()
 EOF
@@ -75,8 +117,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from backend.config import settings
 
-# تنظیمات اتصال به دیتابیس با تلاش مجدد خودکار
-SQLALCHEMY_DATABASE_URL = settings.database_url
+SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
@@ -103,10 +144,7 @@ def get_db():
         db.close()
 EOF
 
-    # تنظیم مجوزها با دقت بیشتر
     chown -R $SERVICE_USER:$SERVICE_USER $INSTALL_DIR
-    find $INSTALL_DIR -type d -exec chmod 755 {} \;
-    find $INSTALL_DIR -type f -exec chmod 644 {} \;
     chmod 600 "$INSTALL_DIR/backend/config.py"
     success "اصلاحات ساختاری با موفقیت اعمال شدند!"
 }
@@ -446,27 +484,27 @@ setup_services() {
     # ایجاد فایل محیطی با تمام متغیرهای مورد نیاز
     cat > "$CONFIG_DIR/.env" <<EOF
 # تنظیمات دیتابیس
-database_url=postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
+DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
 
 # تنظیمات Xray
-xray_uuid=$XRAY_UUID
-xray_path=$XRAY_PATH
-reality_public_key=$REALITY_PUBLIC_KEY
-reality_short_id=$REALITY_SHORT_ID
-xray_config_path=/etc/xray/config.json
+XRAY_UUID=$XRAY_UUID
+XRAY_PATH=$XRAY_PATH
+REALITY_PUBLIC_KEY=$REALITY_PUBLIC_KEY
+REALITY_SHORT_ID=$REALITY_SHORT_ID
+XRAY_CONFIG_PATH=/etc/xray/config.json
 
 # تنظیمات امنیتی
-secret_key=$(openssl rand -hex 32)
-debug=False
+SECRET_KEY=$(openssl rand -hex 32)
+DEBUG=False
 
 # تنظیمات مدیریتی
-admin_username=$ADMIN_USER
-admin_password=$ADMIN_PASS
+ADMIN_USERNAME=$ADMIN_USER
+ADMIN_PASSWORD=$ADMIN_PASS
 
 # تنظیمات اضافی
-language=fa
-theme=dark
-enable_notifications=True
+LANGUAGE=fa
+THEME=dark
+ENABLE_NOTIFICATIONS=True
 EOF
 
     # تنظیم مجوزهای امنیتی
@@ -592,7 +630,7 @@ main() {
     info "انجام تست‌های نهایی..."
     if ! sudo -u $SERVICE_USER $INSTALL_DIR/venv/bin/python -c "
 from backend.config import settings
-assert settings.database_url.startswith('postgresql://'), 'خطا در تنظیمات دیتابیس'
+assert settings.DATABASE_URL.startswith('postgresql://'), 'خطا در تنظیمات دیتابیس'
 print('✓ تست تنظیمات با موفقیت انجام شد')
 "; then
         error "خطا در تست نهایی پیکربندی"
