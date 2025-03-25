@@ -31,39 +31,65 @@ info() { echo -e "${YELLOW}[INFO] $1${NC}"; }
 apply_project_fixes() {
     info "اعمال اصلاحات ساختاری پروژه..."
     
-    # اصلاح فایل config.py
+    # اصلاح فایل config.py با بهبودهای جدید
     cat > "$INSTALL_DIR/backend/config.py" <<'EOF'
 from pydantic_settings import BaseSettings
 from pathlib import Path
 
 class Settings(BaseSettings):
+    # تنظیمات دیتابیس
     database_url: str = "postgresql://zhina_user:1fed62488ca9d549ca440eeb9cb4e6de@localhost/zhina_db"
+    
+    # تنظیمات Xray
     xray_config_path: str = "/etc/xray/config.json"
+    xray_uuid: str = ""
+    xray_path: str = ""
+    reality_public_key: str = ""
+    reality_short_id: str = ""
+    
+    # تنظیمات امنیتی
+    secret_key: str = ""
+    debug: bool = False
+    
+    # تنظیمات مدیریتی
     admin_username: str = "admin"
     admin_password: str = "ade5140fb315cfa3"
     
+    # تنظیمات اضافی برای جلوگیری از خطا
+    language: str = "fa"
+    theme: str = "dark"
+    enable_notifications: bool = True
+
     class Config:
         env_file = "/etc/zhina/.env"
         env_file_encoding = 'utf-8'
-        extra = 'ignore'
+        extra = 'ignore'  # اجازه می‌دهد متغیرهای اضافی بدون خطا نادیده گرفته شوند
 
 settings = Settings()
 EOF
 
-    # اصلاح فایل database.py
+    # اصلاح فایل database.py با بهبودهای اتصال
     cat > "$INSTALL_DIR/backend/database.py" <<'EOF'
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from backend.config import settings
 
+# تنظیمات اتصال به دیتابیس با تلاش مجدد خودکار
 SQLALCHEMY_DATABASE_URL = settings.database_url
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
     pool_size=20,
     max_overflow=30,
-    pool_pre_ping=True
+    pool_pre_ping=True,
+    pool_recycle=3600,
+    connect_args={
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 10,
+        "keepalives_count": 5
+    }
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -77,8 +103,11 @@ def get_db():
         db.close()
 EOF
 
-    # تنظیم مجوزها
+    # تنظیم مجوزها با دقت بیشتر
     chown -R $SERVICE_USER:$SERVICE_USER $INSTALL_DIR
+    find $INSTALL_DIR -type d -exec chmod 755 {} \;
+    find $INSTALL_DIR -type f -exec chmod 644 {} \;
+    chmod 600 "$INSTALL_DIR/backend/config.py"
     success "اصلاحات ساختاری با موفقیت اعمال شدند!"
 }
 
@@ -414,46 +443,63 @@ setup_services() {
     # ایجاد دایرکتوری کانفیگ
     mkdir -p $CONFIG_DIR
 
-    # ایجاد فایل محیطی
+    # ایجاد فایل محیطی با تمام متغیرهای مورد نیاز
     cat > "$CONFIG_DIR/.env" <<EOF
 # تنظیمات دیتابیس
 database_url=postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
 
-# تنظیمات امنیتی
-SECRET_KEY=$(openssl rand -hex 32)
-DEBUG=False
-
 # تنظیمات Xray
-XRAY_UUID=$XRAY_UUID
-XRAY_PATH=$XRAY_PATH
-REALITY_PUBLIC_KEY=$REALITY_PUBLIC_KEY
-REALITY_SHORT_ID=$REALITY_SHORT_ID
+xray_uuid=$XRAY_UUID
+xray_path=$XRAY_PATH
+reality_public_key=$REALITY_PUBLIC_KEY
+reality_short_id=$REALITY_SHORT_ID
+xray_config_path=/etc/xray/config.json
+
+# تنظیمات امنیتی
+secret_key=$(openssl rand -hex 32)
+debug=False
 
 # تنظیمات مدیریتی
-ADMIN_USERNAME=$ADMIN_USER
-ADMIN_PASSWORD=$ADMIN_PASS
+admin_username=$ADMIN_USER
+admin_password=$ADMIN_PASS
+
+# تنظیمات اضافی
+language=fa
+theme=dark
+enable_notifications=True
 EOF
 
-    # لینک نمادین به فایل .env در دایرکتوری پروژه
-    ln -sf "$CONFIG_DIR/.env" "$INSTALL_DIR/backend/.env"
-
+    # تنظیم مجوزهای امنیتی
     chown -R $SERVICE_USER:$SERVICE_USER $CONFIG_DIR
     chmod 600 "$CONFIG_DIR/.env"
 
+    # ایجاد لینک نمادین
+    ln -sf "$CONFIG_DIR/.env" "$INSTALL_DIR/backend/.env"
+
+    # ایجاد سرویس systemd با بهبودها
     cat > /etc/systemd/system/zhina-panel.service <<EOF
 [Unit]
 Description=Zhina Panel Service
 After=network.target postgresql.service
+Requires=postgresql.service
 
 [Service]
 User=$SERVICE_USER
 Group=$SERVICE_USER
 WorkingDirectory=$INSTALL_DIR/backend
 Environment="PATH=$INSTALL_DIR/venv/bin"
-Environment="PYTHONPATH=$INSTALL_DIR:$INSTALL_DIR/backend"
+Environment="PYTHONPATH=$INSTALL_DIR"
 ExecStart=$INSTALL_DIR/venv/bin/uvicorn app:app --host 0.0.0.0 --port $PANEL_PORT --workers $UVICORN_WORKERS
 Restart=always
 RestartSec=5s
+StartLimitInterval=60s
+StartLimitBurst=3
+
+# تنظیمات امنیتی
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
@@ -461,7 +507,20 @@ EOF
 
     systemctl daemon-reload
     systemctl enable zhina-panel
-    systemctl start zhina-panel
+    
+    # راه‌اندازی سرویس با بررسی خطا
+    if ! systemctl start zhina-panel; then
+        journalctl -u zhina-panel -n 20 --no-pager
+        error "خطا در راه‌اندازی سرویس zhina-panel"
+    fi
+    
+    # بررسی سلامت سرویس
+    sleep 3
+    if ! systemctl is-active --quiet zhina-panel; then
+        journalctl -u zhina-panel -n 30 --no-pager
+        error "سرویس zhina-panel پس از راه‌اندازی غیرفعال است"
+    fi
+    
     success "سرویس‌ها با موفقیت تنظیم و راه‌اندازی شدند!"
 }
 
@@ -514,8 +573,11 @@ main() {
         rm -rf "$INSTALL_DIR"
         git clone https://github.com/naseh42/zhina.git "$INSTALL_DIR" || error "خطا در دریافت کدها"
     fi
+    
+    # تنظیم مجوزها قبل از ادامه
     chown -R $SERVICE_USER:$SERVICE_USER $INSTALL_DIR
-    success "کدهای برنامه با موفقیت دریافت شدند!"
+    find $INSTALL_DIR -type d -exec chmod 755 {} \;
+    find $INSTALL_DIR -type f -exec chmod 644 {} \;
 
     apply_project_fixes
     setup_requirements
@@ -525,6 +587,17 @@ main() {
     install_xray
     create_tables
     setup_services
+    
+    # تست نهایی پیکربندی
+    info "انجام تست‌های نهایی..."
+    if ! sudo -u $SERVICE_USER $INSTALL_DIR/venv/bin/python -c "
+from backend.config import settings
+assert settings.database_url.startswith('postgresql://'), 'خطا در تنظیمات دیتابیس'
+print('✓ تست تنظیمات با موفقیت انجام شد')
+"; then
+        error "خطا در تست نهایی پیکربندی"
+    fi
+    
     show_info
 }
 
