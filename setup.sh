@@ -29,28 +29,39 @@ info() { echo -e "${YELLOW}[INFO] $1${NC}"; }
 
 # ------------------- تنظیمات دامنه -------------------
 configure_domain() {
+    echo -e "\n${YELLOW}=== تنظیمات دامنه ===${NC}"
     read -p "آیا می‌خواهید از دامنه اختصاصی استفاده کنید؟ (y/n) " USE_DOMAIN
     
     if [[ "$USE_DOMAIN" =~ ^[Yy]$ ]]; then
-        read -p "لطفا نام دامنه خود را وارد کنید (مثال: panel.example.com): " PANEL_DOMAIN
+        while true; do
+            read -p "لطفا نام دامنه خود را وارد کنید (مثال: panel.example.com): " PANEL_DOMAIN
+            if [[ "$PANEL_DOMAIN" =~ ^[a-zA-Z0-9.-]+$ ]]; then
+                break
+            else
+                echo -e "${RED}نام دامنه نامعتبر است! لطفا دوباره وارد کنید.${NC}"
+            fi
+        done
+        
         PUBLIC_IP=$(curl -s ifconfig.me)
-        echo -e "\nلطفا رکورد DNS زیر را در پنل مدیریت دامنه خود تنظیم کنید:"
-        echo -e "${YELLOW}${PANEL_DOMAIN} A ${PUBLIC_IP}${NC}"
-        echo -e "پس از تنظیم DNS، 5 دقیقه صبر کنید و سپس Enter بزنید"
-        read -p "آیا DNS را تنظیم کرده‌اید؟ (Enter) "
+        echo -e "\n${YELLOW}لطفا مراحل زیر را انجام دهید:${NC}"
+        echo -e "1. در پنل مدیریت دامنه خود، رکورد DNS زیر را ایجاد کنید:"
+        echo -e "   ${GREEN}${PANEL_DOMAIN} A ${PUBLIC_IP}${NC}"
+        echo -e "2. ممکن است انتشار DNS تا 24 ساعت طول بکشد"
+        echo -e "3. پس از تنظیم DNS، این اسکریپت را دوباره اجرا کنید"
+        
+        read -p "آیا می‌خواهید ادامه دهید؟ (y/n) " CONTINUE
+        [[ "$CONTINUE" =~ ^[Yy]$ ]] || exit 0
         
         # بررسی DNS
-        if ! dig +short "$PANEL_DOMAIN" | grep -q "$PUBLIC_IP"; then
-            echo -e "${YELLOW}[WARNING] DNS هنوز تنظیم نشده یا propagate نشده است.${NC}"
-            echo -e "ممکن است دریافت گواهی SSL با مشکل مواجه شود."
-            read -p "آیا ادامه می‌دهید؟ (y/n) " CONTINUE
-            [[ "$CONTINUE" =~ ^[Yy]$ ]] || exit 1
+        DNS_CHECK=$(dig +short "$PANEL_DOMAIN")
+        if [[ "$DNS_CHECK" != "$PUBLIC_IP" ]]; then
+            echo -e "${YELLOW}[WARNING] DNS هنوز تنظیم نشده یا propagate نشده است!${NC}"
+            read -p "آیا می‌خواهید با IP سرور ادامه دهید؟ (y/n) " USE_IP
+            [[ "$USE_IP" =~ ^[Yy]$ ]] || exit 1
+            PANEL_DOMAIN="$PUBLIC_IP"
         fi
-        
-        return 0
     else
         PANEL_DOMAIN=$(curl -s ifconfig.me)
-        return 1
     fi
 }
 
@@ -61,7 +72,7 @@ setup_ssl() {
     mkdir -p /etc/nginx/ssl
     
     if [[ "$PANEL_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        # استفاده از SSL خودامضا برای IP
+        # SSL خودامضا برای IP
         openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
             -keyout /etc/nginx/ssl/privkey.pem \
             -out /etc/nginx/ssl/fullchain.pem \
@@ -69,20 +80,67 @@ setup_ssl() {
         
         SSL_TYPE="self-signed"
     else
-        # استفاده از Let's Encrypt برای دامنه
-        apt-get install -y certbot python3-certbot-nginx
-        
-        if certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --agree-tos --email admin@${PANEL_DOMAIN#*.}; then
-            SSL_TYPE="letsencrypt"
-            echo "0 12 * * * root certbot renew --quiet" >> /etc/crontab
-        else
-            echo -e "${YELLOW}[WARNING] دریافت گواهی Let's Encrypt ناموفق بود، از SSL خودامضا استفاده می‌شود${NC}"
-            openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-                -keyout /etc/nginx/ssl/privkey.pem \
-                -out /etc/nginx/ssl/fullchain.pem \
-                -subj "/CN=${PANEL_DOMAIN}"
-            SSL_TYPE="self-signed"
+        # Let's Encrypt برای دامنه
+        if ! command -v certbot &> /dev/null; then
+            apt-get install -y certbot python3-certbot-nginx
         fi
+        
+        # ایجاد کانفیگ موقت برای تایید دامنه
+        cat > /etc/nginx/conf.d/le_verify.conf <<EOF
+server {
+    listen 80;
+    server_name ${PANEL_DOMAIN};
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+}
+EOF
+        
+        systemctl restart nginx
+        
+        # دریافت گواهی با 3 روش مختلف
+        echo -e "${YELLOW}تلاش برای دریافت گواهی SSL...${NC}"
+        
+        # روش 1: Webroot
+        if certbot certonly --webroot -w /var/www/html -d "$PANEL_DOMAIN" \
+            --non-interactive --agree-tos --email admin@${PANEL_DOMAIN#*.} \
+            --preferred-challenges http; then
+            
+            SSL_TYPE="letsencrypt"
+        else
+            # روش 2: Standalone
+            systemctl stop nginx
+            if certbot certonly --standalone -d "$PANEL_DOMAIN" \
+                --non-interactive --agree-tos --email admin@${PANEL_DOMAIN#*.}; then
+                
+                SSL_TYPE="letsencrypt"
+            else
+                # روش 3: DNS Manual
+                echo -e "${YELLOW}روش‌های خودکار ناموفق بودند، لطفا به صورت دستی تایید کنید:${NC}"
+                certbot certonly --manual --preferred-challenges dns -d "$PANEL_DOMAIN" \
+                    --non-interactive --agree-tos --email admin@${PANEL_DOMAIN#*.} || {
+                    
+                    echo -e "${YELLOW}دریافت گواهی Let's Encrypt ناموفق بود، از SSL خودامضا استفاده می‌شود${NC}"
+                    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+                        -keyout /etc/nginx/ssl/privkey.pem \
+                        -out /etc/nginx/ssl/fullchain.pem \
+                        -subj "/CN=${PANEL_DOMAIN}"
+                    SSL_TYPE="self-signed"
+                }
+            fi
+            systemctl start nginx
+        fi
+        
+        if [[ "$SSL_TYPE" == "letsencrypt" ]]; then
+            ln -sf "/etc/letsencrypt/live/${PANEL_DOMAIN}/fullchain.pem" /etc/nginx/ssl/fullchain.pem
+            ln -sf "/etc/letsencrypt/live/${PANEL_DOMAIN}/privkey.pem" /etc/nginx/ssl/privkey.pem
+            echo "0 12 * * * root certbot renew --quiet && systemctl reload nginx" >> /etc/crontab
+        fi
+        
+        rm -f /etc/nginx/conf.d/le_verify.conf
     fi
     
     chmod 600 /etc/nginx/ssl/*
@@ -93,54 +151,71 @@ setup_ssl() {
 configure_nginx() {
     info "تنظیم Nginx..."
     
-    # حذف کانفیگ‌های قدیمی
     rm -f /etc/nginx/sites-enabled/*
     
-    if [[ "$PANEL_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        # کانفیگ برای IP
-        cat > /etc/nginx/conf.d/panel.conf <<EOF
-server {
-    listen 80;
-    server_name ${PANEL_DOMAIN};
-    
-    location / {
-        proxy_pass http://127.0.0.1:${PANEL_PORT};
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    }
-}
-EOF
-    else
-        # کانفیگ برای دامنه
-        cat > /etc/nginx/conf.d/panel.conf <<EOF
-server {
-    listen 80;
-    server_name ${PANEL_DOMAIN};
-    return 301 https://\$host\$request_uri;
+    # کانفیگ اصلی
+    cat > /etc/nginx/conf.d/panel.conf <<EOF
+user www-data;
+worker_processes auto;
+pid /run/nginx.pid;
+
+events {
+    worker_connections 768;
 }
 
-server {
-    listen 443 ssl;
-    server_name ${PANEL_DOMAIN};
-    
-    ssl_certificate /etc/nginx/ssl/fullchain.pem;
-    ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+http {
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers on;
+    access_log /var/log/nginx/access.log;
+    error_log /var/log/nginx/error.log;
+    gzip on;
     
-    location / {
-        proxy_pass http://127.0.0.1:${PANEL_PORT};
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
+    server {
+        listen 80;
+        server_name ${PANEL_DOMAIN};
+        
+        location / {
+            proxy_pass http://127.0.0.1:${PANEL_PORT};
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        }
+        
+        location /.well-known/acme-challenge/ {
+            root /var/www/html;
+        }
+    }
+    
+    server {
+        listen 443 ssl;
+        server_name ${PANEL_DOMAIN};
+        
+        ssl_certificate /etc/nginx/ssl/fullchain.pem;
+        ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_prefer_server_ciphers on;
+        
+        location / {
+            proxy_pass http://127.0.0.1:${PANEL_PORT};
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+        }
     }
 }
 EOF
-    fi
     
-    # تست کانفیگ
+    mkdir -p /var/www/html/.well-known/acme-challenge
+    chown -R www-data:www-data /var/www/html
+    
     if ! nginx -t; then
         error "خطا در کانفیگ Nginx. لطفاً خطاهای بالا را بررسی کنید."
     fi
@@ -149,7 +224,7 @@ EOF
     success "Nginx با موفقیت تنظیم شد!"
 }
 
-# ------------------- توابع اصلی (بقیه توابع بدون تغییر) -------------------
+# ------------------- توابع اصلی -------------------
 install_prerequisites() {
     info "نصب پیش‌نیازهای سیستم..."
     apt-get update
@@ -229,7 +304,7 @@ install_xray() {
                     "show": false,
                     "dest": "www.amazon.com:443",
                     "xver": 0,
-                    "serverNames": ["www.amazon.com"],
+                    "serverNames": ["www.amazon.com", "${PANEL_DOMAIN}"],
                     "privateKey": "$REALITY_PRIVATE_KEY",
                     "shortIds": ["$REALITY_SHORT_ID"]
                 }
@@ -414,45 +489,56 @@ WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
-    systemctl enable xray zhina-panel
-    systemctl start xray zhina-panel
+    systemctl enable xray zhina-panel nginx
+    systemctl restart xray zhina-panel nginx
     success "سرویس‌ها با موفقیت تنظیم و راه‌اندازی شدند!"
 }
 
 show_info() {
-    PUBLIC_IP=$(curl -s ifconfig.me)
-    success "\n\n=== نصب کامل شد! ==="
-    echo -e "دسترسی پنل مدیریتی:"
-    echo -e "• آدرس: ${GREEN}https://${PANEL_DOMAIN}${NC}"
+    echo -e "\n${GREEN}=== نصب کامل شد! ===${NC}"
+    
+    if [[ "$PANEL_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo -e "دسترسی پنل مدیریتی:"
+        echo -e "• آدرس: ${YELLOW}http://${PANEL_DOMAIN}${NC}"
+    else
+        echo -e "دسترسی پنل مدیریتی:"
+        echo -e "• آدرس: ${GREEN}https://${PANEL_DOMAIN}${NC}"
+    fi
+    
     echo -e "• یوزرنیم ادمین: ${YELLOW}${ADMIN_USER}${NC}"
     echo -e "• پسورد ادمین: ${YELLOW}${ADMIN_PASS}${NC}"
 
-    echo -e "\nتنظیمات Xray:"
+    echo -e "\n${YELLOW}تنظیمات Xray:${NC}"
     echo -e "• پروتکل‌های فعال:"
-    echo -e "  - ${YELLOW}VLESS + Reality${NC} (پورت 443 با SNI)"
+    echo -e "  - ${YELLOW}VLESS + Reality${NC} (پورت 443)"
     echo -e "  - ${YELLOW}VMess + WS${NC} (پورت 8080 - مسیر: ${XRAY_PATH})"
     echo -e "  - ${YELLOW}Trojan${NC} (پورت 8443)"
     echo -e "  - ${YELLOW}Shadowsocks${NC} (پورت 8388)"
     echo -e "• UUID/پسورد مشترک: ${YELLOW}${XRAY_UUID}${NC}"
     echo -e "• کلید عمومی Reality: ${YELLOW}${REALITY_PUBLIC_KEY}${NC}"
 
-    echo -e "\nدستورات مدیریت:"
+    echo -e "\n${YELLOW}دستورات مدیریت:${NC}"
     echo -e "• وضعیت سرویس‌ها: ${YELLOW}systemctl status {xray,zhina-panel,nginx}${NC}"
     echo -e "• مشاهده لاگ‌ها: ${YELLOW}journalctl -u xray -u zhina-panel -f${NC}"
 }
 
 # ------------------- اجرای اصلی -------------------
 main() {
+    echo -e "${GREEN}\n=== شروع نصب Zhina Panel ===${NC}"
     [[ $EUID -ne 0 ]] && error "این اسکریپت نیاز به دسترسی root دارد!"
 
+    # 1. نصب پیش‌نیازها
     install_prerequisites
 
+    # 2. ایجاد کاربر سرویس
     if ! id "$SERVICE_USER" &>/dev/null; then
         useradd -r -s /bin/false -d $INSTALL_DIR $SERVICE_USER
     fi
 
+    # 3. تنظیم دیتابیس
     setup_database
 
+    # 4. دریافت کدهای برنامه
     info "دریافت کدهای برنامه..."
     if [ -d "$INSTALL_DIR/.git" ]; then
         cd "$INSTALL_DIR"
@@ -464,14 +550,24 @@ main() {
     chown -R $SERVICE_USER:$SERVICE_USER $INSTALL_DIR
     success "کدهای برنامه با موفقیت دریافت شدند!"
 
+    # 5. نصب وابستگی‌ها
     setup_requirements
+
+    # 6. تنظیم دامنه و SSL
+    configure_domain
     setup_ssl
+    configure_nginx
+
+    # 7. نصب Xray
     install_xray
-    configure_nginx_sni
-    modify_xray_for_sni
-    setup_panel_ssl
+
+    # 8. ایجاد جداول
     create_tables
+
+    # 9. تنظیم سرویس‌ها
     setup_services
+
+    # 10. نمایش اطلاعات
     show_info
 }
 
