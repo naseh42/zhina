@@ -142,7 +142,7 @@ class Settings(BaseSettings):
     )
 
     model_config = {
-        "env_file": "/etc/zhina/.env",
+        "env_file": "/var/lib/zhina/backend/.env",
         "env_file_encoding": "utf-8",
         "extra": "forbid",
         "env_prefix": "ZHINA_",
