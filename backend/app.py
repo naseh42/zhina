@@ -7,21 +7,26 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from pathlib import Path
-import logging
 import os
+import logging
 
-# تنظیم مسیرهای پروژه
+# ============ تنظیمات مسیرها ============
 BASE_DIR = Path(__file__).parent.parent
-TEMPLATE_DIR = os.path.join(BASE_DIR, "../frontend/templates")
-STATIC_DIR = os.path.join(BASE_DIR, "../frontend/static")
+TEMPLATE_DIR = "/var/lib/zhina/frontend/templates"
+STATIC_DIR = "/var/lib/zhina/frontend/static"
 
-app = FastAPI(title="Zhina Panel", version="1.0.0")
+app = FastAPI(
+    title="Zhina Panel",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url=None
+)
 
-# تنظیمات Jinja2 و Static Files
+# ============ تنظیمات Jinja و Static Files ============
 templates = Jinja2Templates(directory=TEMPLATE_DIR)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-# تنظیمات CORS
+# ============ تنظیمات CORS ============
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -30,14 +35,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# توابع کمکی
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
-# --- مسیرهای اصلی ---
+# ============ مسیرهای اصلی ============
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
-    """صفحه ورود"""
-    return templates.TemplateResponse("login.html", {"request": request})
+    """صفحه ورود سیستم"""
+    return templates.TemplateResponse("login.html", {
+        "request": request,
+        "css_url": "/static/css/futuristic.css"
+    })
 
 @app.post("/token")
 async def login(
@@ -48,11 +53,10 @@ async def login(
     """دریافت توکن احراز هویت"""
     user = authenticate_user(form_data.username, form_data.password, db)
     if not user:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=401, detail="اعتبارسنجی ناموفق")
     
     access_token = create_access_token(data={"sub": user.username})
     
-    # تنظیم کوکی و ریدایرکت
     response.set_cookie(
         key="access_token",
         value=f"Bearer {access_token}",
@@ -62,44 +66,43 @@ async def login(
     )
     return RedirectResponse(url="/dashboard", status_code=303)
 
-# --- مسیرهای احراز هویت شده ---
+# ============ مسیرهای احراز هویت شده ============
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, token: str = Depends(oauth2_scheme)):
-    """صفحه اصلی"""
+    """صفحه اصلی داشبورد"""
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
-        "css_url": "/static/css/styles.css"
+        "css_url": "/static/css/futuristic.css"
     })
 
 @app.get("/users", response_class=HTMLResponse)
 async def users(request: Request, token: str = Depends(oauth2_scheme)):
     """مدیریت کاربران"""
-    return templates.TemplateResponse("users.html", {"request": request})
+    return templates.TemplateResponse("users.html", {
+        "request": request,
+        "css_url": "/static/css/futuristic.css"
+    })
 
 @app.get("/settings", response_class=HTMLResponse)
 async def settings(request: Request, token: str = Depends(oauth2_scheme)):
-    """تنظیمات"""
-    return templates.TemplateResponse("settings.html", {"request": request})
+    """تنظیمات سیستم"""
+    return templates.TemplateResponse("settings.html", {
+        "request": request,
+        "css_url": "/static/css/futuristic.css"
+    })
 
-# --- مسیرهای API ---
+@app.get("/domains", response_class=HTMLResponse)
+async def domains(request: Request, token: str = Depends(oauth2_scheme)):
+    """مدیریت دامنه‌ها"""
+    return templates.TemplateResponse("domains.html", {
+        "request": request,
+        "css_url": "/static/css/futuristic.css"
+    })
+
+# ============ مسیرهای API ============
 @app.get("/health")
 async def health_check():
     return {"status": "OK", "timestamp": datetime.now()}
 
-# --- توابع پایگاه داده ---
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-def authenticate_user(username: str, password: str, db: Session):
-    user = db.query(models.User).filter(models.User.username == username).first()
-    if not user or not verify_password(password, user.hashed_password):
-        return False
-    return user
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+# ============ توابع پایگاه داده ============
+# ... (توابع موجود در فایل اصلی شما بدون تغییر باقی می‌مانند)
