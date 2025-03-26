@@ -6,9 +6,8 @@ from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
-from typing import Optional
-import logging
 from pathlib import Path
+import logging
 import sys
 
 # تنظیم مسیرهای پروژه
@@ -46,6 +45,8 @@ app.add_middleware(
 )
 
 # توابع کمکی
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
 def authenticate_user(username: str, password: str, db: Session):
     user = db.query(models.User).filter(models.User.username == username).first()
     if not user or not utils.verify_password(password, user.hashed_password):
@@ -66,10 +67,18 @@ async def startup():
             raise
 
 # مسیرها
+@app.get("/login", response_class=HTMLResponse)
+async def serve_login_page(request: Request):
+    """نمایش صفحه لاگین"""
+    return templates.TemplateResponse("login.html", {"request": request})
+
 @app.get("/", response_class=HTMLResponse)
-async def serve_home(request: Request):
-    """سرویس دهی صفحه اصلی داشبورد"""
-    return templates.TemplateResponse("dashboard.html", {"request": request})
+async def serve_home(request: Request, token: str = Depends(oauth2_scheme)):
+    """محافظت از داشبورد با احراز هویت"""
+    try:
+        return templates.TemplateResponse("dashboard.html", {"request": request})
+    except Exception:
+        raise HTTPException(status_code=307, detail="Redirect to login", headers={"Location": "/login"})
 
 @app.post("/token", response_model=schemas.Token)
 async def login_for_access_token(
