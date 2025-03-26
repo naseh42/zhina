@@ -79,13 +79,10 @@ setup_environment() {
     mkdir -p \
         "$INSTALL_DIR" \
         "$CONFIG_DIR" \
-        "$LOG_DIR" \
+        "$LOG_DIR/panel" \
         "$XRAY_DIR" || error "خطا در ایجاد دایرکتوری‌ها"
     
-    # ایجاد دایرکتوری لاگ مخصوص پنل
-    mkdir -p "$LOG_DIR/panel"
     touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
-    
     chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR" "$LOG_DIR"
     chmod -R 750 "$INSTALL_DIR" "$LOG_DIR"
     
@@ -143,20 +140,23 @@ setup_python() {
     python3 -m venv "$INSTALL_DIR/venv" || error "خطا در ایجاد محیط مجازی"
     source "$INSTALL_DIR/venv/bin/activate"
     
-    cat > "$INSTALL_DIR/requirements.txt" <<EOF
-fastapi==0.103.2
-uvicorn==0.23.2
-sqlalchemy==2.0.28
-psycopg2-binary==2.9.9
-python-dotenv==1.0.0
-pydantic-settings==2.0.3
-python-multipart==0.0.6
-jinja2==3.1.2
-EOF
-    
     pip install -U pip wheel || error "خطا در بروزرسانی pip"
-    pip install -r "$INSTALL_DIR/requirements.txt" || error "خطا در نصب نیازمندی‌ها"
+    pip install \
+        fastapi==0.103.2 \
+        uvicorn==0.23.2 \
+        sqlalchemy==2.0.28 \
+        psycopg2-binary==2.9.9 \
+        python-dotenv==1.0.0 \
+        pydantic-settings==2.0.3 \
+        pydantic[email] \
+        passlib==1.7.4 \
+        python-jose==3.3.0 || error "خطا در نصب نیازمندی‌ها"
+    
     deactivate
+    
+    # تنظیم دسترسی به uvicorn
+    chown "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/venv/bin/uvicorn"
+    chmod 750 "$INSTALL_DIR/venv/bin/uvicorn"
     
     success "محیط پایتون تنظیم شد"
 }
@@ -346,22 +346,22 @@ setup_env_file() {
     
     cat > "$INSTALL_DIR/backend/.env" <<EOF
 # تنظیمات دیتابیس
-DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
+ZHINA_DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
 
 # تنظیمات Xray
-REALITY_PUBLIC_KEY=$REALITY_PUBLIC_KEY
-REALITY_PRIVATE_KEY=$REALITY_PRIVATE_KEY
+ZHINA_REALITY_PUBLIC_KEY=$REALITY_PUBLIC_KEY
+ZHINA_REALITY_PRIVATE_KEY=$REALITY_PRIVATE_KEY
 
 # تنظیمات امنیتی
-ADMIN_USERNAME=$ADMIN_USER
-ADMIN_PASSWORD=$ADMIN_PASS
-SECRET_KEY=$(openssl rand -hex 32)
+ZHINA_ADMIN_USERNAME=$ADMIN_USER
+ZHINA_ADMIN_PASSWORD=$ADMIN_PASS
+ZHINA_SECRET_KEY=$(openssl rand -hex 32)
 
 # تنظیمات لاگ
-LOG_DIR=$LOG_DIR/panel
-ACCESS_LOG=$LOG_DIR/access.log
-ERROR_LOG=$LOG_DIR/error.log
-LOG_LEVEL=info
+ZHINA_LOG_DIR=$LOG_DIR/panel
+ZHINA_ACCESS_LOG=$LOG_DIR/panel/access.log
+ZHINA_ERROR_LOG=$LOG_DIR/panel/error.log
+ZHINA_LOG_LEVEL=info
 EOF
 
     chown "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/backend/.env"
@@ -390,9 +390,8 @@ ExecStart=$INSTALL_DIR/venv/bin/uvicorn \
     --host 0.0.0.0 \
     --port $PANEL_PORT \
     --workers $UVICORN_WORKERS \
-    --access-log \
     --log-level info \
-    --timeout-keep-alive 60 \
+    --access-log \
     --no-server-header
 
 Restart=always
