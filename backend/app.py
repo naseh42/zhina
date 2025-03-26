@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Depends, HTTPException, status, Request, Response
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm, HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -28,12 +28,13 @@ app = FastAPI(
     redoc_url=None
 )
 
-# تنظیمات فایل‌های استاتیک و قالب‌ها
-STATIC_DIR = "/var/lib/zhina/frontend/static"
+# تنظیمات مسیرها
 TEMPLATE_DIR = "/var/lib/zhina/frontend/templates"
+STATIC_DIR = "/var/lib/zhina/frontend/static"
 
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+# تنظیمات Jinja2 و Static Files
 templates = Jinja2Templates(directory=TEMPLATE_DIR)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # تنظیمات CORS
 app.add_middleware(
@@ -45,23 +46,13 @@ app.add_middleware(
 )
 
 # توابع کمکی
-security = HTTPBearer()
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 def authenticate_user(username: str, password: str, db: Session):
     user = db.query(models.User).filter(models.User.username == username).first()
     if not user or not utils.verify_password(password, user.hashed_password):
         return False
     return user
-
-def validate_token(token: str):
-    try:
-        payload = utils.decode_token(token)
-        return payload
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
-        )
 
 # راه‌اندازی پایگاه داده
 @app.on_event("startup")
@@ -70,92 +61,67 @@ async def startup():
         Base.metadata.create_all(bind=engine)
         logging.info("Database tables initialized successfully.")
     except Exception as e:
-        if "already exists" in str(e):
-            logging.warning("Tables already exist, skipping creation.")
-        else:
-            logging.error(f"Database error: {str(e)}")
-            raise
+        logging.error(f"Database error: {str(e)}")
+        raise
 
-# مسیرها
+# مسیرهای اصلی
 @app.get("/login", response_class=HTMLResponse)
-async def serve_login_page(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)):
-    try:
-        token = credentials.credentials
-        validate_token(token)
-        return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
-    except HTTPException:
-        return templates.TemplateResponse("login.html", {"request": request})
-
-@app.get("/", response_class=HTMLResponse)
-async def serve_home(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)):
-    token = credentials.credentials
-    payload = validate_token(token)
-    return templates.TemplateResponse("dashboard.html", {"request": request})
+async def login_page(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request})
 
 @app.post("/token")
-async def login_for_access_token(
+async def login(
     response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
     user = authenticate_user(form_data.username, form_data.password, db)
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-        )
+        raise HTTPException(status_code=401, detail="Invalid credentials")
     
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = utils.create_access_token(
-        data={"sub": user.username},
-        expires_delta=access_token_expires
-    )
+    access_token = utils.create_access_token(data={"sub": user.username})
     
+    # تنظیم کوکی و ریدایرکت
     response.set_cookie(
         key="access_token",
         value=f"Bearer {access_token}",
         httponly=True,
-        secure=True,  # در تولید باید True باشد
-        samesite="lax",
-        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+        max_age=3600,
+        path="/"
     )
-    
-    return {"message": "Logged in successfully"}
+    response.headers["Location"] = "/dashboard"
+    response.status_code = status.HTTP_303_SEE_OTHER
+    return response
 
-@app.post("/users/", response_model=schemas.UserCreate)
-def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
-    """ایجاد کاربر جدید"""
-    hashed_password = utils.get_password_hash(user.password)
-    db_user = models.User(
-        username=user.username,
-        hashed_password=hashed_password,
-        uuid=utils.generate_uuid(),
-        traffic_limit=user.traffic_limit,
-        usage_duration=user.usage_duration,
-        simultaneous_connections=user.simultaneous_connections,
-        is_active=True,
-        created_at=datetime.utcnow()
-    )
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
-    return db_user
+# مسیرهای حفاظت شده
+@app.get("/", response_class=HTMLResponse)
+async def home(request: Request, token: str = Depends(oauth2_scheme)):
+    return RedirectResponse(url="/dashboard")
 
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard(request: Request, token: str = Depends(oauth2_scheme)):
+    return templates.TemplateResponse("dashboard.html", {
+        "request": request,
+        "css_url": "/static/css/footer.css"  # مسیر CSS
+    })
+
+@app.get("/users", response_class=HTMLResponse)
+async def users(request: Request, token: str = Depends(oauth2_scheme)):
+    return templates.TemplateResponse("users.html", {"request": request})
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings(request: Request, token: str = Depends(oauth2_scheme)):
+    return templates.TemplateResponse("settings.html", {"request": request})
+
+@app.get("/domains", response_class=HTMLResponse)
+async def domains(request: Request, token: str = Depends(oauth2_scheme)):
+    return templates.TemplateResponse("domains.html", {"request": request})
+
+# مسیرهای API
 @app.get("/xray/status")
-def get_xray_status(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """دریافت وضعیت Xray"""
-    token = credentials.credentials
-    validate_token(token)
-    return {
-        "status": "active",
-        "settings": xray_settings.dict()
-    }
+async def xray_status(token: str = Depends(oauth2_scheme)):
+    return {"status": "active", "config": xray_settings.dict()}
 
 @app.get("/health")
-def health_check():
-    """بررسی سلامت سرویس"""
-    return {
-        "status": "OK",
-        "timestamp": datetime.utcnow().isoformat(),
-        "version": "1.0.0"
-    }
+async def health_check():
+    return {"status": "ok"}
