@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Request, Response
+from fastapi import FastAPI, Depends, HTTPException, Request, Response
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -8,29 +8,14 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from pathlib import Path
 import logging
-import sys
+import os
 
 # تنظیم مسیرهای پروژه
-sys.path.append(str(Path(__file__).parent.parent))
+BASE_DIR = Path(__file__).parent.parent
+TEMPLATE_DIR = os.path.join(BASE_DIR, "../frontend/templates")
+STATIC_DIR = os.path.join(BASE_DIR, "../frontend/static")
 
-# Importهای داخلی
-from . import schemas, models, utils
-from .database import get_db, engine, Base
-from .config import settings
-from .xray_config import xray_settings
-
-# Initialize FastAPI
-app = FastAPI(
-    title="Zhina Panel",
-    description="Xray Proxy Management Panel",
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url=None
-)
-
-# تنظیمات مسیرها
-TEMPLATE_DIR = "/var/lib/zhina/frontend/templates"
-STATIC_DIR = "/var/lib/zhina/frontend/static"
+app = FastAPI(title="Zhina Panel", version="1.0.0")
 
 # تنظیمات Jinja2 و Static Files
 templates = Jinja2Templates(directory=TEMPLATE_DIR)
@@ -48,25 +33,10 @@ app.add_middleware(
 # توابع کمکی
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-def authenticate_user(username: str, password: str, db: Session):
-    user = db.query(models.User).filter(models.User.username == username).first()
-    if not user or not utils.verify_password(password, user.hashed_password):
-        return False
-    return user
-
-# راه‌اندازی پایگاه داده
-@app.on_event("startup")
-async def startup():
-    try:
-        Base.metadata.create_all(bind=engine)
-        logging.info("Database tables initialized successfully.")
-    except Exception as e:
-        logging.error(f"Database error: {str(e)}")
-        raise
-
-# مسیرهای اصلی
+# --- مسیرهای اصلی ---
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
+    """صفحه ورود"""
     return templates.TemplateResponse("login.html", {"request": request})
 
 @app.post("/token")
@@ -75,11 +45,12 @@ async def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
+    """دریافت توکن احراز هویت"""
     user = authenticate_user(form_data.username, form_data.password, db)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
-    access_token = utils.create_access_token(data={"sub": user.username})
+    access_token = create_access_token(data={"sub": user.username})
     
     # تنظیم کوکی و ریدایرکت
     response.set_cookie(
@@ -89,39 +60,46 @@ async def login(
         max_age=3600,
         path="/"
     )
-    response.headers["Location"] = "/dashboard"
-    response.status_code = status.HTTP_303_SEE_OTHER
-    return response
+    return RedirectResponse(url="/dashboard", status_code=303)
 
-# مسیرهای حفاظت شده
-@app.get("/", response_class=HTMLResponse)
-async def home(request: Request, token: str = Depends(oauth2_scheme)):
-    return RedirectResponse(url="/dashboard")
-
+# --- مسیرهای احراز هویت شده ---
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, token: str = Depends(oauth2_scheme)):
+    """صفحه اصلی"""
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
-        "css_url": "/static/css/footer.css"  # مسیر CSS
+        "css_url": "/static/css/styles.css"
     })
 
 @app.get("/users", response_class=HTMLResponse)
 async def users(request: Request, token: str = Depends(oauth2_scheme)):
+    """مدیریت کاربران"""
     return templates.TemplateResponse("users.html", {"request": request})
 
 @app.get("/settings", response_class=HTMLResponse)
 async def settings(request: Request, token: str = Depends(oauth2_scheme)):
+    """تنظیمات"""
     return templates.TemplateResponse("settings.html", {"request": request})
 
-@app.get("/domains", response_class=HTMLResponse)
-async def domains(request: Request, token: str = Depends(oauth2_scheme)):
-    return templates.TemplateResponse("domains.html", {"request": request})
-
-# مسیرهای API
-@app.get("/xray/status")
-async def xray_status(token: str = Depends(oauth2_scheme)):
-    return {"status": "active", "config": xray_settings.dict()}
-
+# --- مسیرهای API ---
 @app.get("/health")
 async def health_check():
-    return {"status": "ok"}
+    return {"status": "OK", "timestamp": datetime.now()}
+
+# --- توابع پایگاه داده ---
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+def authenticate_user(username: str, password: str, db: Session):
+    user = db.query(models.User).filter(models.User.username == username).first()
+    if not user or not verify_password(password, user.hashed_password):
+        return False
+    return user
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
