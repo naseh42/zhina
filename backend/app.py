@@ -69,6 +69,25 @@ async def startup():
 async def login_page(request: Request):
     return templates.TemplateResponse("login.html", {"request": request})
 
+@app.post("/login")
+async def login_form_submission(
+    response: Response,
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db)
+):
+    user = authenticate_user(form_data.username, form_data.password, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    access_token = utils.create_access_token(data={"sub": user.username})
+    response.set_cookie(
+        key="access_token",
+        value=f"Bearer {access_token}",
+        httponly=True,
+        max_age=3600,
+        path="/"
+    )
+    return RedirectResponse(url="/dashboard", status_code=303)
+
 @app.post("/token")
 async def login(
     response: Response,
@@ -78,10 +97,7 @@ async def login(
     user = authenticate_user(form_data.username, form_data.password, db)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    
     access_token = utils.create_access_token(data={"sub": user.username})
-    
-    # تنظیم کوکی و ریدایرکت
     response.set_cookie(
         key="access_token",
         value=f"Bearer {access_token}",
@@ -102,7 +118,7 @@ async def home(request: Request, token: str = Depends(oauth2_scheme)):
 async def dashboard(request: Request, token: str = Depends(oauth2_scheme)):
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
-        "css_url": "/static/css/footer.css"  # مسیر CSS
+        "css_url": "/static/css/footer.css"
     })
 
 @app.get("/users", response_class=HTMLResponse)
