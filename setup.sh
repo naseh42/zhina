@@ -40,10 +40,8 @@ warning() { echo -e "${YELLOW}[!] $1${NC}"; }
 check_system() {
     info "بررسی پیش‌نیازهای سیستم..."
     
-    # بررسی دسترسی root
     [[ $EUID -ne 0 ]] && error "این اسکریپت نیاز به دسترسی root دارد"
     
-    # بررسی سیستم عامل
     if [[ ! -f /etc/os-release ]]; then
         error "سیستم عامل نامشخص"
     fi
@@ -73,21 +71,23 @@ install_prerequisites() {
 setup_environment() {
     info "تنظیم محیط سیستم..."
     
-    # ایجاد کاربر سرویس
     if ! id "$SERVICE_USER" &>/dev/null; then
         useradd -r -s /bin/false -d "$INSTALL_DIR" "$SERVICE_USER" || 
             error "خطا در ایجاد کاربر $SERVICE_USER"
     fi
     
-    # ایجاد دایرکتوری‌ها
     mkdir -p \
         "$INSTALL_DIR" \
         "$CONFIG_DIR" \
         "$LOG_DIR" \
         "$XRAY_DIR" || error "خطا در ایجاد دایرکتوری‌ها"
     
-    chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"
-    chmod 750 "$INSTALL_DIR"
+    # ایجاد دایرکتوری لاگ مخصوص پنل
+    mkdir -p "$LOG_DIR/panel"
+    touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
+    
+    chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR" "$LOG_DIR"
+    chmod -R 750 "$INSTALL_DIR" "$LOG_DIR"
     
     success "محیط سیستم تنظیم شد"
 }
@@ -107,7 +107,6 @@ setup_database() {
     CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 EOF
     
-    # تنظیمات امنیتی PostgreSQL
     local pg_conf="/etc/postgresql/$(ls /etc/postgresql)/main/postgresql.conf"
     sed -i '/^#listen_addresses/s/^#//; s/localhost/*/' "$pg_conf"
     echo "host $DB_NAME $DB_USER 127.0.0.1/32 scram-sha-256" >> /etc/postgresql/*/main/pg_hba.conf
@@ -130,7 +129,6 @@ clone_repository() {
             error "خطا در دریافت کدها"
     fi
     
-    # تنظیم مجوزها
     find "$INSTALL_DIR" -type d -exec chmod 750 {} \;
     find "$INSTALL_DIR" -type f -exec chmod 640 {} \;
     chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"
@@ -145,7 +143,6 @@ setup_python() {
     python3 -m venv "$INSTALL_DIR/venv" || error "خطا در ایجاد محیط مجازی"
     source "$INSTALL_DIR/venv/bin/activate"
     
-    # نصب نیازمندی‌ها
     cat > "$INSTALL_DIR/requirements.txt" <<EOF
 fastapi==0.103.2
 uvicorn==0.23.2
@@ -170,7 +167,6 @@ install_xray() {
     
     systemctl stop xray 2>/dev/null || true
     
-    # دانلود و استخراج Xray
     if ! wget "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" -O /tmp/xray.zip; then
         error "خطا در دانلود Xray"
     fi
@@ -181,7 +177,6 @@ install_xray() {
     
     chmod +x "$XRAY_EXECUTABLE"
 
-    # تولید کلیدهای Reality
     if ! REALITY_KEYS=$("$XRAY_EXECUTABLE" x25519); then
         error "خطا در تولید کلیدهای Reality"
     fi
@@ -192,7 +187,6 @@ install_xray() {
     XRAY_UUID=$(uuidgen)
     XRAY_PATH="/$(openssl rand -hex 6)"
 
-    # ایجاد کانفیگ Xray
     cat > "$XRAY_CONFIG" <<EOF
 {
     "log": {
@@ -253,7 +247,6 @@ install_xray() {
 }
 EOF
 
-    # ایجاد سرویس systemd
     cat > /etc/systemd/system/xray.service <<EOF
 [Unit]
 Description=Xray Service
@@ -283,7 +276,6 @@ setup_nginx() {
     
     systemctl stop nginx 2>/dev/null || true
     
-    # تنظیم دامنه
     read -p "آیا از دامنه اختصاصی استفاده می‌کنید؟ (y/n) " use_domain
     if [[ "$use_domain" =~ ^[Yy]$ ]]; then
         read -p "نام دامنه خود را وارد کنید: " domain
@@ -292,7 +284,6 @@ setup_nginx() {
         PANEL_DOMAIN="$(curl -s ifconfig.me)"
     fi
 
-    # ایجاد کانفیگ Nginx
     cat > /etc/nginx/conf.d/zhina.conf <<EOF
 server {
     listen 80;
@@ -319,7 +310,6 @@ server {
 }
 EOF
 
-    # راه‌اندازی مجدد Nginx
     systemctl start nginx || error "خطا در راه‌اندازی Nginx"
     
     success "Nginx با موفقیت پیکربندی شد"
@@ -330,7 +320,6 @@ setup_ssl() {
     info "تنظیم گواهی SSL..."
     
     if [[ "$PANEL_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        # گواهی خودامضا برای IP
         mkdir -p /etc/nginx/ssl
         openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
             -keyout /etc/nginx/ssl/privkey.pem \
@@ -338,7 +327,6 @@ setup_ssl() {
             -subj "/CN=$PANEL_DOMAIN"
         ssl_type="self-signed"
     else
-        # Let's Encrypt
         if certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --agree-tos --email admin@${PANEL_DOMAIN#*.}; then
             ssl_type="letsencrypt"
             echo "0 12 * * * root certbot renew --quiet" >> /etc/crontab
@@ -354,10 +342,8 @@ setup_ssl() {
 setup_env_file() {
     info "تنظیم فایل محیط (.env)..."
     
-    # تولید مقادیر ضروری
-    SECRET_KEY=$(openssl rand -hex 32)
+    mkdir -p "$INSTALL_DIR/backend"
     
-    # ایجاد فایل .env
     cat > "$INSTALL_DIR/backend/.env" <<EOF
 # تنظیمات دیتابیس
 DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
@@ -369,10 +355,15 @@ REALITY_PRIVATE_KEY=$REALITY_PRIVATE_KEY
 # تنظیمات امنیتی
 ADMIN_USERNAME=$ADMIN_USER
 ADMIN_PASSWORD=$ADMIN_PASS
-SECRET_KEY=$SECRET_KEY
+SECRET_KEY=$(openssl rand -hex 32)
+
+# تنظیمات لاگ
+LOG_DIR=$LOG_DIR/panel
+ACCESS_LOG=$LOG_DIR/access.log
+ERROR_LOG=$LOG_DIR/error.log
+LOG_LEVEL=info
 EOF
 
-    # تنظیم مجوزها
     chown "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/backend/.env"
     chmod 600 "$INSTALL_DIR/backend/.env"
     
@@ -386,14 +377,28 @@ setup_panel_service() {
     cat > /etc/systemd/system/zhina-panel.service <<EOF
 [Unit]
 Description=Zhina Panel Service
-After=network.target
+After=network.target postgresql.service
 
 [Service]
 User=$SERVICE_USER
+Group=$SERVICE_USER
 WorkingDirectory=$INSTALL_DIR/backend
 Environment="PATH=$INSTALL_DIR/venv/bin"
-ExecStart=$INSTALL_DIR/venv/bin/uvicorn app:app --host 0.0.0.0 --port $PANEL_PORT
+Environment="PYTHONPATH=$INSTALL_DIR/backend"
+ExecStart=$INSTALL_DIR/venv/bin/uvicorn \
+    app:app \
+    --host 0.0.0.0 \
+    --port $PANEL_PORT \
+    --workers $UVICORN_WORKERS \
+    --access-log \
+    --log-level info \
+    --timeout-keep-alive 60 \
+    --no-server-header
+
 Restart=always
+RestartSec=3
+StandardOutput=append:$LOG_DIR/panel/access.log
+StandardError=append:$LOG_DIR/panel/error.log
 
 [Install]
 WantedBy=multi-user.target
@@ -401,6 +406,13 @@ EOF
 
     systemctl daemon-reload
     systemctl enable --now zhina-panel || error "خطا در راه‌اندازی سرویس پنل"
+    
+    # بررسی وضعیت سرویس
+    sleep 3
+    if ! systemctl is-active --quiet zhina-panel; then
+        journalctl -u zhina-panel -n 30 --no-pager
+        error "سرویس پنل فعال نشد. لطفاً خطاهای بالا را بررسی کنید."
+    fi
     
     success "سرویس پنل تنظیم شد"
 }
@@ -421,9 +433,9 @@ show_installation_info() {
     
     echo -e "\n${YELLOW}دستورات مدیریت:${NC}"
     echo -e "• وضعیت سرویس‌ها: ${GREEN}systemctl status xray nginx zhina-panel${NC}"
-    echo -e "• مشاهده لاگ: ${GREEN}journalctl -u xray -f${NC}"
+    echo -e "• مشاهده لاگ پنل: ${GREEN}tail -f $LOG_DIR/panel/{access,error}.log${NC}"
+    echo -e "• مشاهده لاگ Xray: ${GREEN}journalctl -u xray -f${NC}"
     
-    # ذخیره اطلاعات در فایل
     cat > "$INSTALL_DIR/installation-info.txt" <<EOF
 === Zhina Panel Installation Details ===
 
@@ -445,6 +457,11 @@ Database Info:
 - Username: ${DB_USER}
 - Password: ${DB_PASSWORD}
 - Database: ${DB_NAME}
+
+Log Files:
+- Panel Access: ${LOG_DIR}/panel/access.log
+- Panel Errors: ${LOG_DIR}/panel/error.log
+- Xray Logs: /var/log/zhina/xray-{access,error}.log
 EOF
 
     chmod 600 "$INSTALL_DIR/installation-info.txt"
@@ -461,7 +478,7 @@ main() {
     install_xray
     setup_nginx
     setup_ssl
-    setup_env_file  # <-- این تابع جدید اضافه شد
+    setup_env_file
     setup_panel_service
     show_installation_info
     
