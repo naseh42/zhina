@@ -5,16 +5,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
-from pathlib import Path
+from datetime import datetime
 import os
 import logging
 
-# ============ تنظیمات مسیرها ============
-BASE_DIR = Path(__file__).parent.parent
-TEMPLATE_DIR = "/var/lib/zhina/frontend/templates"
-STATIC_DIR = "/var/lib/zhina/frontend/static"
-
+# ==================== تنظیمات پایه ====================
 app = FastAPI(
     title="Zhina Panel",
     version="1.0.0",
@@ -22,11 +17,15 @@ app = FastAPI(
     redoc_url=None
 )
 
-# ============ تنظیمات Jinja و Static Files ============
+# ==================== تنظیمات مسیرها ====================
+TEMPLATE_DIR = "/var/lib/zhina/frontend/templates"
+STATIC_DIR = "/var/lib/zhina/frontend/static"
+
+# ==================== پیکربندی تمپلیت و استاتیک ====================
 templates = Jinja2Templates(directory=TEMPLATE_DIR)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-# ============ تنظیمات CORS ============
+# ==================== CORS ====================
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -35,10 +34,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ============ مسیرهای اصلی ============
+# ==================== مسیرهای اصلی ====================
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
-    """صفحه ورود سیستم"""
+    """صفحه ورود با طراحی فوتوریستیک"""
     return templates.TemplateResponse("login.html", {
         "request": request,
         "css_url": "/static/css/futuristic.css"
@@ -50,10 +49,13 @@ async def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
-    """دریافت توکن احراز هویت"""
+    """دریافت توکن با پورت 8001"""
     user = authenticate_user(form_data.username, form_data.password, db)
     if not user:
-        raise HTTPException(status_code=401, detail="اعتبارسنجی ناموفق")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="نام کاربری یا رمز عبور نامعتبر",
+        )
     
     access_token = create_access_token(data={"sub": user.username})
     
@@ -61,48 +63,28 @@ async def login(
         key="access_token",
         value=f"Bearer {access_token}",
         httponly=True,
-        max_age=3600,
-        path="/"
+        max_age=1800,
+        path="/",
+        samesite="lax"
     )
-    return RedirectResponse(url="/dashboard", status_code=303)
+    return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
 
-# ============ مسیرهای احراز هویت شده ============
+# ==================== مسیرهای احراز هویت شده ====================
 @app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard(request: Request, token: str = Depends(oauth2_scheme)):
-    """صفحه اصلی داشبورد"""
+async def dashboard(request: Request):
+    """داشبورد اصلی با پورت 8001"""
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
-        "css_url": "/static/css/futuristic.css"
+        "css_url": "/static/css/futuristic.css",
+        "current_time": datetime.now()
     })
 
-@app.get("/users", response_class=HTMLResponse)
-async def users(request: Request, token: str = Depends(oauth2_scheme)):
-    """مدیریت کاربران"""
-    return templates.TemplateResponse("users.html", {
-        "request": request,
-        "css_url": "/static/css/futuristic.css"
-    })
-
-@app.get("/settings", response_class=HTMLResponse)
-async def settings(request: Request, token: str = Depends(oauth2_scheme)):
-    """تنظیمات سیستم"""
-    return templates.TemplateResponse("settings.html", {
-        "request": request,
-        "css_url": "/static/css/futuristic.css"
-    })
-
-@app.get("/domains", response_class=HTMLResponse)
-async def domains(request: Request, token: str = Depends(oauth2_scheme)):
-    """مدیریت دامنه‌ها"""
-    return templates.TemplateResponse("domains.html", {
-        "request": request,
-        "css_url": "/static/css/futuristic.css"
-    })
-
-# ============ مسیرهای API ============
-@app.get("/health")
-async def health_check():
-    return {"status": "OK", "timestamp": datetime.now()}
-
-# ============ توابع پایگاه داده ============
-# ... (توابع موجود در فایل اصلی شما بدون تغییر باقی می‌مانند)
+# ==================== اجرای سرور ====================
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8001,  # پورت اختصاصی 8001
+        log_level="debug"
+    )
