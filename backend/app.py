@@ -1,34 +1,42 @@
-from fastapi import FastAPI, Request, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
-from pathlib import Path
+from typing import Optional
 import logging
-import os
+from pathlib import Path
+import sys
 
-# ==================== تنظیمات اولیه ====================
+# تنظیم مسیرهای پروژه
+sys.path.append(str(Path(__file__).parent.parent))
+
+# Importهای داخلی
+from . import schemas, models, utils
+from .database import get_db, engine, Base
+from .config import settings
+from .xray_config import xray_settings
+
+# Initialize FastAPI
 app = FastAPI(
     title="Zhina Panel",
-    description="پنل مدیریت Xray",
+    description="Xray Proxy Management Panel",
     version="1.0.0",
     docs_url="/docs",
     redoc_url=None
 )
 
-# ==================== تنظیمات مسیرها ====================
-BASE_DIR = Path(__file__).parent.parent
-TEMPLATE_DIR = "/var/lib/zhina/frontend/templates"
+# تنظیمات فایل‌های استاتیک و قالب‌ها
 STATIC_DIR = "/var/lib/zhina/frontend/static"
+TEMPLATE_DIR = "/var/lib/zhina/frontend/templates"
 
-# ==================== پیکربندی تمپلیت و استاتیک ====================
-templates = Jinja2Templates(directory=TEMPLATE_DIR)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+templates = Jinja2Templates(directory=TEMPLATE_DIR)
 
-# ==================== CORS ====================
+# تنظیمات CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -37,67 +45,83 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ==================== احراز هویت ====================
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+# توابع کمکی
+def authenticate_user(username: str, password: str, db: Session):
+    user = db.query(models.User).filter(models.User.username == username).first()
+    if not user or not utils.verify_password(password, user.hashed_password):
+        return False
+    return user
 
-# ==================== مسیرهای اصلی ====================
+# راه‌اندازی پایگاه داده
+@app.on_event("startup")
+async def startup():
+    try:
+        Base.metadata.create_all(bind=engine)
+        logging.info("Database tables initialized successfully.")
+    except Exception as e:
+        if "already exists" in str(e):
+            logging.warning("Tables already exist, skipping creation.")
+        else:
+            logging.error(f"Database error: {str(e)}")
+            raise
+
+# مسیرها
 @app.get("/", response_class=HTMLResponse)
-async def home(request: Request):
-    return RedirectResponse(url="/login")
+async def serve_home(request: Request):
+    """سرویس دهی صفحه اصلی داشبورد"""
+    return templates.TemplateResponse("dashboard.html", {"request": request})
 
-@app.route("/login", methods=["GET", "POST"])
-async def login_handler(request: Request):
-    if request.method == "GET":
-        return templates.TemplateResponse("login.html", {
-            "request": request,
-            "css_url": "/static/css/futuristic.css"
-        })
-    
-    form_data = await request.form()
-    username = form_data.get("username")
-    password = form_data.get("password")
-    
-    # TODO: پیاده‌سازی منطق احراز هویت
-    return RedirectResponse("/dashboard", status_code=status.HTTP_303_SEE_OTHER)
-
-@app.post("/token")
-async def login_token(
-    response: Response,
+@app.post("/token", response_model=schemas.Token)
+async def login_for_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
-    # پیاده‌سازی موجود برای توکن
-    pass
-
-# ==================== مسیرهای احراز هویت شده ====================
-@app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard(request: Request):
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
-        "css_url": "/static/css/futuristic.css"
-    })
-
-@app.get("/users", response_class=HTMLResponse)
-async def users(request: Request):
-    return templates.TemplateResponse("users.html", {
-        "request": request,
-        "css_url": "/static/css/futuristic.css"
-    })
-
-# ==================== مدیریت خطاها ====================
-@app.exception_handler(405)
-async def method_not_allowed(request: Request, exc):
-    return JSONResponse(
-        {"detail": f"متد {request.method} برای این آدرس پشتیبانی نمی‌شود"},
-        status_code=405
+    """ایجاد توکن دسترسی"""
+    user = authenticate_user(form_data.username, form_data.password, db)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+        )
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = utils.create_access_token(
+        data={"sub": user.username},
+        expires_delta=access_token_expires
     )
+    return {"access_token": access_token, "token_type": "bearer"}
 
-# ==================== اجرای سرور ====================
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=8001,
-        log_level="debug"
+@app.post("/users/", response_model=schemas.UserCreate)
+def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
+    """ایجاد کاربر جدید"""
+    hashed_password = utils.get_password_hash(user.password)
+    db_user = models.User(
+        username=user.username,
+        hashed_password=hashed_password,
+        uuid=utils.generate_uuid(),
+        traffic_limit=user.traffic_limit,
+        usage_duration=user.usage_duration,
+        simultaneous_connections=user.simultaneous_connections,
+        is_active=True,
+        created_at=datetime.utcnow()
     )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+@app.get("/xray/status")
+def get_xray_status():
+    """دریافت وضعیت Xray"""
+    return {
+        "status": "active",
+        "settings": xray_settings.dict()
+    }
+
+@app.get("/health")
+def health_check():
+    """بررسی سلامت سرویس"""
+    return {
+        "status": "OK",
+        "timestamp": datetime.utcnow().isoformat(),
+        "version": "1.0.0"
+    }
