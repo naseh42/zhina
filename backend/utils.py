@@ -1,5 +1,5 @@
 from passlib.context import CryptContext
-from jose import jwt
+from jose import jwt, JWTError
 from datetime import datetime, timedelta
 from typing import Optional
 import secrets
@@ -29,6 +29,24 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         algorithm=settings.JWT_ALGORITHM
     )
     return encoded_jwt
+
+# Token Verification
+def verify_token(token: str) -> Optional[str]:
+    """
+    Verify the JWT token for validity and return the username if valid.
+    """
+    try:
+        payload = jwt.decode(
+            token, 
+            settings.SECRET_KEY, 
+            algorithms=[settings.JWT_ALGORITHM]
+        )
+        username: str = payload.get("sub")
+        if username is None:
+            return None
+        return username
+    except JWTError:
+        return None
 
 # UUID Generation
 def generate_uuid() -> str:
