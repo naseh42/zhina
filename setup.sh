@@ -24,6 +24,7 @@ DB_PASSWORD=$(openssl rand -hex 16)
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033'
 NC='\033[0m'
 
 error() { 
