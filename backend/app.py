@@ -1,42 +1,34 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Request
+from fastapi import FastAPI, Request, Response, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
-from typing import Optional
-import logging
 from pathlib import Path
-import sys
+import logging
+import os
 
-# تنظیم مسیرهای پروژه
-sys.path.append(str(Path(__file__).parent.parent))
-
-# Importهای داخلی
-from . import schemas, models, utils
-from .database import get_db, engine, Base
-from .config import settings
-from .xray_config import xray_settings
-
-# Initialize FastAPI
+# ==================== تنظیمات پایه ====================
 app = FastAPI(
     title="Zhina Panel",
-    description="Xray Proxy Management Panel",
+    description="پنل مدیریت Xray",
     version="1.0.0",
     docs_url="/docs",
     redoc_url=None
 )
 
-# تنظیمات فایل‌های استاتیک و قالب‌ها
-STATIC_DIR = "/var/lib/zhina/frontend/static"
+# ==================== تنظیمات مسیرها ====================
+BASE_DIR = Path(__file__).parent.parent
 TEMPLATE_DIR = "/var/lib/zhina/frontend/templates"
+STATIC_DIR = "/var/lib/zhina/frontend/static"
 
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+# ==================== پیکربندی تمپلیت و استاتیک ====================
 templates = Jinja2Templates(directory=TEMPLATE_DIR)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-# تنظیمات CORS
+# ==================== CORS ====================
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -45,65 +37,99 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# توابع کمکی
+# ==================== احراز هویت ====================
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 def authenticate_user(username: str, password: str, db: Session):
-    user = db.query(models.User).filter(models.User.username == username).first()
-    if not user or not utils.verify_password(password, user.hashed_password):
-        return False
-    return user
+    # پیاده‌سازی منطق احراز هویت
+    pass
 
-# راه‌اندازی پایگاه داده
-@app.on_event("startup")
-async def startup():
-    try:
-        Base.metadata.create_all(bind=engine)
-        logging.info("Database tables initialized successfully.")
-    except Exception as e:
-        if "already exists" in str(e):
-            logging.warning("Tables already exist, skipping creation.")
-        else:
-            logging.error(f"Database error: {str(e)}")
-            raise
+def create_access_token(data: dict, expires_delta: timedelta = None):
+    # پیاده‌سازی ایجاد توکن
+    pass
 
-# مسیرها
+# ==================== مسیرهای اصلی ====================
 @app.get("/", response_class=HTMLResponse)
-async def serve_home(request: Request):
-    """مستقیماً نمایش داشبورد (بدون ریدایرکت به لاگین)"""
-    return templates.TemplateResponse("dashboard.html", {"request": request})
+async def home(request: Request):
+    """صفحه اصلی با ریدایرکت به لاگین"""
+    return RedirectResponse(url="/login")
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
-    """صفحه لاگین (در صورت نیاز به دسترسی مستقیم)"""
-    return templates.TemplateResponse("login.html", {"request": request})
+    """نمایش صفحه لاگین"""
+    return templates.TemplateResponse("login.html", {
+        "request": request,
+        "css_url": "/static/css/futuristic.css"
+    })
 
-@app.post("/token", response_model=schemas.Token)
-async def login_for_access_token(
+@app.post("/token")
+async def login(
     response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
-    """ایجاد توکن و ریدایرکت به داشبورد"""
+    """پردازش فرم لاگین"""
     user = authenticate_user(form_data.username, form_data.password, db)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
+            detail="نام کاربری یا رمز عبور نامعتبر",
         )
     
-    access_token = utils.create_access_token(
-        data={"sub": user.username},
-        expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    )
+    access_token = create_access_token(data={"sub": user.username})
     
-    # تنظیم توکن در کوکی و ریدایرکت
     response.set_cookie(
         key="access_token",
         value=f"Bearer {access_token}",
         httponly=True,
-        max_age=1800
+        max_age=1800,
+        path="/",
+        samesite="lax"
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+    return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
 
-# بقیه endpointها بدون تغییر...
+# ==================== مسیرهای احراز هویت شده ====================
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard(request: Request, token: str = Depends(oauth2_scheme)):
+    """داشبورد مدیریتی"""
+    return templates.TemplateResponse("dashboard.html", {
+        "request": request,
+        "css_url": "/static/css/futuristic.css"
+    })
+
+@app.get("/users", response_class=HTMLResponse)
+async def users(request: Request, token: str = Depends(oauth2_scheme)):
+    """مدیریت کاربران"""
+    return templates.TemplateResponse("users.html", {
+        "request": request,
+        "css_url": "/static/css/futuristic.css"
+    })
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings(request: Request, token: str = Depends(oauth2_scheme)):
+    """تنظیمات سیستم"""
+    return templates.TemplateResponse("settings.html", {
+        "request": request,
+        "css_url": "/static/css/futuristic.css"
+    })
+
+# ==================== مسیرهای API ====================
+@app.get("/health")
+async def health_check():
+    """بررسی سلامت سرویس"""
+    return {
+        "status": "OK",
+        "timestamp": datetime.now().isoformat(),
+        "version": "1.0.0"
+    }
+
+# ==================== اجرای سرور ====================
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "app:app",
+        host="0.0.0.0",
+        port=8001,
+        reload=True,
+        log_level="debug"
+    )
