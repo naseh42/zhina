@@ -1,229 +1,216 @@
 #!/bin/bash
-# ===============================================
-# نام اسکریپت: نصب کامل Zhina Panel + Xray-core (نسخه اصلاح شده)
-# نسخه: 4.2.2
-# تاریخ آخرین بروزرسانی: 2024-03-26
-# ===============================================
-
-# ----------------------------
-# بخش 1: تنظیمات اصلی و توابع
-# ----------------------------
 set -euo pipefail
-exec 2> >(tee -a "/var/log/zhina-install.log")
 
-# تنظیمات سیستمی
+# ------------------- تنظیمات اصلی -------------------
 INSTALL_DIR="/var/lib/zhina"
 CONFIG_DIR="/etc/zhina"
-LOG_DIR="/var/log/zhina"
 XRAY_DIR="/usr/local/bin/xray"
 XRAY_EXECUTABLE="$XRAY_DIR/xray"
 XRAY_CONFIG="$XRAY_DIR/config.json"
 SERVICE_USER="zhina"
 DB_NAME="zhina_db"
 DB_USER="zhina_user"
-DB_PASSWORD=$(openssl rand -hex 24)
 PANEL_PORT=8001
 ADMIN_USER="admin"
-ADMIN_PASS=$(openssl rand -hex 12)
+ADMIN_PASS=$(openssl rand -hex 8)
 XRAY_VERSION="1.8.11"
 UVICORN_WORKERS=4
-XRAY_UUID=$(uuidgen)
-XRAY_PATH="/$(openssl rand -hex 8)"
-REALITY_SHORT_ID=$(openssl rand -hex 4)
-XRAY_PORT=8443          # پورت اصلی Xray برای HTTPS
-XRAY_HTTP_PORT=8080     # پورت جدید برای HTTP (جایگزین 80)
-TELEGRAM_BOT_TOKEN=""
-TELEGRAM_CHAT_ID=""
+DB_PASSWORD=$(openssl rand -hex 16)
 
-# رنگ‌های کنسول
+# ------------------- رنگ‌ها و توابع -------------------
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
 NC='\033[0m'
 
-# توابع کمکی
-error() { echo -e "${RED}[✗] $1${NC}" >&2; exit 1; }
-success() { echo -e "${GREEN}[✓] $1${NC}"; }
-info() { echo -e "${BLUE}[i] $1${NC}"; }
-warning() { echo -e "${YELLOW}[!] $1${NC}"; }
+error() { echo -e "${RED}[ERROR] $1${NC}" >&2; exit 1; }
+success() { echo -e "${GREEN}[SUCCESS] $1${NC}"; }
+info() { echo -e "${YELLOW}[INFO] $1${NC}"; }
 
-# ----------------------------
-# بخش 2: اعتبارسنجی سیستم
-# ----------------------------
-validate_system() {
-    info "بررسی پیش‌نیازهای سیستم..."
+# ------------------- اعمال اصلاحات ساختاری -------------------
+apply_project_fixes() {
+    info "اعمال اصلاحات ساختاری پروژه..."
     
-    [[ ! -f /etc/os-release ]] && error "سیستم عامل نامشخص"
+    # اصلاح فایل config.py
+    cat > "$INSTALL_DIR/backend/config.py" <<'EOF'
+from pydantic_settings import BaseSettings
+from pathlib import Path
+
+class Settings(BaseSettings):
+    database_url: str = "postgresql://zhina_user:1fed62488ca9d549ca440eeb9cb4e6de@localhost/zhina_db"
+    xray_config_path: str = "/etc/xray/config.json"
+    admin_username: str = "admin"
+    admin_password: str = "ade5140fb315cfa3"
     
-    source /etc/os-release
-    [[ "$ID" != "ubuntu" && "$ID" != "debian" ]] && 
-        warning "این اسکریپت فقط بر روی Ubuntu/Debian تست شده است"
-    
-    [[ $EUID -ne 0 ]] && error "این اسکریپت نیاز به دسترسی root دارد"
-    
-    local mem=$(grep MemTotal /proc/meminfo | awk '{print $2}')
-    (( mem < 1000000 )) && warning "حداقل 1GB RAM توصیه می‌شود"
-    
-    local disk=$(df -h / | awk 'NR==2 {print $4}')
-    [[ "${disk//[^0-9]/}" -lt 10 ]] && warning "حداقل 10GB فضای دیسک توصیه می‌شود"
-    
-    success "بررسی سیستم کامل شد"
+    class Config:
+        env_file = "/etc/zhina/.env"
+        env_file_encoding = 'utf-8'
+        extra = 'ignore'
+
+settings = Settings()
+EOF
+
+    # اصلاح فایل database.py
+    cat > "$INSTALL_DIR/backend/database.py" <<'EOF'
+from sqlalchemy import create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from backend.config import settings
+
+SQLALCHEMY_DATABASE_URL = settings.database_url
+
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    pool_size=20,
+    max_overflow=30,
+    pool_pre_ping=True
+)
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+EOF
+
+    # تنظیم مجوزها
+    chown -R $SERVICE_USER:$SERVICE_USER $INSTALL_DIR
+    success "اصلاحات ساختاری با موفقیت اعمال شدند!"
 }
 
-# ----------------------------
-# بخش 3: نصب پیش‌نیازها
-# ----------------------------
-install_prerequisites() {
-    info "نصب پیش‌نیازهای سیستم..."
+# ------------------- تنظیمات دامنه -------------------
+configure_domain() {
+    info "تنظیمات دامنه..."
+    read -p "آیا می‌خواهید از دامنه اختصاصی استفاده کنید؟ (y/n) " USE_DOMAIN
     
-    apt-get update
-    apt-get install -y \
-        git python3 python3-venv python3-pip python3-dev \
-        postgresql postgresql-contrib nginx \
-        curl wget openssl unzip uuid-runtime jq \
-        build-essential libssl-dev libffi-dev \
-        certbot python3-certbot-nginx \
-        fail2ban ufw
-    
-    ufw allow ssh
-    ufw allow http
-    ufw allow https
-    ufw allow $XRAY_PORT
-    ufw allow $XRAY_HTTP_PORT
-    ufw --force enable
-    
-    cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local
-    systemctl restart fail2ban
-    
-    success "پیش‌نیازها با موفقیت نصب شدند"
+    if [[ "$USE_DOMAIN" =~ ^[Yy]$ ]]; then
+        read -p "لطفا نام دامنه خود را وارد کنید (مثال: panel.example.com): " PANEL_DOMAIN
+        PUBLIC_IP=$(curl -s ifconfig.me)
+        echo -e "\nلطفا رکورد DNS زیر را در پنل مدیریت دامنه خود تنظیم کنید:"
+        echo -e "${YELLOW}${PANEL_DOMAIN} A ${PUBLIC_IP}${NC}"
+        echo -e "پس از تنظیم DNS، 5 دقیقه صبر کنید و سپس Enter بزنید"
+        read -p "آیا DNS را تنظیم کرده‌اید؟ (Enter) "
+    else
+        PANEL_DOMAIN=$(curl -s ifconfig.me)
+    fi
 }
 
-# ----------------------------
-# بخش 4: تنظیم کاربر و دایرکتوری‌ها
-# ----------------------------
-setup_directories() {
-    info "تنظیم دایرکتوری‌ها و کاربر سیستم..."
+# ------------------- تنظیمات SSL -------------------
+setup_ssl() {
+    info "تنظیم گواهی SSL..."
     
-    if ! id "$SERVICE_USER" &>/dev/null; then
-        useradd -r -s /bin/false -d "$INSTALL_DIR" "$SERVICE_USER"
+    mkdir -p /etc/nginx/ssl
+    
+    if [[ "$PANEL_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+            -keyout /etc/nginx/ssl/privkey.pem \
+            -out /etc/nginx/ssl/fullchain.pem \
+            -subj "/CN=${PANEL_DOMAIN}"
+        SSL_TYPE="self-signed"
+    else
+        apt-get install -y certbot python3-certbot-nginx
+        if certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --agree-tos --email admin@${PANEL_DOMAIN#*.}; then
+            SSL_TYPE="letsencrypt"
+            echo "0 12 * * * root certbot renew --quiet" >> /etc/crontab
+        else
+            openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+                -keyout /etc/nginx/ssl/privkey.pem \
+                -out /etc/nginx/ssl/fullchain.pem \
+                -subj "/CN=${PANEL_DOMAIN}"
+            SSL_TYPE="self-signed"
+        fi
     fi
     
-    mkdir -p \
-        "$INSTALL_DIR" \
-        "$CONFIG_DIR" \
-        "$LOG_DIR" \
-        "$XRAY_DIR" \
-        "$INSTALL_DIR/backend" \
-        "$INSTALL_DIR/frontend/static" \
-        "$INSTALL_DIR/frontend/templates"
-    
-    chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"
-    chmod 750 "$INSTALL_DIR"
-    
-    success "دایرکتوری‌ها و کاربر سیستم تنظیم شدند"
+    chmod 600 /etc/nginx/ssl/*
+    success "گواهی SSL با موفقیت تنظیم شد (نوع: ${SSL_TYPE})"
 }
 
-# ----------------------------
-# بخش 5: تنظیم دیتابیس PostgreSQL
-# ----------------------------
-setup_database() {
-    info "تنظیم پایگاه داده PostgreSQL..."
+# ------------------- تنظیمات Nginx -------------------
+configure_nginx() {
+    info "تنظیم Nginx..."
     
-    sudo -u postgres psql <<EOF
-    DROP DATABASE IF EXISTS $DB_NAME;
-    DROP USER IF EXISTS $DB_USER;
-    CREATE USER $DB_USER WITH PASSWORD '$DB_PASSWORD';
-    CREATE DATABASE $DB_NAME OWNER $DB_USER;
-    GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;
-    \c $DB_NAME
-    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-    CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+    systemctl stop xray || true
+    
+    rm -f /etc/nginx/sites-enabled/*
+    
+    cat > /etc/nginx/conf.d/panel.conf <<EOF
+server {
+    listen 80;
+    server_name ${PANEL_DOMAIN};
+    
+    location / {
+        proxy_pass http://127.0.0.1:${PANEL_PORT};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+    
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name ${PANEL_DOMAIN};
+    
+    ssl_certificate /etc/nginx/ssl/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    
+    location / {
+        proxy_pass http://127.0.0.1:${PANEL_PORT};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
 EOF
     
-    local pg_conf="/etc/postgresql/$(ls /etc/postgresql)/main/postgresql.conf"
-    sed -i '/^#listen_addresses/s/^#//; s/localhost/*/' "$pg_conf"
-    echo "host $DB_NAME $DB_USER 127.0.0.1/32 scram-sha-256" >> /etc/postgresql/*/main/pg_hba.conf
+    mkdir -p /var/www/html/.well-known/acme-challenge
+    chown -R www-data:www-data /var/www/html
     
-    systemctl restart postgresql
-    success "پایگاه داده PostgreSQL تنظیم شد"
-}
-
-# ----------------------------
-# بخش 6: دریافت کدهای برنامه
-# ----------------------------
-clone_repository() {
-    info "دریافت کدهای برنامه..."
-    
-    if [[ -d "$INSTALL_DIR/.git" ]]; then
-        cd "$INSTALL_DIR"
-        git reset --hard
-        git pull || error "خطا در بروزرسانی کدها"
-    else
-        git clone https://github.com/naseh42/zhina.git "$INSTALL_DIR" || error "خطا در دریافت کدها"
+    if ! nginx -t; then
+        error "خطا در کانفیگ Nginx"
     fi
     
-    find "$INSTALL_DIR" -type d -exec chmod 750 {} \;
-    find "$INSTALL_DIR" -type f -exec chmod 640 {} \;
-    chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"
-    
-    success "کدهای برنامه دریافت شدند"
+    systemctl restart nginx
+    systemctl start xray
+    success "Nginx با موفقیت تنظیم شد!"
 }
 
-# ----------------------------
-# بخش 7: تنظیم محیط مجازی Python
-# ----------------------------
-setup_virtualenv() {
-    info "تنظیم محیط مجازی Python..."
-    
-    python3 -m venv "$INSTALL_DIR/venv"
-    source "$INSTALL_DIR/venv/bin/activate"
-    pip install --upgrade pip wheel setuptools
-    pip install -r "$INSTALL_DIR/requirements.txt"
-    deactivate
-    
-    success "محیط مجازی Python تنظیم شد"
-}
-
-# ----------------------------
-# بخش 8: نصب و پیکربندی Xray-core (نسخه اصلاح شده)
-# ----------------------------
-setup_xray() {
+# ------------------- نصب و تنظیم Xray -------------------
+install_xray() {
     info "نصب و پیکربندی Xray..."
     
     systemctl stop xray 2>/dev/null || true
-    rm -rf "$XRAY_DIR"/*
+    rm -rf "$XRAY_DIR"
+    
     mkdir -p "$XRAY_DIR"
-    
-    if ! wget "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" -O /tmp/xray.zip; then
-        error "خطا در دانلود Xray"
-    fi
-    
-    if ! unzip -o /tmp/xray.zip -d "$XRAY_DIR"; then
-        error "خطا در استخراج Xray"
-    fi
-    
+    wget "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" -O /tmp/xray.zip
+    unzip -o /tmp/xray.zip -d "$XRAY_DIR"
     chmod +x "$XRAY_EXECUTABLE"
 
-    if ! REALITY_KEYS=$("$XRAY_EXECUTABLE" x25519); then
-        error "خطا در تولید کلیدهای Reality"
-    fi
+    XRAY_UUID=$(uuidgen)
+    XRAY_PATH="/$(openssl rand -hex 6)"
     
+    REALITY_KEYS=$($XRAY_EXECUTABLE x25519)
     REALITY_PRIVATE_KEY=$(echo "$REALITY_KEYS" | awk '/Private key:/ {print $3}')
     REALITY_PUBLIC_KEY=$(echo "$REALITY_KEYS" | awk '/Public key:/ {print $3}')
     REALITY_SHORT_ID=$(openssl rand -hex 8)
 
-    # ایجاد کانفیگ Xray با پورت‌های اصلاح شده
     cat > "$XRAY_CONFIG" <<EOF
 {
-    "log": {
-        "loglevel": "warning",
-        "access": "$LOG_DIR/xray-access.log",
-        "error": "$LOG_DIR/xray-error.log"
-    },
+    "log": {"loglevel": "warning"},
     "inbounds": [
         {
-            "port": $XRAY_PORT,
+            "port": 8443,
             "protocol": "vless",
             "settings": {
                 "clients": [{"id": "$XRAY_UUID"}],
@@ -236,231 +223,309 @@ setup_xray() {
                     "show": false,
                     "dest": "www.amazon.com:443",
                     "xver": 0,
-                    "serverNames": ["www.amazon.com"],
+                    "serverNames": ["www.amazon.com", "${PANEL_DOMAIN}"],
                     "privateKey": "$REALITY_PRIVATE_KEY",
                     "shortIds": ["$REALITY_SHORT_ID"]
                 }
             }
         },
         {
-            "port": $XRAY_HTTP_PORT,
+            "port": 8080,
             "protocol": "vmess",
             "settings": {
                 "clients": [{"id": "$XRAY_UUID"}]
             },
             "streamSettings": {
                 "network": "ws",
+                "security": "none",
                 "wsSettings": {
-                    "path": "$XRAY_PATH"
+                    "path": "$XRAY_PATH",
+                    "headers": {}
                 }
             }
-        }
-    ],
-    "outbounds": [
-        {
-            "protocol": "freedom",
-            "tag": "direct"
         },
         {
-            "protocol": "blackhole",
-            "tag": "blocked"
+            "port": 8444,
+            "protocol": "trojan",
+            "settings": {
+                "clients": [{"password": "$XRAY_UUID"}]
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "tls",
+                "tlsSettings": {
+                    "alpn": ["h2", "http/1.1"],
+                    "certificates": [{
+                        "certificateFile": "/etc/nginx/ssl/fullchain.pem",
+                        "keyFile": "/etc/nginx/ssl/privkey.pem"
+                    }]
+                }
+            }
+        },
+        {
+            "port": 8388,
+            "protocol": "shadowsocks",
+            "settings": {
+                "method": "aes-256-gcm",
+                "password": "$XRAY_UUID",
+                "network": "tcp,udp"
+            }
         }
     ],
-    "routing": {
-        "domainStrategy": "IPIfNonMatch",
-        "rules": [
-            {
-                "type": "field",
-                "ip": ["geoip:private"],
-                "outboundTag": "blocked"
-            }
-        ]
-    }
+    "outbounds": [{"protocol": "freedom"}]
 }
 EOF
 
     cat > /etc/systemd/system/xray.service <<EOF
 [Unit]
 Description=Xray Service
-Documentation=https://xtls.github.io
-After=network.target nss-lookup.target
+After=network.target
 
 [Service]
+Type=simple
 User=root
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-NoNewPrivileges=true
+WorkingDirectory=$XRAY_DIR
 ExecStart=$XRAY_EXECUTABLE run -config $XRAY_CONFIG
-Restart=on-failure
-RestartPreventExitStatus=23
-LimitNPROC=10000
-LimitNOFILE=1000000
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
 EOF
-    
+
     systemctl daemon-reload
-    systemctl enable --now xray
-    
-    if ! systemctl is-active --quiet xray; then
-        journalctl -u xray -n 50 --no-pager
-        error "سرویس Xray راه‌اندازی نشد"
-    fi
-    
-    success "Xray با موفقیت نصب و پیکربندی شد"
+    systemctl enable xray
+    systemctl start xray
+    success "Xray با موفقیت نصب و پیکربندی شد!"
 }
 
-# ----------------------------
-# بخش 9: تنظیمات Nginx (نسخه اصلاح شده)
-# ----------------------------
-setup_nginx() {
-    info "تنظیم Nginx..."
-    
-    systemctl stop nginx 2>/dev/null || true
-    rm -f /etc/nginx/sites-enabled/*
-    rm -f /etc/nginx/conf.d/*
-    
-    cat > /etc/nginx/conf.d/zhina.conf <<EOF
-server {
-    listen 80;
-    server_name _;
-    
-    location / {
-        proxy_pass http://127.0.0.1:$PANEL_PORT;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    }
-    
-    location $XRAY_PATH {
-        proxy_pass http://127.0.0.1:$XRAY_HTTP_PORT;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
-    }
-    
-    location /.well-known/acme-challenge/ {
-        root /var/www/html;
-    }
+# ------------------- توابع باقی مانده -------------------
+install_prerequisites() {
+    info "نصب پیش‌نیازهای سیستم..."
+    apt-get update
+    apt-get install -y git python3 python3-venv python3-pip postgresql nginx curl wget openssl unzip uuid-runtime
+    success "پیش‌نیازها با موفقیت نصب شدند!"
 }
+
+setup_database() {
+    info "تنظیم پایگاه داده..."
+    sudo -u postgres psql <<EOF
+    DROP DATABASE IF EXISTS $DB_NAME;
+    DROP USER IF EXISTS $DB_USER;
+    CREATE USER $DB_USER WITH PASSWORD '$DB_PASSWORD';
+    CREATE DATABASE $DB_NAME OWNER $DB_USER;
 EOF
-    
-    mkdir -p /var/www/html/.well-known/acme-challenge
-    chown -R www-data:www-data /var/www/html
-    systemctl start nginx
-    
-    if ! systemctl is-active --quiet nginx; then
-        journalctl -u nginx -n 50 --no-pager
-        error "سرویس Nginx راه‌اندازی نشد"
-    fi
-    
-    success "Nginx با موفقیت پیکربندی شد"
+    sudo -u postgres psql -d $DB_NAME -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+    success "پایگاه داده با موفقیت تنظیم شد!"
 }
 
-# ----------------------------
-# بخش 10: تنظیمات SSL (بهینه شده)
-# ----------------------------
-setup_ssl() {
-    info "تنظیم گواهی SSL..."
+setup_requirements() {
+    info "ایجاد فایل requirements.txt..."
+    cat > "$INSTALL_DIR/requirements.txt" <<EOF
+sqlalchemy==2.0.28
+psycopg2-binary==2.9.9
+fastapi==0.103.2
+uvicorn==0.23.2
+python-multipart==0.0.6
+jinja2==3.1.2
+python-dotenv==1.0.0
+pydantic-settings==2.0.3
+EOF
+    success "فایل requirements.txt ایجاد شد!"
+
+    info "نصب وابستگی‌های مورد نیاز..."
+    python3 -m venv $INSTALL_DIR/venv
+    source $INSTALL_DIR/venv/bin/activate
+    pip install -U pip setuptools wheel
+    pip install -r "$INSTALL_DIR/requirements.txt"
+    deactivate
+    success "وابستگی‌ها با موفقیت نصب شدند!"
+}
+
+create_tables() {
+    info "ایجاد جداول دیتابیس..."
+    sudo -u postgres psql -d $DB_NAME <<EOF
+    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
     
-    if ! command -v certbot &>/dev/null; then
-        apt-get install -y certbot python3-certbot-nginx
-    fi
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(255) UNIQUE NOT NULL,
+        password VARCHAR(255) NOT NULL,
+        uuid UUID UNIQUE DEFAULT uuid_generate_v4(),
+        traffic_limit BIGINT DEFAULT 0,
+        usage_duration INT DEFAULT 0,
+        simultaneous_connections INT DEFAULT 1,
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS domains (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) UNIQUE NOT NULL,
+        description JSONB,
+        owner_id INT REFERENCES users(id),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS subscriptions (
+        id SERIAL PRIMARY KEY,
+        uuid UUID UNIQUE DEFAULT uuid_generate_v4(),
+        data_limit BIGINT DEFAULT 0,
+        expiry_date TIMESTAMP,
+        max_connections INT DEFAULT 1,
+        user_id INT REFERENCES users(id),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS settings (
+        id SERIAL PRIMARY KEY,
+        language VARCHAR(10) DEFAULT 'fa',
+        theme VARCHAR(20) DEFAULT 'dark',
+        enable_notifications BOOLEAN DEFAULT true,
+        preferences JSONB,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS nodes (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) UNIQUE NOT NULL,
+        ip_address VARCHAR(45) NOT NULL,
+        port INT NOT NULL,
+        protocol VARCHAR(20) NOT NULL,
+        is_active BOOLEAN DEFAULT true,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    INSERT INTO users (username, password, is_active) 
+    VALUES ('$ADMIN_USER', crypt('$ADMIN_PASS', gen_salt('bf')), true);
+EOF
+    success "جداول دیتابیس با موفقیت ایجاد شدند!"
+}
+
+setup_services() {
+    info "تنظیم سرویس‌های سیستم..."
+
+    # ایجاد دایرکتوری کانفیگ
+    mkdir -p $CONFIG_DIR
+
+    # ایجاد فایل محیطی
+    cat > "$CONFIG_DIR/.env" <<EOF
+# تنظیمات دیتابیس
+database_url=postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
+
+# تنظیمات امنیتی
+SECRET_KEY=$(openssl rand -hex 32)
+DEBUG=False
+
+# تنظیمات Xray
+XRAY_UUID=$XRAY_UUID
+XRAY_PATH=$XRAY_PATH
+REALITY_PUBLIC_KEY=$REALITY_PUBLIC_KEY
+REALITY_SHORT_ID=$REALITY_SHORT_ID
+
+# تنظیمات مدیریتی
+ADMIN_USERNAME=$ADMIN_USER
+ADMIN_PASSWORD=$ADMIN_PASS
+EOF
+
+    # لینک نمادین به فایل .env در دایرکتوری پروژه
+    ln -sf "$CONFIG_DIR/.env" "$INSTALL_DIR/backend/.env"
+
+    chown -R $SERVICE_USER:$SERVICE_USER $CONFIG_DIR
+    chmod 600 "$CONFIG_DIR/.env"
+
+    cat > /etc/systemd/system/zhina-panel.service <<EOF
+[Unit]
+Description=Zhina Panel Service
+After=network.target postgresql.service
+
+[Service]
+User=$SERVICE_USER
+Group=$SERVICE_USER
+WorkingDirectory=$INSTALL_DIR/backend
+Environment="PATH=$INSTALL_DIR/venv/bin"
+Environment="PYTHONPATH=$INSTALL_DIR:$INSTALL_DIR/backend"
+ExecStart=$INSTALL_DIR/venv/bin/uvicorn app:app --host 0.0.0.0 --port $PANEL_PORT --workers $UVICORN_WORKERS
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable zhina-panel
+    systemctl start zhina-panel
+    success "سرویس‌ها با موفقیت تنظیم و راه‌اندازی شدند!"
+}
+
+show_info() {
+    PUBLIC_IP=$(curl -s ifconfig.me)
+    success "\n\n=== نصب کامل شد! ==="
     
-    read -p "آیا دامنه ثبت شده دارید؟ (y/n) " has_domain
-    if [[ "$has_domain" =~ ^[Yy]$ ]]; then
-        read -p "نام دامنه خود را وارد کنید: " domain_name
-        if certbot --nginx --non-interactive --agree-tos --email admin@$domain_name -d $domain_name; then
-            echo "0 12 * * * root certbot renew --quiet" >> /etc/crontab
-            success "گواهی SSL از Let's Encrypt دریافت شد"
-            ssl_cert_path="/etc/letsencrypt/live/$domain_name/fullchain.pem"
-            ssl_key_path="/etc/letsencrypt/live/$domain_name/privkey.pem"
-        else
-            warning "دریافت گواهی SSL ناموفق بود، استفاده از خودامضا"
-            create_self_signed_cert
-        fi
+    if [[ "$PANEL_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo -e "دسترسی پنل مدیریتی:"
+        echo -e "• آدرس: ${YELLOW}http://${PANEL_DOMAIN}:${PANEL_PORT}${NC}"
     else
-        warning "استفاده از گواهی خودامضا برای IP سرور"
-        create_self_signed_cert
+        echo -e "دسترسی پنل مدیریتی:"
+        echo -e "• آدرس: ${GREEN}https://${PANEL_DOMAIN}${NC}"
     fi
     
-    cat > /etc/nginx/conf.d/zhina-ssl.conf <<EOF
-server {
-    listen 443 ssl http2;
-    server_name _;
-    
-    ssl_certificate $ssl_cert_path;
-    ssl_certificate_key $ssl_key_path;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256';
-    ssl_prefer_server_ciphers on;
-    ssl_session_cache shared:SSL:10m;
-    ssl_session_timeout 10m;
-    
-    location / {
-        proxy_pass http://127.0.0.1:$PANEL_PORT;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-    
-    location $XRAY_PATH {
-        proxy_pass http://127.0.0.1:$XRAY_HTTP_PORT;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
-    }
-}
-EOF
-    
-    systemctl restart nginx
-    success "تنظیمات SSL کامل شد"
+    echo -e "• یوزرنیم ادمین: ${YELLOW}${ADMIN_USER}${NC}"
+    echo -e "• پسورد ادمین: ${YELLOW}${ADMIN_PASS}${NC}"
+
+    echo -e "\nتنظیمات Xray:"
+    echo -e "• پروتکل‌های فعال:"
+    echo -e "  - ${YELLOW}VLESS + Reality${NC} (پورت 8443)"
+    echo -e "  - ${YELLOW}VMess + WS${NC} (پورت 8080 - مسیر: ${XRAY_PATH})"
+    echo -e "  - ${YELLOW}Trojan${NC} (پورت 8444)"
+    echo -e "  - ${YELLOW}Shadowsocks${NC} (پورت 8388)"
+    echo -e "• UUID/پسورد مشترک: ${YELLOW}${XRAY_UUID}${NC}"
+    echo -e "• کلید عمومی Reality: ${YELLOW}${REALITY_PUBLIC_KEY}${NC}"
+
+    echo -e "\nدستورات مدیریت:"
+    echo -e "• وضعیت سرویس‌ها: ${YELLOW}systemctl status {xray,zhina-panel,nginx}${NC}"
+    echo -e "• مشاهده لاگ‌ها: ${YELLOW}journalctl -u xray -u zhina-panel -f${NC}"
 }
 
-create_self_signed_cert() {
-    mkdir -p /etc/nginx/ssl
-    ssl_cert_path="/etc/nginx/ssl/fullchain.pem"
-    ssl_key_path="/etc/nginx/ssl/privkey.pem"
-    
-    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-        -keyout $ssl_key_path \
-        -out $ssl_cert_path \
-        -subj "/CN=$(curl -s ifconfig.me)"
-}
-
-# ----------------------------
-# بخش 11-15: سایر بخش‌ها بدون تغییر
-# ----------------------------
-# [کدهای بخش‌های 11 تا 15 بدون تغییر از اسکریپت اصلی باقی می‌مانند]
-# ----------------------------
-
-# ----------------------------
-# بخش 15: تابع اصلی
-# ----------------------------
+# ------------------- اجرای اصلی -------------------
 main() {
-    clear
-    echo -e "${GREEN}\n=== شروع نصب Zhina Panel ===${NC}\n"
-    
-    validate_system
+    [[ $EUID -ne 0 ]] && error "این اسکریپت نیاز به دسترسی root دارد!"
+
     install_prerequisites
-    setup_directories
+
+    if ! id "$SERVICE_USER" &>/dev/null; then
+        useradd -r -s /bin/false -d $INSTALL_DIR $SERVICE_USER
+    fi
+
     setup_database
-    clone_repository
-    setup_virtualenv
-    setup_xray
-    setup_nginx
+
+    info "دریافت کدهای برنامه..."
+    if [ -d "$INSTALL_DIR/.git" ]; then
+        cd "$INSTALL_DIR"
+        git pull || error "خطا در بروزرسانی کدها"
+    else
+        rm -rf "$INSTALL_DIR"
+        git clone https://github.com/naseh42/zhina.git "$INSTALL_DIR" || error "خطا در دریافت کدها"
+    fi
+    chown -R $SERVICE_USER:$SERVICE_USER $INSTALL_DIR
+    success "کدهای برنامه با موفقیت دریافت شدند!"
+
+    apply_project_fixes
+    setup_requirements
+    configure_domain
     setup_ssl
-    create_database_tables
-    setup_environment
-    setup_panel_service
-    show_installation_info
-    
-    echo -e "\n${GREEN}=== نصب با موفقیت کامل شد ===${NC}\n"
+    configure_nginx
+    install_xray
+    create_tables
+    setup_services
+    show_info
 }
 
-# اجرای اسکریپت
 main
