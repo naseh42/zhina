@@ -41,12 +41,23 @@ app.add_middleware(
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 def authenticate_user(username: str, password: str, db: Session):
-    # پیاده‌سازی منطق احراز هویت
-    pass
+    user = db.query(models.User).filter(models.User.username == username).first()
+    if not user or not utils.verify_password(password, user.hashed_password):
+        return None
+    return user
 
 def create_access_token(data: dict, expires_delta: timedelta = None):
-    # پیاده‌سازی ایجاد توکن
-    pass
+    import jwt
+    from .config import settings
+
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm="HS256")
+    return encoded_jwt
 
 # ==================== مسیرهای اصلی ====================
 @app.get("/", response_class=HTMLResponse)
