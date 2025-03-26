@@ -1,9 +1,9 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Request
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi import FastAPI, Depends, HTTPException, status, Request, Response
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm, HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -45,13 +45,23 @@ app.add_middleware(
 )
 
 # توابع کمکی
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+security = HTTPBearer()
 
 def authenticate_user(username: str, password: str, db: Session):
     user = db.query(models.User).filter(models.User.username == username).first()
     if not user or not utils.verify_password(password, user.hashed_password):
         return False
     return user
+
+def validate_token(token: str):
+    try:
+        payload = utils.decode_token(token)
+        return payload
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+        )
 
 # راه‌اندازی پایگاه داده
 @app.on_event("startup")
@@ -68,36 +78,49 @@ async def startup():
 
 # مسیرها
 @app.get("/login", response_class=HTMLResponse)
-async def serve_login_page(request: Request):
-    """نمایش صفحه لاگین"""
-    return templates.TemplateResponse("login.html", {"request": request})
+async def serve_login_page(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)):
+    try:
+        token = credentials.credentials
+        validate_token(token)
+        return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+    except HTTPException:
+        return templates.TemplateResponse("login.html", {"request": request})
 
 @app.get("/", response_class=HTMLResponse)
-async def serve_home(request: Request, token: str = Depends(oauth2_scheme)):
-    """محافظت از داشبورد با احراز هویت"""
-    try:
-        return templates.TemplateResponse("dashboard.html", {"request": request})
-    except Exception:
-        raise HTTPException(status_code=307, detail="Redirect to login", headers={"Location": "/login"})
+async def serve_home(request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
+    payload = validate_token(token)
+    return templates.TemplateResponse("dashboard.html", {"request": request})
 
-@app.post("/token", response_model=schemas.Token)
+@app.post("/token")
 async def login_for_access_token(
+    response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
-    """ایجاد توکن دسترسی"""
     user = authenticate_user(form_data.username, form_data.password, db)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
         )
+    
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = utils.create_access_token(
         data={"sub": user.username},
         expires_delta=access_token_expires
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+    
+    response.set_cookie(
+        key="access_token",
+        value=f"Bearer {access_token}",
+        httponly=True,
+        secure=True,  # در تولید باید True باشد
+        samesite="lax",
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    )
+    
+    return {"message": "Logged in successfully"}
 
 @app.post("/users/", response_model=schemas.UserCreate)
 def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
@@ -119,8 +142,10 @@ def create_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
     return db_user
 
 @app.get("/xray/status")
-def get_xray_status():
+def get_xray_status(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """دریافت وضعیت Xray"""
+    token = credentials.credentials
+    validate_token(token)
     return {
         "status": "active",
         "settings": xray_settings.dict()
