@@ -116,6 +116,11 @@ async def home(request: Request, token: str = Depends(oauth2_scheme)):
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, token: str = Depends(oauth2_scheme)):
+    # اعتبارسنجی توکن
+    user = utils.verify_token(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "css_url": "/static/css/footer.css"
