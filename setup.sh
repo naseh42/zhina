@@ -24,7 +24,7 @@ DB_PASSWORD=$(openssl rand -hex 16)
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033'
+BLUE='\033[0;34m'
 NC='\033[0m'
 
 error() { 
@@ -350,6 +350,35 @@ setup_ssl() {
     success "SSL تنظیم شد (نوع: $ssl_type)"
 }
 
+# ------------------- تنظیم فایل .env -------------------
+setup_env_file() {
+    info "تنظیم فایل محیط (.env)..."
+    
+    # تولید مقادیر ضروری
+    SECRET_KEY=$(openssl rand -hex 32)
+    
+    # ایجاد فایل .env
+    cat > "$INSTALL_DIR/backend/.env" <<EOF
+# تنظیمات دیتابیس
+DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
+
+# تنظیمات Xray
+REALITY_PUBLIC_KEY=$REALITY_PUBLIC_KEY
+REALITY_PRIVATE_KEY=$REALITY_PRIVATE_KEY
+
+# تنظیمات امنیتی
+ADMIN_USERNAME=$ADMIN_USER
+ADMIN_PASSWORD=$ADMIN_PASS
+SECRET_KEY=$SECRET_KEY
+EOF
+
+    # تنظیم مجوزها
+    chown "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/backend/.env"
+    chmod 600 "$INSTALL_DIR/backend/.env"
+    
+    success "فایل .env با موفقیت تنظیم شد"
+}
+
 # ------------------- تنظیم سرویس پنل -------------------
 setup_panel_service() {
     info "تنظیم سرویس پنل..."
@@ -432,6 +461,7 @@ main() {
     install_xray
     setup_nginx
     setup_ssl
+    setup_env_file  # <-- این تابع جدید اضافه شد
     setup_panel_service
     show_installation_info
     
