@@ -13,6 +13,14 @@
                 <img src="/static/images/logo.png" alt="Kurd Panel">
                 <h1>Kurd Panel</h1>
             </div>
+            
+            <!-- تغییر اصلی: اضافه کردن بخش نمایش خطا -->
+            {% if error %}
+            <div class="error-message">
+                {{ error }}
+            </div>
+            {% endif %}
+            
             <form action="/login" method="post">
                 <label for="username">نام کاربری:</label>
                 <input type="text" id="username" name="username" required>
