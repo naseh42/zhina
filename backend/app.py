@@ -10,16 +10,12 @@ from pathlib import Path
 import logging
 import sys
 
-# تنظیم مسیرهای پروژه
 sys.path.append(str(Path(__file__).parent.parent))
-
-# Importهای داخلی
 from backend import schemas, models, utils
 from backend.database import get_db, engine, Base
 from backend.config import settings
 from backend.xray_config import xray_settings
 
-# Initialize FastAPI
 app = FastAPI(
     title="Zhina Panel",
     description="Xray Proxy Management Panel",
@@ -28,15 +24,11 @@ app = FastAPI(
     redoc_url=None
 )
 
-# تنظیمات مسیرها
 TEMPLATE_DIR = "/var/lib/zhina/frontend/templates"
 STATIC_DIR = "/var/lib/zhina/frontend/static"
-
-# تنظیمات Jinja2 و Static Files
 templates = Jinja2Templates(directory=TEMPLATE_DIR)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-# تنظیمات CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -45,7 +37,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# توابع کمکی
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 def authenticate_user(username: str, password: str, db: Session):
@@ -54,7 +45,6 @@ def authenticate_user(username: str, password: str, db: Session):
         return False
     return user
 
-# راه‌اندازی پایگاه داده
 @app.on_event("startup")
 async def startup():
     try:
@@ -64,21 +54,26 @@ async def startup():
         logging.error(f"Database error: {str(e)}")
         raise
 
-# مسیرهای اصلی
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     return templates.TemplateResponse("login.html", {"request": request})
 
+# تغییر اصلی 1 - تابع login_form_submission
 @app.post("/login")
 async def login_form_submission(
-    response: Response,
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
     user = authenticate_user(form_data.username, form_data.password, db)
     if not user:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        return templates.TemplateResponse("login.html", {
+            "request": request,
+            "error": "نام کاربری یا رمز عبور اشتباه است"
+        })
+    
     access_token = utils.create_access_token(data={"sub": user.username})
+    response = RedirectResponse(url="/dashboard", status_code=303)
     response.set_cookie(
         key="access_token",
         value=f"Bearer {access_token}",
@@ -86,41 +81,38 @@ async def login_form_submission(
         max_age=3600,
         path="/"
     )
-    return RedirectResponse(url="/dashboard", status_code=303)
-
-@app.post("/token")
-async def login(
-    response: Response,
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: Session = Depends(get_db)
-):
-    user = authenticate_user(form_data.username, form_data.password, db)
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    access_token = utils.create_access_token(data={"sub": user.username})
-    response.set_cookie(
-        key="access_token",
-        value=f"Bearer {access_token}",
-        httponly=True,
-        max_age=3600,
-        path="/"
-    )
-    response.headers["Location"] = "/dashboard"
-    response.status_code = status.HTTP_303_SEE_OTHER
     return response
 
-# مسیرهای حفاظت شده
+# تغییر اصلی 2 - تابع get_token
+@app.post("/token")
+async def get_token(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db)
+):
+    user = authenticate_user(form_data.username, form_data.password, db)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    
+    access_token = utils.create_access_token(data={"sub": user.username})
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_in": 3600
+    }
+
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request, token: str = Depends(oauth2_scheme)):
     return RedirectResponse(url="/dashboard")
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, token: str = Depends(oauth2_scheme)):
-    # اعتبارسنجی توکن
     user = utils.verify_token(token)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
-
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "css_url": "/static/css/footer.css"
@@ -138,7 +130,6 @@ async def settings(request: Request, token: str = Depends(oauth2_scheme)):
 async def domains(request: Request, token: str = Depends(oauth2_scheme)):
     return templates.TemplateResponse("domains.html", {"request": request})
 
-# مسیرهای API
 @app.get("/xray/status")
 async def xray_status(token: str = Depends(oauth2_scheme)):
     return {"status": "active", "config": xray_settings.dict()}
