@@ -92,37 +92,112 @@ async def api_login(form_data: OAuth2PasswordRequestForm = Depends(), db: Sessio
     return {"access_token": utils.create_access_token(data={"sub": user.username})}
 
 @app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard(request: Request):
+async def dashboard(request: Request, db: Session = Depends(get_db)):
     """پنل مدیریت"""
-    return templates.TemplateResponse("dashboard.html", {"request": request})
+    stats = {
+        "users": db.query(models.User).count(),
+        "domains": db.query(models.Domain).count(),
+        "active_nodes": db.query(models.Node).filter(models.Node.is_active == True).count()
+    }
+    return templates.TemplateResponse("dashboard.html", {
+        "request": request,
+        "stats": stats
+    })
+
+# --- روت‌های مدیریت کاربران ---
+@app.get("/users", response_class=HTMLResponse)
+async def list_users(request: Request, db: Session = Depends(get_db)):
+    """لیست تمام کاربران"""
+    users = db.query(models.User).order_by(models.User.created_at.desc()).all()
+    return templates.TemplateResponse("users.html", {
+        "request": request,
+        "users": users
+    })
 
 @app.post("/users/create")
-async def create_user(request: Request):
+async def create_user(
+    request: Request,
+    username: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+    db: Session = Depends(get_db)
+):
     """ایجاد کاربر جدید"""
-    return JSONResponse({"status": "success"})
+    new_user = models.User(
+        username=username,
+        email=email,
+        hashed_password=utils.get_password_hash(password),
+        created_at=datetime.utcnow()
+    )
+    db.add(new_user)
+    db.commit()
+    return RedirectResponse(url="/users", status_code=303)
+
+# --- روت‌های مدیریت دامنه ---
+@app.get("/domains", response_class=HTMLResponse)
+async def list_domains(request: Request, db: Session = Depends(get_db)):
+    """لیست دامنه‌ها"""
+    domains = db.query(models.Domain).join(models.User).all()
+    return templates.TemplateResponse("domains.html", {
+        "request": request,
+        "domains": domains
+    })
+
+# --- روت‌های تنظیمات ---
+@app.get("/settings", response_class=HTMLResponse)
+async def show_settings(request: Request, db: Session = Depends(get_db)):
+    """تنظیمات سیستم"""
+    settings = db.query(models.Setting).first()
+    if not settings:
+        settings = models.Setting()
+        db.add(settings)
+        db.commit()
+    return templates.TemplateResponse("settings.html", {
+        "request": request,
+        "settings": settings
+    })
 
 @app.post("/settings/update")
-async def update_settings(request: Request):
+async def update_settings(
+    request: Request,
+    language: str = Form(...),
+    theme: str = Form(...),
+    db: Session = Depends(get_db)
+):
     """بروزرسانی تنظیمات"""
-    return JSONResponse({"status": "updated"})
+    settings = db.query(models.Setting).first()
+    settings.language = language
+    settings.theme = theme
+    settings.updated_at = datetime.utcnow()
+    db.commit()
+    return RedirectResponse(url="/settings", status_code=303)
 
+# --- روت‌های مدیریت نود ---
+@app.get("/nodes", response_class=HTMLResponse)
+async def list_nodes(request: Request, db: Session = Depends(get_db)):
+    """لیست نودها"""
+    nodes = db.query(models.Node).filter(models.Node.is_active == True).all()
+    return templates.TemplateResponse("nodes.html", {
+        "request": request,
+        "nodes": nodes
+    })
+
+# --- روت‌های اینباند ---
+@app.get("/inbounds", response_class=HTMLResponse)
+async def list_inbounds(request: Request, db: Session = Depends(get_db)):
+    """لیست اینباندها"""
+    inbounds = db.query(models.Inbound).all()
+    return templates.TemplateResponse("inbounds.html", {
+        "request": request,
+        "inbounds": inbounds
+    })
+
+# --- سلامت سیستم ---
 @app.get("/health")
-async def health_check():
-    """بررسی وضعیت سرور"""
-    return {"status": "ok"}
-
-# ---- اضافه کردن این Routeهای جدید ----
-@app.get("/users", response_class=HTMLResponse)
-async def users_page(request: Request):
-    """صفحه مدیریت کاربران"""
-    return templates.TemplateResponse("users.html", {"request": request})
-
-@app.get("/settings", response_class=HTMLResponse)
-async def settings_page(request: Request):
-    """صفحه تنظیمات"""
-    return templates.TemplateResponse("settings.html", {"request": request})
-
-@app.get("/domains", response_class=HTMLResponse)
-async def domains_page(request: Request):
-    """صفحه مدیریت دامنه‌ها"""
-    return templates.TemplateResponse("domains.html", {"request": request})
+async def health_check(db: Session = Depends(get_db)):
+    """بررسی وضعیت سرور و دیتابیس"""
+    try:
+        db.execute("SELECT 1")
+        return {"status": "ok", "database": "connected"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
