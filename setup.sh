@@ -14,8 +14,8 @@ DB_NAME="zhina_db"
 DB_USER="zhina_user"
 PANEL_PORT=8001
 ADMIN_USER="admin"
-ADMIN_EMAIL="admin@example.com"
-ADMIN_PASS=$(openssl rand -hex 8)
+ADMIN_EMAIL=""
+ADMIN_PASS=""
 XRAY_VERSION="1.8.11"
 UVICORN_WORKERS=4
 XRAY_HTTP_PORT=8080
@@ -40,6 +40,19 @@ error() {
 success() { echo -e "${GREEN}[✓] $1${NC}"; }
 info() { echo -e "${BLUE}[i] $1${NC}"; }
 warning() { echo -e "${YELLOW}[!] $1${NC}"; }
+
+# ------------------- دریافت اطلاعات ادمین -------------------
+get_admin_credentials() {
+    read -p "لطفا ایمیل ادمین را وارد کنید: " ADMIN_EMAIL
+    while [[ -z "$ADMIN_PASS" ]]; do
+        read -sp "لطفا رمز عبور ادمین را وارد کنید: " ADMIN_PASS
+        echo
+        if [[ ${#ADMIN_PASS} -lt 8 ]]; then
+            echo -e "${RED}رمز عبور باید حداقل 8 کاراکتر باشد!${NC}"
+            ADMIN_PASS=""
+        fi
+    done
+}
 
 # ------------------- بررسی سیستم -------------------
 check_system() {
@@ -236,8 +249,8 @@ EOF
         ) STORED
     );
 
-    INSERT INTO users (username, email, hashed_password, uuid, traffic_limit, usage_duration, simultaneous_connections, is_active, created_at, updated_at)
-    VALUES ('$ADMIN_USER', '$ADMIN_EMAIL', crypt('$ADMIN_PASS', gen_salt('bf')), uuid_generate_v4(), 0, 0, 1, TRUE, NOW(), NOW())
+    INSERT INTO users (username, email, hashed_password, uuid, traffic_limit, usage_duration, simultaneous_connections, is_active, is_admin, created_at, updated_at)
+    VALUES ('$ADMIN_USER', '$ADMIN_EMAIL', crypt('$ADMIN_PASS', gen_salt('bf')), uuid_generate_v4(), 0, 0, 1, TRUE, TRUE, NOW(), NOW())
     ON CONFLICT (username) DO NOTHING;
 
     INSERT INTO settings (language, theme, enable_notifications)
@@ -291,9 +304,9 @@ setup_python() {
         pydantic[email] \
         passlib==1.7.4 \
         python-jose==3.3.0 \
-        Jinja2==3.1.2 \
         python-multipart \
-        cryptography || error "خطا در نصب نیازمندی‌ها"
+        cryptography \
+        jinja2==3.1.2 || error "خطا در نصب نیازمندی‌ها"
     
     deactivate
     
@@ -626,6 +639,7 @@ EOF
 # ------------------- تابع اصلی -------------------
 main() {
     check_system
+    get_admin_credentials
     install_prerequisites
     setup_environment
     setup_database
