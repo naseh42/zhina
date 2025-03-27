@@ -6,6 +6,9 @@ import secrets
 import warnings
 import uuid
 from pathlib import Path
+from dotenv import load_dotenv
+load_dotenv("/var/lib/zhina/backend/.env")
+print("SECRET_KEY:", os.getenv("ZHINA_SECRET_KEY"))
 
 class Settings(BaseSettings):
     # 1. Database Configuration
