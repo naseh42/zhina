@@ -19,7 +19,8 @@ XRAY_VERSION="1.8.11"
 UVICORN_WORKERS=4
 XRAY_HTTP_PORT=8080
 DB_PASSWORD=$(openssl rand -hex 16)
-XRAY_PATH="/$(openssl rand -hex 6)"  # اینجا تعریف شد
+XRAY_PATH="/$(openssl rand -hex 8)"  # تغییر: تضمین 16 کاراکتر
+SECRETS_DIR="/etc/zhina/secrets"     # تغییر: اضافه شدن دایرکتوری secrets
 
 # ------------------- رنگ‌ها و توابع -------------------
 RED='\033[0;31m'
@@ -81,11 +82,12 @@ setup_environment() {
         "$INSTALL_DIR" \
         "$CONFIG_DIR" \
         "$LOG_DIR/panel" \
-        "$XRAY_DIR" || error "خطا در ایجاد دایرکتوری‌ها"
+        "$XRAY_DIR" \
+        "$SECRETS_DIR" || error "خطا در ایجاد دایرکتوری‌ها"  # تغییر: اضافه شدن SECRETS_DIR
     
     touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
-    chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR" "$LOG_DIR"
-    chmod -R 750 "$INSTALL_DIR" "$LOG_DIR"
+    chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR" "$LOG_DIR" "$SECRETS_DIR"  # تغییر
+    chmod -R 750 "$INSTALL_DIR" "$LOG_DIR" "$SECRETS_DIR"  # تغییر
     
     success "محیط سیستم تنظیم شد"
 }
@@ -523,7 +525,6 @@ show_installation_info() {
     echo -e "• Public Key: ${YELLOW}${REALITY_PUBLIC_KEY}${NC}"
     echo -e "• Short ID: ${YELLOW}${REALITY_SHORT_ID}${NC}"
     echo -e "• مسیر WS: ${YELLOW}${XRAY_PATH}${NC}"
-    echo -e "• پورت HTTP: ${YELLOW}${XRAY_HTTP_PORT}${NC}"
     
     echo -e "\n${YELLOW}دستورات مدیریت:${NC}"
     echo -e "• وضعیت سرویس‌ها: ${GREEN}systemctl status xray nginx zhina-panel${NC}"
