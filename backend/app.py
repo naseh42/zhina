@@ -14,10 +14,10 @@ import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
 # Importهای داخلی
-from backend . import schemas, models, utils
-from backend .database import get_db, engine, Base
-from backend .config import settings
-from backend .xray_config import xray_settings
+from backend import schemas, models, utils
+from backend.database import get_db, engine, Base
+from backend.config import settings
+from backend.xray_config import xray_settings
 
 # Initialize FastAPI
 app = FastAPI(
