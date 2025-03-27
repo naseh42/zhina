@@ -54,15 +54,30 @@ class Settings(BaseSettings):
         description="Short ID for Reality protocol"
     )
     
-    # 4. Security Settings
-    SECRET_KEY: str = Field(
-        default_factory=lambda: secrets.token_urlsafe(64),
-        min_length=64,
-        description="Secret key for cryptographic operations"
+   # 4. Security Settings
+    SECRET_KEY: str = os.getenv(
+        "ZHINA_SECRET_KEY", 
+        "default_fallback_key"
     )
     DEBUG: bool = Field(
         default=False,
         description="Debug mode (DO NOT enable in production)"
+    )
+    
+    # 5. JWT Authentication
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(
+        default=30,
+        ge=5,
+        le=1440,
+        description="Access token expiration time in minutes"
+    )
+    
+    # 5. JWT Authentication
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(
+        default=30,
+        ge=5,
+        le=1440,
+        description="Access token expiration time in minutes"
     )
     
     # 5. JWT Authentication
