@@ -58,7 +58,6 @@ async def startup():
 async def login_page(request: Request):
     return templates.TemplateResponse("login.html", {"request": request})
 
-# تغییر اصلی 1 - تابع login_form_submission
 @app.post("/login")
 async def login_form_submission(
     request: Request,
@@ -78,12 +77,14 @@ async def login_form_submission(
         key="access_token",
         value=f"Bearer {access_token}",
         httponly=True,
+        secure=False,
+        samesite="none",
         max_age=3600,
-        path="/"
+        path="/",
+        domain=None
     )
     return response
 
-# تغییر اصلی 2 - تابع get_token
 @app.post("/token")
 async def get_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -93,15 +94,13 @@ async def get_token(
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials",
-            headers={"WWW-Authenticate": "Bearer"}
+            detail="Invalid credentials"
         )
     
     access_token = utils.create_access_token(data={"sub": user.username})
     return {
         "access_token": access_token,
-        "token_type": "bearer",
-        "expires_in": 3600
+        "token_type": "bearer"
     }
 
 @app.get("/", response_class=HTMLResponse)
