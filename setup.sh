@@ -19,8 +19,6 @@ XRAY_VERSION="1.8.11"
 UVICORN_WORKERS=4
 XRAY_HTTP_PORT=8080
 DB_PASSWORD=$(openssl rand -hex 16)
-MIN_PYTHON_VERSION="3.8"
-REALITY_DEST="www.lovelive-anime.jp:443"  # Changed from datadoghq.com
 
 # ------------------- رنگ‌ها و توابع -------------------
 RED='\033[0;31m'
@@ -51,12 +49,6 @@ check_system() {
     [[ "$ID" != "ubuntu" && "$ID" != "debian" ]] && 
         warning "این اسکریپت فقط بر روی Ubuntu/Debian تست شده است"
     
-    # بررسی نسخه پایتون
-    PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-    if (( $(echo "$PYTHON_VERSION < $MIN_PYTHON_VERSION" | bc -l) )); then
-        error "نیاز به پایتون نسخه $MIN_PYTHON_VERSION یا بالاتر دارید (نسخه فعلی: $PYTHON_VERSION)"
-    fi
-    
     success "بررسی سیستم کامل شد"
 }
 
@@ -70,30 +62,9 @@ install_prerequisites() {
         git python3 python3-venv python3-pip \
         postgresql postgresql-contrib nginx \
         curl wget openssl unzip uuid-runtime \
-        certbot python3-certbot-nginx \
-        ufw bc || error "خطا در نصب پکیج‌ها"
+        certbot python3-certbot-nginx || error "خطا در نصب پکیج‌ها"
     
     success "پیش‌نیازها با موفقیت نصب شدند"
-}
-
-# ------------------- تنظیم فایروال -------------------
-setup_firewall() {
-    info "تنظیم فایروال (UFW)..."
-    
-    if ufw status | grep -q "Status: active"; then
-        warning "فایروال از قبل فعال است، فقط پورت‌های لازم اضافه می‌شوند"
-    else
-        ufw default deny incoming
-        ufw default allow outgoing
-    fi
-    
-    ufw allow ssh
-    ufw allow http
-    ufw allow https
-    ufw allow 8443/tcp  # پورت Reality
-    ufw --force enable || warning "فعال سازی UFW با مشکل مواجه شد"
-    
-    success "فایروال تنظیم شد"
 }
 
 # ------------------- تنظیم کاربر و دایرکتوری‌ها -------------------
@@ -139,7 +110,115 @@ EOF
     
     systemctl restart postgresql || error "خطا در راه‌اندازی مجدد PostgreSQL"
     
-    success "پایگاه داده تنظیم شد"
+    # ایجاد جداول و ساختار دیتابیس
+    sudo -u postgres psql -d "$DB_NAME" <<EOF
+    -- جدول کاربران
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(50) UNIQUE NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        is_admin BOOLEAN DEFAULT FALSE,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
+
+    -- جدول تنظیمات سیستم
+    CREATE TABLE IF NOT EXISTS settings (
+        id SERIAL PRIMARY KEY,
+        key VARCHAR(100) UNIQUE NOT NULL,
+        value TEXT,
+        description TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
+
+    -- جدول سرویس‌های Xray
+    CREATE TABLE IF NOT EXISTS xray_configs (
+        id SERIAL PRIMARY KEY,
+        config_name VARCHAR(100) NOT NULL,
+        protocol VARCHAR(20) NOT NULL,
+        port INTEGER NOT NULL,
+        settings JSONB NOT NULL,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
+
+    -- جدول کاربران Xray
+    CREATE TABLE IF NOT EXISTS xray_users (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        username VARCHAR(100),
+        email VARCHAR(100),
+        password VARCHAR(100),
+        limit_ip INTEGER,
+        limit_device INTEGER,
+        expire_date TIMESTAMP,
+        data_limit BIGINT,
+        enabled BOOLEAN DEFAULT TRUE,
+        config_id INTEGER REFERENCES xray_configs(id),
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
+
+    -- جدول ترافیک کاربران
+    CREATE TABLE IF NOT EXISTS user_traffic (
+        id SERIAL PRIMARY KEY,
+        user_id UUID REFERENCES xray_users(id),
+        download BIGINT DEFAULT 0,
+        upload BIGINT DEFAULT 0,
+        total BIGINT GENERATED ALWAYS AS (download + upload) STORED,
+        date DATE NOT NULL DEFAULT CURRENT_DATE,
+        UNIQUE(user_id, date)
+    );
+
+    -- جدول لاگ اتصالات
+    CREATE TABLE IF NOT EXISTS connection_logs (
+        id SERIAL PRIMARY KEY,
+        user_id UUID REFERENCES xray_users(id),
+        ip VARCHAR(45) NOT NULL,
+        user_agent TEXT,
+        connected_at TIMESTAMP DEFAULT NOW(),
+        disconnected_at TIMESTAMP,
+        duration INTERVAL GENERATED ALWAYS AS (
+            CASE WHEN disconnected_at IS NULL THEN NULL
+            ELSE disconnected_at - connected_at END
+        ) STORED
+    );
+
+    -- درج کاربر ادمین
+    INSERT INTO users (username, password_hash, is_admin) 
+    VALUES ('$ADMIN_USER', crypt('$ADMIN_PASS', gen_salt('bf')), TRUE)
+    ON CONFLICT (username) DO NOTHING;
+
+    -- درج تنظیمات اولیه
+    INSERT INTO settings (key, value, description) VALUES
+    ('xray_http_port', '$XRAY_HTTP_PORT', 'پورت HTTP برای Xray'),
+    ('xray_path', '$XRAY_PATH', 'مسیر WebSocket'),
+    ('reality_public_key', '$REALITY_PUBLIC_KEY', 'کلید عمومی Reality'),
+    ('reality_private_key', '$REALITY_PRIVATE_KEY', 'کلید خصوصی Reality'),
+    ('panel_port', '$PANEL_PORT', 'پورت پنل مدیریت')
+    ON CONFLICT (key) DO NOTHING;
+
+    -- درج پیکربندی‌های Xray
+    INSERT INTO xray_configs (config_name, protocol, port, settings) VALUES
+    ('VLESS+Reality', 'vless', 8443, 
+        '{
+            "flow": "xtls-rprx-vision",
+            "security": "reality",
+            "dest": "www.datadoghq.com:443",
+            "serverNames": ["www.datadoghq.com"],
+            "fingerprint": "chrome"
+        }'::jsonb),
+    ('VMESS+WS', 'vmess', $XRAY_HTTP_PORT, 
+        '{
+            "network": "ws",
+            "path": "$XRAY_PATH"
+        }'::jsonb)
+    ON CONFLICT (config_name) DO NOTHING;
+EOF
+    
+    success "پایگاه داده و جداول با موفقیت ایجاد شدند"
 }
 
 # ------------------- دریافت کدها -------------------
@@ -183,7 +262,6 @@ setup_python() {
     
     deactivate
     
-    # تنظیم دسترسی به uvicorn
     chown "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/venv/bin/uvicorn"
     chmod 750 "$INSTALL_DIR/venv/bin/uvicorn"
     
@@ -236,9 +314,9 @@ install_xray() {
                 "security": "reality",
                 "realitySettings": {
                     "show": false,
-                    "dest": "$REALITY_DEST",
+                    "dest": "www.datadoghq.com:443",
                     "xver": 0,
-                    "serverNames": ["$(echo $REALITY_DEST | cut -d: -f1)"],
+                    "serverNames": ["www.datadoghq.com"],
                     "privateKey": "$REALITY_PRIVATE_KEY",
                     "shortIds": ["$REALITY_SHORT_ID"],
                     "fingerprint": "chrome"
@@ -276,10 +354,6 @@ install_xray() {
 }
 EOF
 
-    # تنظیم دسترسی‌های مناسب برای Xray
-    chown -R "$SERVICE_USER":"$SERVICE_USER" "$XRAY_DIR"
-    chmod 750 "$XRAY_EXECUTABLE"
-
     cat > /etc/systemd/system/xray.service <<EOF
 [Unit]
 Description=Xray Service
@@ -287,8 +361,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=$SERVICE_USER
-Group=$SERVICE_USER
+User=root
 ExecStart=$XRAY_EXECUTABLE run -config $XRAY_CONFIG
 Restart=on-failure
 RestartSec=3
@@ -385,6 +458,9 @@ ZHINA_DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
 # تنظیمات Xray
 ZHINA_REALITY_PUBLIC_KEY=$REALITY_PUBLIC_KEY
 ZHINA_REALITY_PRIVATE_KEY=$REALITY_PRIVATE_KEY
+ZHINA_XRAY_UUID=$XRAY_UUID
+ZHINA_XRAY_PATH=$XRAY_PATH
+ZHINA_XRAY_HTTP_PORT=$XRAY_HTTP_PORT
 
 # تنظیمات امنیتی
 ZHINA_ADMIN_USERNAME=$ADMIN_USER
@@ -396,6 +472,10 @@ ZHINA_LOG_DIR=$LOG_DIR/panel
 ZHINA_ACCESS_LOG=$LOG_DIR/panel/access.log
 ZHINA_ERROR_LOG=$LOG_DIR/panel/error.log
 ZHINA_LOG_LEVEL=info
+
+# تنظیمات پنل
+ZHINA_PANEL_PORT=$PANEL_PORT
+ZHINA_PANEL_DOMAIN=$PANEL_DOMAIN
 EOF
 
     chown "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/backend/.env"
@@ -440,7 +520,6 @@ EOF
     systemctl daemon-reload
     systemctl enable --now zhina-panel || error "خطا در راه‌اندازی سرویس پنل"
     
-    # بررسی وضعیت سرویس
     sleep 3
     if ! systemctl is-active --quiet zhina-panel; then
         journalctl -u zhina-panel -n 30 --no-pager
@@ -448,47 +527,6 @@ EOF
     fi
     
     success "سرویس پنل تنظیم شد"
-}
-
-# ------------------- اسکریپت حذف نصب -------------------
-create_uninstall_script() {
-    info "ایجاد اسکریپت حذف نصب..."
-    
-    cat > "$INSTALL_DIR/uninstall-zhina.sh" <<EOF
-#!/bin/bash
-set -euo pipefail
-
-# توقف و غیرفعال کردن سرویس‌ها
-systemctl stop zhina-panel xray nginx postgresql
-systemctl disable zhina-panel xray
-
-# حذف سرویس‌های سیستم
-rm -f /etc/systemd/system/zhina-panel.service
-rm -f /etc/systemd/system/xray.service
-
-# حذف تنظیمات Nginx
-rm -f /etc/nginx/conf.d/zhina.conf
-systemctl restart nginx
-
-# حذف کاربر و گروه
-if id "$SERVICE_USER" &>/dev/null; then
-    userdel -r "$SERVICE_USER" 2>/dev/null || true
-fi
-
-# حذف دایرکتوری‌های نصب
-rm -rf "$INSTALL_DIR" "$CONFIG_DIR" "$LOG_DIR" "$XRAY_DIR"
-
-# حذف دیتابیس
-sudo -u postgres psql <<EOSQL
-DROP DATABASE IF EXISTS $DB_NAME;
-DROP USER IF EXISTS $DB_USER;
-EOSQL
-
-echo -e "\n\033[0;32mحذف نصب با موفقیت انجام شد\033[0m"
-EOF
-
-    chmod +x "$INSTALL_DIR/uninstall-zhina.sh"
-    success "اسکریپت حذف نصب ایجاد شد: ${INSTALL_DIR}/uninstall-zhina.sh"
 }
 
 # ------------------- نمایش اطلاعات نصب -------------------
@@ -500,21 +538,15 @@ show_installation_info() {
     echo -e "• رمز عبور: ${YELLOW}${ADMIN_PASS}${NC}"
     
     echo -e "\n${YELLOW}تنظیمات Xray:${NC}"
-    echo -e "• VLESS+Reality:"
-    echo -e "  - پورت: ${YELLOW}8443${NC}"
-    echo -e "  - UUID: ${YELLOW}${XRAY_UUID}${NC}"
-    echo -e "  - Public Key: ${YELLOW}${REALITY_PUBLIC_KEY}${NC}"
-    echo -e "  - Short ID: ${YELLOW}${REALITY_SHORT_ID}${NC}"
-    echo -e "  - مقصد: ${YELLOW}${REALITY_DEST}${NC}"
-    echo -e "• VMESS+WS:"
-    echo -e "  - پورت: ${YELLOW}${XRAY_HTTP_PORT}${NC}"
-    echo -e "  - مسیر: ${YELLOW}${XRAY_PATH}${NC}"
+    echo -e "• UUID: ${YELLOW}${XRAY_UUID}${NC}"
+    echo -e "• Public Key: ${YELLOW}${REALITY_PUBLIC_KEY}${NC}"
+    echo -e "• Short ID: ${YELLOW}${REALITY_SHORT_ID}${NC}"
+    echo -e "• مسیر WS: ${YELLOW}${XRAY_PATH}${NC}"
     
     echo -e "\n${YELLOW}دستورات مدیریت:${NC}"
     echo -e "• وضعیت سرویس‌ها: ${GREEN}systemctl status xray nginx zhina-panel${NC}"
     echo -e "• مشاهده لاگ پنل: ${GREEN}tail -f $LOG_DIR/panel/{access,error}.log${NC}"
     echo -e "• مشاهده لاگ Xray: ${GREEN}journalctl -u xray -f${NC}"
-    echo -e "• حذف نصب: ${GREEN}${INSTALL_DIR}/uninstall-zhina.sh${NC}"
     
     cat > "$INSTALL_DIR/installation-info.txt" <<EOF
 === Zhina Panel Installation Details ===
@@ -529,7 +561,6 @@ Xray Settings:
   • UUID: ${XRAY_UUID}
   • Public Key: ${REALITY_PUBLIC_KEY}
   • Short ID: ${REALITY_SHORT_ID}
-  • Destination: ${REALITY_DEST}
 - VMESS+WS:
   • Port: ${XRAY_HTTP_PORT}
   • Path: ${XRAY_PATH}
@@ -543,8 +574,6 @@ Log Files:
 - Panel Access: ${LOG_DIR}/panel/access.log
 - Panel Errors: ${LOG_DIR}/panel/error.log
 - Xray Logs: /var/log/zhina/xray-{access,error}.log
-
-Uninstall Script: ${INSTALL_DIR}/uninstall-zhina.sh
 EOF
 
     chmod 600 "$INSTALL_DIR/installation-info.txt"
@@ -554,7 +583,6 @@ EOF
 main() {
     check_system
     install_prerequisites
-    setup_firewall
     setup_environment
     setup_database
     clone_repository
@@ -564,13 +592,10 @@ main() {
     setup_ssl
     setup_env_file
     setup_panel_service
-    create_uninstall_script
     show_installation_info
     
     echo -e "\n${GREEN}برای مشاهده جزئیات کامل، فایل لاگ را بررسی کنید:${NC}"
     echo -e "${YELLOW}tail -f /var/log/zhina-install.log${NC}"
-    echo -e "\n${GREEN}برای حذف نصب می‌توانید از اسکریپت زیر استفاده کنید:${NC}"
-    echo -e "${YELLOW}${INSTALL_DIR}/uninstall-zhina.sh${NC}"
 }
 
 main
