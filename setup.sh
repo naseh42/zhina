@@ -87,6 +87,9 @@ setup_environment() {
     chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR" "$LOG_DIR"
     chmod -R 750 "$INSTALL_DIR" "$LOG_DIR"
     
+    # حل مشکل مالکیت Git
+    git config --global --add safe.directory "$INSTALL_DIR"
+    
     success "محیط سیستم تنظیم شد"
 }
 
@@ -163,14 +166,45 @@ setup_python() {
     success "محیط پایتون تنظیم شد"
 }
 
-# ------------------- اجرای مایگریشن‌های دیتابیس -------------------
-run_migrations() {
-    info "اجرای مایگریشن‌های دیتابیس..."
+# ------------------- ساخت فایل‌های ضروری -------------------
+create_essential_files() {
+    info "ساخت فایل‌های ضروری..."
     
-    local alembic_cfg="$INSTALL_DIR/backend/alembic.ini"
-    if [[ ! -f "$alembic_cfg" ]]; then
-        warning "فایل alembic.ini یافت نشد. ایجاد می‌کنیم..."
-        cat > "$alembic_cfg" <<EOF
+    # ساخت دایرکتوری alembic
+    mkdir -p "$INSTALL_DIR/backend/alembic/versions"
+    
+    # ساخت فایل env.py
+    cat > "$INSTALL_DIR/backend/alembic/env.py" <<EOF
+from logging.config import fileConfig
+from sqlalchemy import create_engine
+from alembic import context
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+config = context.config
+fileConfig(config.config_file_name)
+target_metadata = None
+
+def run_migrations_online():
+    from dotenv import load_dotenv
+    load_dotenv()
+    db_url = os.getenv("DATABASE_URL")
+    
+    engine = create_engine(db_url)
+    with engine.connect() as connection:
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata
+        )
+        with context.begin_transaction():
+            context.run_migrations()
+
+run_migrations_online()
+EOF
+    
+    # ساخت فایل alembic.ini
+    cat > "$INSTALL_DIR/backend/alembic.ini" <<EOF
 [alembic]
 script_location = $INSTALL_DIR/backend/alembic
 sqlalchemy.url = postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
@@ -209,13 +243,38 @@ formatter = generic
 format = %(levelname)-5.5s [%(name)s] %(message)s
 datefmt = %H:%M:%S
 EOF
-    fi
+    
+    # ساخت فایل .env
+    cat > "$INSTALL_DIR/backend/.env" <<EOF
+# تنظیمات دیتابیس
+DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
 
-    # ایجاد دایرکتوری migrations اگر وجود ندارد
-    mkdir -p "$INSTALL_DIR/backend/alembic/versions"
-    chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/backend/alembic"
+# تنظیمات امنیتی
+ADMIN_USERNAME=$ADMIN_USER
+ADMIN_PASSWORD=$ADMIN_PASS
+SECRET_KEY=$(openssl rand -hex 32)
 
-    # اجرای مایگریشن‌ها
+# تنظیمات لاگ
+LOG_DIR=$LOG_DIR/panel
+ACCESS_LOG=$LOG_DIR/panel/access.log
+ERROR_LOG=$LOG_DIR/panel/error.log
+LOG_LEVEL=info
+
+# تنظیمات Xray
+XRAY_REALITY_PUBLIC_KEY=$REALITY_PUBLIC_KEY
+XRAY_REALITY_PRIVATE_KEY=$REALITY_PRIVATE_KEY
+EOF
+    
+    chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/backend"
+    chmod -R 750 "$INSTALL_DIR/backend"
+    
+    success "فایل‌های ضروری ساخته شدند"
+}
+
+# ------------------- اجرای مایگریشن‌ها -------------------
+run_migrations() {
+    info "اجرای مایگریشن‌ها..."
+    
     sudo -u "$SERVICE_USER" bash -c "
         source '$INSTALL_DIR/venv/bin/activate'
         cd '$INSTALL_DIR/backend'
@@ -223,7 +282,7 @@ EOF
         alembic upgrade head
     " || error "خطا در اجرای مایگریشن‌ها"
     
-    success "مایگریشن‌های دیتابیس اجرا شدند"
+    success "مایگریشن‌ها با موفقیت اجرا شدند"
 }
 
 # ------------------- نصب Xray -------------------
@@ -403,38 +462,6 @@ setup_ssl() {
     success "SSL تنظیم شد (نوع: $ssl_type)"
 }
 
-# ------------------- تنظیم فایل .env -------------------
-setup_env_file() {
-    info "تنظیم فایل محیط (.env)..."
-    
-    mkdir -p "$INSTALL_DIR/backend"
-    
-    cat > "$INSTALL_DIR/backend/.env" <<EOF
-# تنظیمات دیتابیس
-DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
-
-# تنظیمات Xray
-XRAY_REALITY_PUBLIC_KEY=$REALITY_PUBLIC_KEY
-XRAY_REALITY_PRIVATE_KEY=$REALITY_PRIVATE_KEY
-
-# تنظیمات امنیتی
-ADMIN_USERNAME=$ADMIN_USER
-ADMIN_PASSWORD=$ADMIN_PASS
-SECRET_KEY=$(openssl rand -hex 32)
-
-# تنظیمات لاگ
-LOG_DIR=$LOG_DIR/panel
-ACCESS_LOG=$LOG_DIR/panel/access.log
-ERROR_LOG=$LOG_DIR/panel/error.log
-LOG_LEVEL=info
-EOF
-
-    chown "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/backend/.env"
-    chmod 600 "$INSTALL_DIR/backend/.env"
-    
-    success "فایل .env با موفقیت تنظیم شد"
-}
-
 # ------------------- تنظیم سرویس پنل -------------------
 setup_panel_service() {
     info "تنظیم سرویس پنل..."
@@ -538,11 +565,11 @@ main() {
     setup_database
     clone_repository
     setup_python
+    create_essential_files
     run_migrations
     install_xray
     setup_nginx
     setup_ssl
-    setup_env_file
     setup_panel_service
     show_installation_info
     
