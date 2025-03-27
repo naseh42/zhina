@@ -19,6 +19,7 @@ XRAY_VERSION="1.8.11"
 UVICORN_WORKERS=4
 XRAY_HTTP_PORT=8080
 DB_PASSWORD=$(openssl rand -hex 16)
+ALEMBIC_VERSION="1.13.1"
 
 # ------------------- رنگ‌ها و توابع -------------------
 RED='\033[0;31m'
@@ -98,10 +99,11 @@ setup_database() {
     DROP USER IF EXISTS $DB_USER;
     CREATE USER $DB_USER WITH PASSWORD '$DB_PASSWORD';
     CREATE DATABASE $DB_NAME OWNER $DB_USER;
-    GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;
     \c $DB_NAME
     CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
     CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+    GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;
+    GRANT ALL PRIVILEGES ON SCHEMA public TO $DB_USER;
 EOF
     
     local pg_conf="/etc/postgresql/$(ls /etc/postgresql)/main/postgresql.conf"
@@ -150,15 +152,78 @@ setup_python() {
         pydantic-settings==2.0.3 \
         pydantic[email] \
         passlib==1.7.4 \
-        python-jose==3.3.0 || error "خطا در نصب نیازمندی‌ها"
+        python-jose==3.3.0 \
+        alembic==$ALEMBIC_VERSION || error "خطا در نصب نیازمندی‌ها"
     
     deactivate
     
-    # تنظیم دسترسی به uvicorn
     chown "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/venv/bin/uvicorn"
     chmod 750 "$INSTALL_DIR/venv/bin/uvicorn"
     
     success "محیط پایتون تنظیم شد"
+}
+
+# ------------------- اجرای مایگریشن‌های دیتابیس -------------------
+run_migrations() {
+    info "اجرای مایگریشن‌های دیتابیس..."
+    
+    local alembic_cfg="$INSTALL_DIR/backend/alembic.ini"
+    if [[ ! -f "$alembic_cfg" ]]; then
+        warning "فایل alembic.ini یافت نشد. ایجاد می‌کنیم..."
+        cat > "$alembic_cfg" <<EOF
+[alembic]
+script_location = $INSTALL_DIR/backend/alembic
+sqlalchemy.url = postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
+
+[loggers]
+keys = root,sqlalchemy,alembic
+
+[handlers]
+keys = console
+
+[formatters]
+keys = generic
+
+[logger_root]
+level = WARN
+handlers = console
+qualname =
+
+[logger_sqlalchemy]
+level = WARN
+handlers =
+qualname = sqlalchemy.engine
+
+[logger_alembic]
+level = INFO
+handlers =
+qualname = alembic
+
+[handler_console]
+class = StreamHandler
+args = (sys.stderr,)
+level = NOTSET
+formatter = generic
+
+[formatter_generic]
+format = %(levelname)-5.5s [%(name)s] %(message)s
+datefmt = %H:%M:%S
+EOF
+    fi
+
+    # ایجاد دایرکتوری migrations اگر وجود ندارد
+    mkdir -p "$INSTALL_DIR/backend/alembic/versions"
+    chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/backend/alembic"
+
+    # اجرای مایگریشن‌ها
+    sudo -u "$SERVICE_USER" bash -c "
+        source '$INSTALL_DIR/venv/bin/activate'
+        cd '$INSTALL_DIR/backend'
+        alembic revision --autogenerate -m 'initial'
+        alembic upgrade head
+    " || error "خطا در اجرای مایگریشن‌ها"
+    
+    success "مایگریشن‌های دیتابیس اجرا شدند"
 }
 
 # ------------------- نصب Xray -------------------
@@ -346,22 +411,22 @@ setup_env_file() {
     
     cat > "$INSTALL_DIR/backend/.env" <<EOF
 # تنظیمات دیتابیس
-ZHINA_DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
+DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
 
 # تنظیمات Xray
-ZHINA_REALITY_PUBLIC_KEY=$REALITY_PUBLIC_KEY
-ZHINA_REALITY_PRIVATE_KEY=$REALITY_PRIVATE_KEY
+XRAY_REALITY_PUBLIC_KEY=$REALITY_PUBLIC_KEY
+XRAY_REALITY_PRIVATE_KEY=$REALITY_PRIVATE_KEY
 
 # تنظیمات امنیتی
-ZHINA_ADMIN_USERNAME=$ADMIN_USER
-ZHINA_ADMIN_PASSWORD=$ADMIN_PASS
-ZHINA_SECRET_KEY=$(openssl rand -hex 32)
+ADMIN_USERNAME=$ADMIN_USER
+ADMIN_PASSWORD=$ADMIN_PASS
+SECRET_KEY=$(openssl rand -hex 32)
 
 # تنظیمات لاگ
-ZHINA_LOG_DIR=$LOG_DIR/panel
-ZHINA_ACCESS_LOG=$LOG_DIR/panel/access.log
-ZHINA_ERROR_LOG=$LOG_DIR/panel/error.log
-ZHINA_LOG_LEVEL=info
+LOG_DIR=$LOG_DIR/panel
+ACCESS_LOG=$LOG_DIR/panel/access.log
+ERROR_LOG=$LOG_DIR/panel/error.log
+LOG_LEVEL=info
 EOF
 
     chown "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/backend/.env"
@@ -406,7 +471,6 @@ EOF
     systemctl daemon-reload
     systemctl enable --now zhina-panel || error "خطا در راه‌اندازی سرویس پنل"
     
-    # بررسی وضعیت سرویس
     sleep 3
     if ! systemctl is-active --quiet zhina-panel; then
         journalctl -u zhina-panel -n 30 --no-pager
@@ -474,6 +538,7 @@ main() {
     setup_database
     clone_repository
     setup_python
+    run_migrations
     install_xray
     setup_nginx
     setup_ssl
