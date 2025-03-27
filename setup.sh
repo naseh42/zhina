@@ -14,13 +14,16 @@ DB_NAME="zhina_db"
 DB_USER="zhina_user"
 PANEL_PORT=8001
 ADMIN_USER="admin"
+ADMIN_EMAIL="admin@example.com"
 ADMIN_PASS=$(openssl rand -hex 8)
 XRAY_VERSION="1.8.11"
 UVICORN_WORKERS=4
 XRAY_HTTP_PORT=8080
 DB_PASSWORD=$(openssl rand -hex 16)
-XRAY_PATH="/$(openssl rand -hex 8)"  # تغییر: تضمین 16 کاراکتر
-SECRETS_DIR="/etc/zhina/secrets"     # تغییر: اضافه شدن دایرکتوری secrets
+XRAY_PATH="/$(openssl rand -hex 8)"
+SECRETS_DIR="/etc/zhina/secrets"
+DEFAULT_THEME="dark"
+DEFAULT_LANGUAGE="fa"
 
 # ------------------- رنگ‌ها و توابع -------------------
 RED='\033[0;31m'
@@ -83,11 +86,11 @@ setup_environment() {
         "$CONFIG_DIR" \
         "$LOG_DIR/panel" \
         "$XRAY_DIR" \
-        "$SECRETS_DIR" || error "خطا در ایجاد دایرکتوری‌ها"  # تغییر: اضافه شدن SECRETS_DIR
+        "$SECRETS_DIR" || error "خطا در ایجاد دایرکتوری‌ها"
     
     touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
-    chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR" "$LOG_DIR" "$SECRETS_DIR"  # تغییر
-    chmod -R 750 "$INSTALL_DIR" "$LOG_DIR" "$SECRETS_DIR"  # تغییر
+    chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR" "$LOG_DIR" "$SECRETS_DIR"
+    chmod -R 750 "$INSTALL_DIR" "$LOG_DIR" "$SECRETS_DIR"
     
     success "محیط سیستم تنظیم شد"
 }
@@ -101,11 +104,17 @@ setup_database() {
     DROP USER IF EXISTS $DB_USER;
     CREATE USER $DB_USER WITH PASSWORD '$DB_PASSWORD';
     CREATE DATABASE $DB_NAME OWNER $DB_USER;
-    GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;
     \c $DB_NAME
     CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
     CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 EOF
+
+    sudo -u postgres psql -c "
+    ALTER USER $DB_USER WITH SUPERUSER;
+    GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;
+    GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO $DB_USER;
+    GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO $DB_USER;
+    " || error "خطا در اعطای دسترسی‌های بیشتر به کاربر دیتابیس"
     
     local pg_conf="/etc/postgresql/$(ls /etc/postgresql)/main/postgresql.conf"
     sed -i '/^#listen_addresses/s/^#//; s/localhost/*/' "$pg_conf"
@@ -113,30 +122,71 @@ EOF
     
     systemctl restart postgresql || error "خطا در راه‌اندازی مجدد PostgreSQL"
     
-    # ایجاد جداول و ساختار دیتابیس
     sudo -u postgres psql -d "$DB_NAME" <<EOF
-    -- جدول کاربران
     CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
         username VARCHAR(50) UNIQUE NOT NULL,
-        password_hash VARCHAR(255) NOT NULL,
+        email VARCHAR(100) UNIQUE,
+        hashed_password VARCHAR(255) NOT NULL,
+        uuid UUID DEFAULT uuid_generate_v4(),
+        traffic_limit BIGINT DEFAULT 0,
+        usage_duration INTEGER DEFAULT 0,
+        simultaneous_connections INTEGER DEFAULT 1,
+        is_active BOOLEAN DEFAULT TRUE,
         is_admin BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS domains (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) UNIQUE NOT NULL,
+        description TEXT,
+        owner_id INTEGER REFERENCES users(id),
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS subscriptions (
+        id SERIAL PRIMARY KEY,
+        uuid UUID DEFAULT uuid_generate_v4(),
+        data_limit BIGINT,
+        expiry_date TIMESTAMP,
+        max_connections INTEGER,
+        user_id INTEGER REFERENCES users(id),
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS settings (
+        id SERIAL PRIMARY KEY,
+        language VARCHAR(10) DEFAULT '$DEFAULT_LANGUAGE',
+        theme VARCHAR(20) DEFAULT '$DEFAULT_THEME',
+        enable_notifications BOOLEAN DEFAULT TRUE,
+        preferences JSONB,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS nodes (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        ip_address VARCHAR(45) NOT NULL,
+        port INTEGER NOT NULL,
+        protocol VARCHAR(20) NOT NULL,
         is_active BOOLEAN DEFAULT TRUE,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
     );
 
-    -- جدول تنظیمات سیستم
-    CREATE TABLE IF NOT EXISTS settings (
+    CREATE TABLE IF NOT EXISTS inbounds (
         id SERIAL PRIMARY KEY,
-        key VARCHAR(100) UNIQUE NOT NULL,
-        value TEXT,
-        description TEXT,
+        name VARCHAR(100) NOT NULL,
+        settings JSONB NOT NULL,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
     );
 
-    -- جدول سرویس‌های Xray
     CREATE TABLE IF NOT EXISTS xray_configs (
         id SERIAL PRIMARY KEY,
         config_name VARCHAR(100) NOT NULL,
@@ -148,7 +198,6 @@ EOF
         updated_at TIMESTAMP DEFAULT NOW()
     );
 
-    -- جدول کاربران Xray
     CREATE TABLE IF NOT EXISTS xray_users (
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
         username VARCHAR(100),
@@ -164,7 +213,6 @@ EOF
         updated_at TIMESTAMP DEFAULT NOW()
     );
 
-    -- جدول ترافیک کاربران
     CREATE TABLE IF NOT EXISTS user_traffic (
         id SERIAL PRIMARY KEY,
         user_id UUID REFERENCES xray_users(id),
@@ -175,7 +223,6 @@ EOF
         UNIQUE(user_id, date)
     );
 
-    -- جدول لاگ اتصالات
     CREATE TABLE IF NOT EXISTS connection_logs (
         id SERIAL PRIMARY KEY,
         user_id UUID REFERENCES xray_users(id),
@@ -189,17 +236,18 @@ EOF
         ) STORED
     );
 
-    -- درج کاربر ادمین
-    INSERT INTO users (username, password_hash, is_admin) 
-    VALUES ('$ADMIN_USER', crypt('$ADMIN_PASS', gen_salt('bf')), TRUE)
+    INSERT INTO users (username, email, hashed_password, uuid, traffic_limit, usage_duration, simultaneous_connections, is_active, created_at, updated_at)
+    VALUES ('$ADMIN_USER', '$ADMIN_EMAIL', crypt('$ADMIN_PASS', gen_salt('bf')), uuid_generate_v4(), 0, 0, 1, TRUE, NOW(), NOW())
     ON CONFLICT (username) DO NOTHING;
 
-    -- درج تنظیمات اولیه
-    INSERT INTO settings (key, value, description) VALUES
-    ('xray_http_port', '$XRAY_HTTP_PORT', 'پورت HTTP برای Xray'),
-    ('xray_path', '$XRAY_PATH', 'مسیر WebSocket'),
-    ('panel_port', '$PANEL_PORT', 'پورت پنل مدیریت')
-    ON CONFLICT (key) DO NOTHING;
+    INSERT INTO settings (language, theme, enable_notifications)
+    VALUES ('$DEFAULT_LANGUAGE', '$DEFAULT_THEME', TRUE)
+    ON CONFLICT (id) DO NOTHING;
+
+    INSERT INTO xray_configs (config_name, protocol, port, settings)
+    VALUES ('default_vless', 'vless', 8443, '{"flow": "xtls-rprx-vision", "security": "reality"}'),
+           ('default_vmess', 'vmess', $XRAY_HTTP_PORT, '{"network": "ws", "path": "$XRAY_PATH"}')
+    ON CONFLICT (id) DO NOTHING;
 EOF
     
     success "پایگاه داده و جداول با موفقیت ایجاد شدند"
@@ -242,7 +290,9 @@ setup_python() {
         pydantic-settings==2.0.3 \
         pydantic[email] \
         passlib==1.7.4 \
-        python-jose==3.3.0 || error "خطا در نصب نیازمندی‌ها"
+        python-jose==3.3.0 \
+        python-multipart \
+        cryptography || error "خطا در نصب نیازمندی‌ها"
     
     deactivate
     
@@ -448,6 +498,7 @@ ZHINA_XRAY_HTTP_PORT=$XRAY_HTTP_PORT
 # تنظیمات امنیتی
 ZHINA_ADMIN_USERNAME=$ADMIN_USER
 ZHINA_ADMIN_PASSWORD=$ADMIN_PASS
+ZHINA_ADMIN_EMAIL=$ADMIN_EMAIL
 ZHINA_SECRET_KEY=$(openssl rand -hex 32)
 
 # تنظیمات لاگ
@@ -459,6 +510,8 @@ ZHINA_LOG_LEVEL=info
 # تنظیمات پنل
 ZHINA_PANEL_PORT=$PANEL_PORT
 ZHINA_PANEL_DOMAIN=$PANEL_DOMAIN
+ZHINA_DEFAULT_THEME=$DEFAULT_THEME
+ZHINA_DEFAULT_LANGUAGE=$DEFAULT_LANGUAGE
 EOF
 
     chown "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/backend/.env"
@@ -518,6 +571,7 @@ show_installation_info() {
     echo -e "\n${YELLOW}مشخصات دسترسی:${NC}"
     echo -e "• پنل مدیریت: ${GREEN}http://${PANEL_DOMAIN}:${PANEL_PORT}${NC}"
     echo -e "• کاربر ادمین: ${YELLOW}${ADMIN_USER}${NC}"
+    echo -e "• ایمیل ادمین: ${YELLOW}${ADMIN_EMAIL}${NC}"
     echo -e "• رمز عبور: ${YELLOW}${ADMIN_PASS}${NC}"
     
     echo -e "\n${YELLOW}تنظیمات Xray:${NC}"
@@ -525,6 +579,11 @@ show_installation_info() {
     echo -e "• Public Key: ${YELLOW}${REALITY_PUBLIC_KEY}${NC}"
     echo -e "• Short ID: ${YELLOW}${REALITY_SHORT_ID}${NC}"
     echo -e "• مسیر WS: ${YELLOW}${XRAY_PATH}${NC}"
+    
+    echo -e "\n${YELLOW}اطلاعات دیتابیس:${NC}"
+    echo -e "• نام دیتابیس: ${YELLOW}${DB_NAME}${NC}"
+    echo -e "• کاربر دیتابیس: ${YELLOW}${DB_USER}${NC}"
+    echo -e "• رمز عبور دیتابیس: ${YELLOW}${DB_PASSWORD}${NC}"
     
     echo -e "\n${YELLOW}دستورات مدیریت:${NC}"
     echo -e "• وضعیت سرویس‌ها: ${GREEN}systemctl status xray nginx zhina-panel${NC}"
@@ -536,7 +595,13 @@ show_installation_info() {
 
 Panel URL: http://${PANEL_DOMAIN}:${PANEL_PORT}
 Admin Username: ${ADMIN_USER}
+Admin Email: ${ADMIN_EMAIL}
 Admin Password: ${ADMIN_PASS}
+
+Database Info:
+- Database: ${DB_NAME}
+- Username: ${DB_USER}
+- Password: ${DB_PASSWORD}
 
 Xray Settings:
 - VLESS+Reality:
@@ -547,11 +612,6 @@ Xray Settings:
 - VMESS+WS:
   • Port: ${XRAY_HTTP_PORT}
   • Path: ${XRAY_PATH}
-
-Database Info:
-- Username: ${DB_USER}
-- Password: ${DB_PASSWORD}
-- Database: ${DB_NAME}
 
 Log Files:
 - Panel Access: ${LOG_DIR}/panel/access.log
