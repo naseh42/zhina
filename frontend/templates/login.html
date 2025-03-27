@@ -2,31 +2,49 @@
 <html lang="fa">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>ورود به پنل مدیریت</title>
     <link rel="stylesheet" href="/static/css/futuristic.css">
+    <style>
+        .error-message {
+            color: #ff4444;
+            background-color: #ffebee;
+            padding: 12px;
+            border-radius: 4px;
+            margin: 15px 0;
+            text-align: center;
+            border: 1px solid #ff4444;
+        }
+        @media (max-width: 768px) {
+            .login-container {
+                padding: 15px;
+            }
+            input, button {
+                font-size: 16px !important;
+            }
+        }
+    </style>
 </head>
 <body>
     <div class="login-container">
         <div class="login-card">
             <div class="logo">
-                <img src="/static/images/logo.png" alt="Kurd Panel">
-                <h1>Kurd Panel</h1>
+                <img src="/static/images/logo.png" alt="Logo">
+                <h1>پنل مدیریت</h1>
             </div>
             
-            <!-- تغییر اصلی: اضافه کردن بخش نمایش خطا -->
             {% if error %}
             <div class="error-message">
                 {{ error }}
             </div>
             {% endif %}
             
-            <form action="/login" method="post">
+            <form method="post" action="/login">
                 <label for="username">نام کاربری:</label>
-                <input type="text" id="username" name="username" required>
+                <input type="text" id="username" name="username" required autocomplete="username">
 
                 <label for="password">رمز عبور:</label>
-                <input type="password" id="password" name="password" required>
+                <input type="password" id="password" name="password" required autocomplete="current-password">
 
                 <button type="submit">ورود</button>
             </form>
