@@ -143,6 +143,25 @@ async def list_domains(request: Request, db: Session = Depends(get_db)):
         "domains": domains
     })
 
+@app.post("/domains/add")
+async def add_domain(
+    request: Request,
+    name: str = Form(...),
+    description: str = Form(None),
+    owner_id: int = Form(...),
+    db: Session = Depends(get_db)
+):
+    """اضافه کردن دامنه جدید"""
+    new_domain = models.Domain(
+        name=name,
+        description={"description": description} if description else None,
+        owner_id=owner_id,
+        created_at=datetime.utcnow()
+    )
+    db.add(new_domain)
+    db.commit()
+    return RedirectResponse(url="/domains", status_code=303)
+
 # --- روت‌های تنظیمات ---
 @app.get("/settings", response_class=HTMLResponse)
 async def show_settings(request: Request, db: Session = Depends(get_db)):
