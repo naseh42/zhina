@@ -291,6 +291,7 @@ setup_python() {
         pydantic[email] \
         passlib==1.7.4 \
         python-jose==3.3.0 \
+        Jinja2==3.1.2 \
         python-multipart \
         cryptography || error "خطا در نصب نیازمندی‌ها"
     
