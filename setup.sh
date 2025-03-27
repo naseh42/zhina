@@ -19,7 +19,8 @@ XRAY_VERSION="1.8.11"
 UVICORN_WORKERS=4
 XRAY_HTTP_PORT=8080
 DB_PASSWORD=$(openssl rand -hex 16)
-ALEMBIC_VERSION="1.13.1"
+MIN_PYTHON_VERSION="3.8"
+REALITY_DEST="www.lovelive-anime.jp:443"  # Changed from datadoghq.com
 
 # ------------------- رنگ‌ها و توابع -------------------
 RED='\033[0;31m'
@@ -50,6 +51,12 @@ check_system() {
     [[ "$ID" != "ubuntu" && "$ID" != "debian" ]] && 
         warning "این اسکریپت فقط بر روی Ubuntu/Debian تست شده است"
     
+    # بررسی نسخه پایتون
+    PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+    if (( $(echo "$PYTHON_VERSION < $MIN_PYTHON_VERSION" | bc -l) )); then
+        error "نیاز به پایتون نسخه $MIN_PYTHON_VERSION یا بالاتر دارید (نسخه فعلی: $PYTHON_VERSION)"
+    fi
+    
     success "بررسی سیستم کامل شد"
 }
 
@@ -63,9 +70,30 @@ install_prerequisites() {
         git python3 python3-venv python3-pip \
         postgresql postgresql-contrib nginx \
         curl wget openssl unzip uuid-runtime \
-        certbot python3-certbot-nginx || error "خطا در نصب پکیج‌ها"
+        certbot python3-certbot-nginx \
+        ufw bc || error "خطا در نصب پکیج‌ها"
     
     success "پیش‌نیازها با موفقیت نصب شدند"
+}
+
+# ------------------- تنظیم فایروال -------------------
+setup_firewall() {
+    info "تنظیم فایروال (UFW)..."
+    
+    if ufw status | grep -q "Status: active"; then
+        warning "فایروال از قبل فعال است، فقط پورت‌های لازم اضافه می‌شوند"
+    else
+        ufw default deny incoming
+        ufw default allow outgoing
+    fi
+    
+    ufw allow ssh
+    ufw allow http
+    ufw allow https
+    ufw allow 8443/tcp  # پورت Reality
+    ufw --force enable || warning "فعال سازی UFW با مشکل مواجه شد"
+    
+    success "فایروال تنظیم شد"
 }
 
 # ------------------- تنظیم کاربر و دایرکتوری‌ها -------------------
@@ -87,9 +115,6 @@ setup_environment() {
     chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR" "$LOG_DIR"
     chmod -R 750 "$INSTALL_DIR" "$LOG_DIR"
     
-    # حل مشکل مالکیت Git
-    git config --global --add safe.directory "$INSTALL_DIR"
-    
     success "محیط سیستم تنظیم شد"
 }
 
@@ -102,11 +127,10 @@ setup_database() {
     DROP USER IF EXISTS $DB_USER;
     CREATE USER $DB_USER WITH PASSWORD '$DB_PASSWORD';
     CREATE DATABASE $DB_NAME OWNER $DB_USER;
+    GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;
     \c $DB_NAME
     CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
     CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-    GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;
-    GRANT ALL PRIVILEGES ON SCHEMA public TO $DB_USER;
 EOF
     
     local pg_conf="/etc/postgresql/$(ls /etc/postgresql)/main/postgresql.conf"
@@ -155,134 +179,15 @@ setup_python() {
         pydantic-settings==2.0.3 \
         pydantic[email] \
         passlib==1.7.4 \
-        python-jose==3.3.0 \
-        alembic==$ALEMBIC_VERSION || error "خطا در نصب نیازمندی‌ها"
+        python-jose==3.3.0 || error "خطا در نصب نیازمندی‌ها"
     
     deactivate
     
+    # تنظیم دسترسی به uvicorn
     chown "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/venv/bin/uvicorn"
     chmod 750 "$INSTALL_DIR/venv/bin/uvicorn"
     
     success "محیط پایتون تنظیم شد"
-}
-
-# ------------------- ساخت فایل‌های ضروری -------------------
-create_essential_files() {
-    info "ساخت فایل‌های ضروری..."
-    
-    # ساخت دایرکتوری alembic
-    mkdir -p "$INSTALL_DIR/backend/alembic/versions"
-    
-    # ساخت فایل env.py
-    cat > "$INSTALL_DIR/backend/alembic/env.py" <<EOF
-from logging.config import fileConfig
-from sqlalchemy import create_engine
-from alembic import context
-import sys
-import os
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-config = context.config
-fileConfig(config.config_file_name)
-target_metadata = None
-
-def run_migrations_online():
-    from dotenv import load_dotenv
-    load_dotenv()
-    db_url = os.getenv("DATABASE_URL")
-    
-    engine = create_engine(db_url)
-    with engine.connect() as connection:
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata
-        )
-        with context.begin_transaction():
-            context.run_migrations()
-
-run_migrations_online()
-EOF
-    
-    # ساخت فایل alembic.ini
-    cat > "$INSTALL_DIR/backend/alembic.ini" <<EOF
-[alembic]
-script_location = $INSTALL_DIR/backend/alembic
-sqlalchemy.url = postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
-
-[loggers]
-keys = root,sqlalchemy,alembic
-
-[handlers]
-keys = console
-
-[formatters]
-keys = generic
-
-[logger_root]
-level = WARN
-handlers = console
-qualname =
-
-[logger_sqlalchemy]
-level = WARN
-handlers =
-qualname = sqlalchemy.engine
-
-[logger_alembic]
-level = INFO
-handlers =
-qualname = alembic
-
-[handler_console]
-class = StreamHandler
-args = (sys.stderr,)
-level = NOTSET
-formatter = generic
-
-[formatter_generic]
-format = %(levelname)-5.5s [%(name)s] %(message)s
-datefmt = %H:%M:%S
-EOF
-    
-    # ساخت فایل .env
-    cat > "$INSTALL_DIR/backend/.env" <<EOF
-# تنظیمات دیتابیس
-DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
-
-# تنظیمات امنیتی
-ADMIN_USERNAME=$ADMIN_USER
-ADMIN_PASSWORD=$ADMIN_PASS
-SECRET_KEY=$(openssl rand -hex 32)
-
-# تنظیمات لاگ
-LOG_DIR=$LOG_DIR/panel
-ACCESS_LOG=$LOG_DIR/panel/access.log
-ERROR_LOG=$LOG_DIR/panel/error.log
-LOG_LEVEL=info
-
-# تنظیمات Xray
-XRAY_REALITY_PUBLIC_KEY=$REALITY_PUBLIC_KEY
-XRAY_REALITY_PRIVATE_KEY=$REALITY_PRIVATE_KEY
-EOF
-    
-    chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/backend"
-    chmod -R 750 "$INSTALL_DIR/backend"
-    
-    success "فایل‌های ضروری ساخته شدند"
-}
-
-# ------------------- اجرای مایگریشن‌ها -------------------
-run_migrations() {
-    info "اجرای مایگریشن‌ها..."
-    
-    sudo -u "$SERVICE_USER" bash -c "
-        source '$INSTALL_DIR/venv/bin/activate'
-        cd '$INSTALL_DIR/backend'
-        alembic revision --autogenerate -m 'initial'
-        alembic upgrade head
-    " || error "خطا در اجرای مایگریشن‌ها"
-    
-    success "مایگریشن‌ها با موفقیت اجرا شدند"
 }
 
 # ------------------- نصب Xray -------------------
@@ -331,9 +236,9 @@ install_xray() {
                 "security": "reality",
                 "realitySettings": {
                     "show": false,
-                    "dest": "www.datadoghq.com:443",
+                    "dest": "$REALITY_DEST",
                     "xver": 0,
-                    "serverNames": ["www.datadoghq.com"],
+                    "serverNames": ["$(echo $REALITY_DEST | cut -d: -f1)"],
                     "privateKey": "$REALITY_PRIVATE_KEY",
                     "shortIds": ["$REALITY_SHORT_ID"],
                     "fingerprint": "chrome"
@@ -371,6 +276,10 @@ install_xray() {
 }
 EOF
 
+    # تنظیم دسترسی‌های مناسب برای Xray
+    chown -R "$SERVICE_USER":"$SERVICE_USER" "$XRAY_DIR"
+    chmod 750 "$XRAY_EXECUTABLE"
+
     cat > /etc/systemd/system/xray.service <<EOF
 [Unit]
 Description=Xray Service
@@ -378,7 +287,8 @@ After=network.target
 
 [Service]
 Type=simple
-User=root
+User=$SERVICE_USER
+Group=$SERVICE_USER
 ExecStart=$XRAY_EXECUTABLE run -config $XRAY_CONFIG
 Restart=on-failure
 RestartSec=3
@@ -462,6 +372,38 @@ setup_ssl() {
     success "SSL تنظیم شد (نوع: $ssl_type)"
 }
 
+# ------------------- تنظیم فایل .env -------------------
+setup_env_file() {
+    info "تنظیم فایل محیط (.env)..."
+    
+    mkdir -p "$INSTALL_DIR/backend"
+    
+    cat > "$INSTALL_DIR/backend/.env" <<EOF
+# تنظیمات دیتابیس
+ZHINA_DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
+
+# تنظیمات Xray
+ZHINA_REALITY_PUBLIC_KEY=$REALITY_PUBLIC_KEY
+ZHINA_REALITY_PRIVATE_KEY=$REALITY_PRIVATE_KEY
+
+# تنظیمات امنیتی
+ZHINA_ADMIN_USERNAME=$ADMIN_USER
+ZHINA_ADMIN_PASSWORD=$ADMIN_PASS
+ZHINA_SECRET_KEY=$(openssl rand -hex 32)
+
+# تنظیمات لاگ
+ZHINA_LOG_DIR=$LOG_DIR/panel
+ZHINA_ACCESS_LOG=$LOG_DIR/panel/access.log
+ZHINA_ERROR_LOG=$LOG_DIR/panel/error.log
+ZHINA_LOG_LEVEL=info
+EOF
+
+    chown "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/backend/.env"
+    chmod 600 "$INSTALL_DIR/backend/.env"
+    
+    success "فایل .env با موفقیت تنظیم شد"
+}
+
 # ------------------- تنظیم سرویس پنل -------------------
 setup_panel_service() {
     info "تنظیم سرویس پنل..."
@@ -498,6 +440,7 @@ EOF
     systemctl daemon-reload
     systemctl enable --now zhina-panel || error "خطا در راه‌اندازی سرویس پنل"
     
+    # بررسی وضعیت سرویس
     sleep 3
     if ! systemctl is-active --quiet zhina-panel; then
         journalctl -u zhina-panel -n 30 --no-pager
@@ -505,6 +448,47 @@ EOF
     fi
     
     success "سرویس پنل تنظیم شد"
+}
+
+# ------------------- اسکریپت حذف نصب -------------------
+create_uninstall_script() {
+    info "ایجاد اسکریپت حذف نصب..."
+    
+    cat > "$INSTALL_DIR/uninstall-zhina.sh" <<EOF
+#!/bin/bash
+set -euo pipefail
+
+# توقف و غیرفعال کردن سرویس‌ها
+systemctl stop zhina-panel xray nginx postgresql
+systemctl disable zhina-panel xray
+
+# حذف سرویس‌های سیستم
+rm -f /etc/systemd/system/zhina-panel.service
+rm -f /etc/systemd/system/xray.service
+
+# حذف تنظیمات Nginx
+rm -f /etc/nginx/conf.d/zhina.conf
+systemctl restart nginx
+
+# حذف کاربر و گروه
+if id "$SERVICE_USER" &>/dev/null; then
+    userdel -r "$SERVICE_USER" 2>/dev/null || true
+fi
+
+# حذف دایرکتوری‌های نصب
+rm -rf "$INSTALL_DIR" "$CONFIG_DIR" "$LOG_DIR" "$XRAY_DIR"
+
+# حذف دیتابیس
+sudo -u postgres psql <<EOSQL
+DROP DATABASE IF EXISTS $DB_NAME;
+DROP USER IF EXISTS $DB_USER;
+EOSQL
+
+echo -e "\n\033[0;32mحذف نصب با موفقیت انجام شد\033[0m"
+EOF
+
+    chmod +x "$INSTALL_DIR/uninstall-zhina.sh"
+    success "اسکریپت حذف نصب ایجاد شد: ${INSTALL_DIR}/uninstall-zhina.sh"
 }
 
 # ------------------- نمایش اطلاعات نصب -------------------
@@ -516,15 +500,21 @@ show_installation_info() {
     echo -e "• رمز عبور: ${YELLOW}${ADMIN_PASS}${NC}"
     
     echo -e "\n${YELLOW}تنظیمات Xray:${NC}"
-    echo -e "• UUID: ${YELLOW}${XRAY_UUID}${NC}"
-    echo -e "• Public Key: ${YELLOW}${REALITY_PUBLIC_KEY}${NC}"
-    echo -e "• Short ID: ${YELLOW}${REALITY_SHORT_ID}${NC}"
-    echo -e "• مسیر WS: ${YELLOW}${XRAY_PATH}${NC}"
+    echo -e "• VLESS+Reality:"
+    echo -e "  - پورت: ${YELLOW}8443${NC}"
+    echo -e "  - UUID: ${YELLOW}${XRAY_UUID}${NC}"
+    echo -e "  - Public Key: ${YELLOW}${REALITY_PUBLIC_KEY}${NC}"
+    echo -e "  - Short ID: ${YELLOW}${REALITY_SHORT_ID}${NC}"
+    echo -e "  - مقصد: ${YELLOW}${REALITY_DEST}${NC}"
+    echo -e "• VMESS+WS:"
+    echo -e "  - پورت: ${YELLOW}${XRAY_HTTP_PORT}${NC}"
+    echo -e "  - مسیر: ${YELLOW}${XRAY_PATH}${NC}"
     
     echo -e "\n${YELLOW}دستورات مدیریت:${NC}"
     echo -e "• وضعیت سرویس‌ها: ${GREEN}systemctl status xray nginx zhina-panel${NC}"
     echo -e "• مشاهده لاگ پنل: ${GREEN}tail -f $LOG_DIR/panel/{access,error}.log${NC}"
     echo -e "• مشاهده لاگ Xray: ${GREEN}journalctl -u xray -f${NC}"
+    echo -e "• حذف نصب: ${GREEN}${INSTALL_DIR}/uninstall-zhina.sh${NC}"
     
     cat > "$INSTALL_DIR/installation-info.txt" <<EOF
 === Zhina Panel Installation Details ===
@@ -539,6 +529,7 @@ Xray Settings:
   • UUID: ${XRAY_UUID}
   • Public Key: ${REALITY_PUBLIC_KEY}
   • Short ID: ${REALITY_SHORT_ID}
+  • Destination: ${REALITY_DEST}
 - VMESS+WS:
   • Port: ${XRAY_HTTP_PORT}
   • Path: ${XRAY_PATH}
@@ -552,6 +543,8 @@ Log Files:
 - Panel Access: ${LOG_DIR}/panel/access.log
 - Panel Errors: ${LOG_DIR}/panel/error.log
 - Xray Logs: /var/log/zhina/xray-{access,error}.log
+
+Uninstall Script: ${INSTALL_DIR}/uninstall-zhina.sh
 EOF
 
     chmod 600 "$INSTALL_DIR/installation-info.txt"
@@ -561,20 +554,23 @@ EOF
 main() {
     check_system
     install_prerequisites
+    setup_firewall
     setup_environment
     setup_database
     clone_repository
     setup_python
-    create_essential_files
-    run_migrations
     install_xray
     setup_nginx
     setup_ssl
+    setup_env_file
     setup_panel_service
+    create_uninstall_script
     show_installation_info
     
     echo -e "\n${GREEN}برای مشاهده جزئیات کامل، فایل لاگ را بررسی کنید:${NC}"
     echo -e "${YELLOW}tail -f /var/log/zhina-install.log${NC}"
+    echo -e "\n${GREEN}برای حذف نصب می‌توانید از اسکریپت زیر استفاده کنید:${NC}"
+    echo -e "${YELLOW}${INSTALL_DIR}/uninstall-zhina.sh${NC}"
 }
 
 main
