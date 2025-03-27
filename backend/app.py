@@ -58,7 +58,7 @@ async def startup():
 async def login_page(request: Request):
     return templates.TemplateResponse("login.html", {"request": request})
 
-@app.post("/login")
+@app.get("/login")
 async def login_form_submission(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -85,7 +85,7 @@ async def login_form_submission(
     )
     return response
 
-@app.post("/token")
+@app.get("/token")
 async def get_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
