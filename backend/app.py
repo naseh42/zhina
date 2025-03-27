@@ -110,3 +110,19 @@ async def update_settings(request: Request):
 async def health_check():
     """بررسی وضعیت سرور"""
     return {"status": "ok"}
+
+# ---- اضافه کردن این Routeهای جدید ----
+@app.get("/users", response_class=HTMLResponse)
+async def users_page(request: Request):
+    """صفحه مدیریت کاربران"""
+    return templates.TemplateResponse("users.html", {"request": request})
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request):
+    """صفحه تنظیمات"""
+    return templates.TemplateResponse("settings.html", {"request": request})
+
+@app.get("/domains", response_class=HTMLResponse)
+async def domains_page(request: Request):
+    """صفحه مدیریت دامنه‌ها"""
+    return templates.TemplateResponse("domains.html", {"request": request})
