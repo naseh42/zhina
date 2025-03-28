@@ -9,12 +9,20 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import logging
 import sys
+import psutil
 
 sys.path.append(str(Path(__file__).parent.parent))
 from backend import schemas, models, utils
 from backend.database import get_db, engine, Base
 from backend.config import settings
 from backend.xray_config import xray_settings
+from backend.managers import (
+    UserManager,
+    DomainManager,
+    XrayManager,
+    DashboardManager,
+    SettingsManager
+)
 
 app = FastAPI(
     title="Zhina Panel",
@@ -39,6 +47,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- مدیران جدید ---
+def get_user_manager(db: Session = Depends(get_db)):
+    return UserManager(db)
+
+def get_domain_manager(db: Session = Depends(get_db)):
+    return DomainManager(db)
+
+def get_xray_manager(db: Session = Depends(get_db)):
+    return XrayManager(db)
+
+def get_dashboard_manager(db: Session = Depends(get_db)):
+    return DashboardManager(db)
+
+def get_settings_manager(db: Session = Depends(get_db)):
+    return SettingsManager(db)
+
 # --- توابع کمکی ---
 def authenticate_user(username: str, password: str, db: Session):
     user = db.query(models.User).filter(models.User.username == username).first()
@@ -46,14 +70,57 @@ def authenticate_user(username: str, password: str, db: Session):
         return False
     return user
 
-# --- روت‌ها ---
+# --- روت‌های جدید API ---
+@app.get("/api/v1/server-stats")
+async def get_server_stats(manager: DashboardManager = Depends(get_dashboard_manager)):
+    return manager.get_server_stats()
+
+@app.get("/api/v1/traffic-stats")
+async def get_traffic_stats(manager: DashboardManager = Depends(get_dashboard_manager)):
+    return manager.get_traffic_stats()
+
+@app.post("/api/v1/domains")
+async def create_domain(
+    domain_data: schemas.DomainCreate,
+    manager: DomainManager = Depends(get_domain_manager),
+    current_user: models.User = Depends(utils.get_current_active_user)
+):
+    return manager.create(domain_data, current_user.id)
+
+@app.get("/api/v1/xray/config")
+async def get_xray_config(manager: XrayManager = Depends(get_xray_manager)):
+    return manager.get_config()
+
+@app.post("/api/v1/xray/inbounds")
+async def create_xray_inbound(
+    inbound: schemas.InboundCreate,
+    manager: XrayManager = Depends(get_xray_manager),
+    current_user: models.User = Depends(utils.get_current_active_user)
+):
+    return manager.add_inbound(inbound)
+
+@app.put("/api/v1/xray/inbounds/{inbound_id}")
+async def update_xray_inbound(
+    inbound_id: int,
+    inbound: schemas.InboundUpdate,
+    manager: XrayManager = Depends(get_xray_manager)
+):
+    return manager.update_inbound(inbound_id, inbound)
+
+@app.get("/api/v1/users")
+async def get_users_list(
+    detailed: bool = False,
+    manager: UserManager = Depends(get_user_manager)
+):
+    return manager.get_user_list(detailed=detailed)
+
+# --- روت‌های موجود (بدون تغییر) ---
 @app.on_event("startup")
 async def startup():
     Base.metadata.create_all(bind=engine)
 
 @app.get("/login", response_class=HTMLResponse)
 async def show_login(request: Request):
-    """نمایش فرم لاگین (GET)"""
     return templates.TemplateResponse("login.html", {"request": request})
 
 @app.post("/login", response_class=HTMLResponse)
@@ -63,7 +130,6 @@ async def process_login(
     password: str = Form(...),
     db: Session = Depends(get_db)
 ):
-    """پردازش لاگین (POST)"""
     user = authenticate_user(username, password, db)
     if not user:
         return templates.TemplateResponse("login.html", {
@@ -85,7 +151,6 @@ async def process_login(
 
 @app.post("/token")
 async def api_login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    """لاگین API (برای سرویس‌های خارجی)"""
     user = authenticate_user(form_data.username, form_data.password, db)
     if not user:
         raise HTTPException(status_code=400, detail="Invalid credentials")
@@ -93,7 +158,6 @@ async def api_login(form_data: OAuth2PasswordRequestForm = Depends(), db: Sessio
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, db: Session = Depends(get_db)):
-    """پنل مدیریت"""
     stats = {
         "users": db.query(models.User).count(),
         "domains": db.query(models.Domain).count(),
@@ -104,10 +168,8 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         "stats": stats
     })
 
-# --- روت‌های مدیریت کاربران ---
 @app.get("/users", response_class=HTMLResponse)
 async def list_users(request: Request, db: Session = Depends(get_db)):
-    """لیست تمام کاربران"""
     users = db.query(models.User).order_by(models.User.created_at.desc()).all()
     return templates.TemplateResponse("users.html", {
         "request": request,
@@ -122,7 +184,6 @@ async def create_user(
     password: str = Form(...),
     db: Session = Depends(get_db)
 ):
-    """ایجاد کاربر جدید"""
     new_user = models.User(
         username=username,
         email=email,
@@ -133,10 +194,8 @@ async def create_user(
     db.commit()
     return RedirectResponse(url="/users", status_code=303)
 
-# --- روت‌های مدیریت دامنه ---
 @app.get("/domains", response_class=HTMLResponse)
 async def list_domains(request: Request, db: Session = Depends(get_db)):
-    """لیست دامنه‌ها"""
     domains = db.query(models.Domain).join(models.User).all()
     return templates.TemplateResponse("domains.html", {
         "request": request,
@@ -151,7 +210,6 @@ async def add_domain(
     owner_id: int = Form(...),
     db: Session = Depends(get_db)
 ):
-    """اضافه کردن دامنه جدید"""
     new_domain = models.Domain(
         name=name,
         description={"description": description} if description else None,
@@ -162,10 +220,8 @@ async def add_domain(
     db.commit()
     return RedirectResponse(url="/domains", status_code=303)
 
-# --- روت‌های تنظیمات ---
 @app.get("/settings", response_class=HTMLResponse)
 async def show_settings(request: Request, db: Session = Depends(get_db)):
-    """تنظیمات سیستم"""
     settings = db.query(models.Setting).first()
     if not settings:
         settings = models.Setting()
@@ -183,7 +239,6 @@ async def update_settings(
     theme: str = Form(...),
     db: Session = Depends(get_db)
 ):
-    """بروزرسانی تنظیمات"""
     settings = db.query(models.Setting).first()
     settings.language = language
     settings.theme = theme
@@ -191,32 +246,97 @@ async def update_settings(
     db.commit()
     return RedirectResponse(url="/settings", status_code=303)
 
-# --- روت‌های مدیریت نود ---
 @app.get("/nodes", response_class=HTMLResponse)
 async def list_nodes(request: Request, db: Session = Depends(get_db)):
-    """لیست نودها"""
     nodes = db.query(models.Node).filter(models.Node.is_active == True).all()
     return templates.TemplateResponse("nodes.html", {
         "request": request,
         "nodes": nodes
     })
 
-# --- روت‌های اینباند ---
 @app.get("/inbounds", response_class=HTMLResponse)
 async def list_inbounds(request: Request, db: Session = Depends(get_db)):
-    """لیست اینباندها"""
     inbounds = db.query(models.Inbound).all()
     return templates.TemplateResponse("inbounds.html", {
         "request": request,
         "inbounds": inbounds
     })
 
-# --- سلامت سیستم ---
 @app.get("/health")
 async def health_check(db: Session = Depends(get_db)):
-    """بررسی وضعیت سرور و دیتابیس"""
     try:
         db.execute("SELECT 1")
         return {"status": "ok", "database": "connected"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+# --- روت‌های جدید مدیریت Xray ---
+@app.get("/api/v1/xray/inbounds")
+async def list_xray_inbounds(
+    skip: int = 0,
+    limit: int = 100,
+    manager: XrayManager = Depends(get_xray_manager)
+):
+    return manager.list_inbounds(skip=skip, limit=limit)
+
+@app.delete("/api/v1/xray/inbounds/{inbound_id}")
+async def delete_xray_inbound(
+    inbound_id: int,
+    manager: XrayManager = Depends(get_xray_manager)
+):
+    success = manager.delete_inbound(inbound_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Inbound not found")
+    return {"status": "success"}
+
+# --- روت‌های جدید کاربران ---
+@app.post("/api/v1/users")
+async def create_new_user(
+    user_data: schemas.UserCreate,
+    manager: UserManager = Depends(get_user_manager)
+):
+    return manager.create(user_data)
+
+@app.put("/api/v1/users/{user_id}")
+async def update_existing_user(
+    user_id: int,
+    user_data: schemas.UserUpdate,
+    manager: UserManager = Depends(get_user_manager)
+):
+    return manager.update(user_id, user_data)
+
+# --- روت‌های جدید دامنه ---
+@app.get("/api/v1/domains")
+async def get_all_domains(
+    manager: DomainManager = Depends(get_domain_manager)
+):
+    return manager.list_by_type(None)
+
+@app.put("/api/v1/domains/{domain_id}")
+async def update_domain_settings(
+    domain_id: int,
+    domain_data: schemas.DomainUpdate,
+    manager: DomainManager = Depends(get_domain_manager)
+):
+    return manager.update(domain_id, domain_data)
+
+# --- روت‌های جدید داشبورد ---
+@app.get("/api/v1/dashboard/stats")
+async def get_full_dashboard_stats(
+    manager: DashboardManager = Depends(get_dashboard_manager)
+):
+    return manager.get_full_report()
+
+# --- روت‌های جدید تنظیمات ---
+@app.get("/api/v1/settings")
+async def get_current_settings(
+    manager: SettingsManager = Depends(get_settings_manager)
+):
+    return manager.get_settings()
+
+@app.put("/api/v1/settings")
+async def update_system_settings(
+    new_settings: schemas.SettingsUpdate,
+    manager: SettingsManager = Depends(get_settings_manager)
+):
+    return manager.update_settings(new_settings)
