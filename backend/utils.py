@@ -73,3 +73,26 @@ def calculate_remaining_days(expiry_date: datetime) -> int:
 def generate_random_password(length: int = 12) -> str:
     chars = string.ascii_letters + string.digits + "!@#$%^&*"
     return ''.join(secrets.choice(chars) for _ in range(length))
+# QR Code Generation
+def generate_qr_code(data: str) -> str:
+    """
+    Generate QR code image from data
+    Returns: Base64 encoded image string
+    """
+    import qrcode
+    import io
+    import base64
+    
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        box_size=10,
+        border=4,
+    )
+    qr.add_data(data)
+    qr.make(fit=True)
+    
+    img = qr.make_image(fill_color="black", back_color="white")
+    buffered = io.BytesIO()
+    img.save(buffered, format="PNG")
+    return base64.b64encode(buffered.getvalue()).decode("utf-8")
