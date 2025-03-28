@@ -1,52 +1,187 @@
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, Field, EmailStr
 from typing import Optional
-from backend.database import get_db
-from backend.models import User
+from datetime import datetime
 from sqlalchemy.orm import Session
-from backend.utils import generate_uuid
+from backend.models import User
+from backend.database import get_db
+from backend.utils import (
+    get_password_hash,
+    generate_uuid,
+    generate_random_password
+)
+from backend.config import settings
+import logging
 
-class UserCreate(BaseModel):
-    name: str
-    traffic_limit: int = 0
-    usage_duration: int = 0
-    simultaneous_connections: int = 1
+logger = logging.getLogger(__name__)
 
-    @validator("name")
-    def validate_name(cls, value):
-        if len(value) < 3:
-            raise ValueError("نام باید حداقل ۳ کاراکتر داشته باشد.")
-        return value
-
-    @validator("traffic_limit")
-    def validate_traffic_limit(cls, value):
-        if value < 0:
-            raise ValueError("محدودیت ترافیک باید بزرگ‌تر یا مساوی صفر باشد.")
-        return value
-
-    @validator("usage_duration")
-    def validate_usage_duration(cls, value):
-        if value < 0:
-            raise ValueError("مدت زمان استفاده باید بزرگ‌تر یا مساوی صفر باشد.")
-        return value
-
-    @validator("simultaneous_connections")
-    def validate_simultaneous_connections(cls, value):
-        if value < 1:
-            raise ValueError("حداقل تعداد اتصالات هم‌زمان باید ۱ باشد.")
-        return value
-
-def create_user(db: Session, user: UserCreate):
-    """ ایجاد کاربر جدید """
-    user_uuid = generate_uuid()  # تولید UUID برای کاربر
-    db_user = User(
-        name=user.name,
-        uuid=user_uuid,
-        traffic_limit=user.traffic_limit,
-        usage_duration=user.usage_duration,
-        simultaneous_connections=user.simultaneous_connections,
-        is_active=True
+class UserBase(BaseModel):
+    """مدل پایه کاربر"""
+    username: str = Field(
+        ...,
+        min_length=3,
+        max_length=50,
+        example="user123",
+        description="نام کاربری منحصر به فرد"
     )
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
-    return db_user
+    email: Optional[EmailStr] = Field(
+        None,
+        example="user@example.com",
+        description="آدرس ایمیل (اختیاری)"
+    )
+
+class UserCreate(UserBase):
+    """مدل ایجاد کاربر جدید"""
+    password: str = Field(
+        ...,
+        min_length=8,
+        example="Str0ngP@ss123",
+        description="رمز عبور با حداقل ۸ کاراکتر"
+    )
+    traffic_limit: int = Field(
+        default=settings.DEFAULT_TRAFFIC_LIMIT,
+        ge=0,
+        description="محدودیت ترافیک به بایت"
+    )
+    usage_duration: int = Field(
+        default=settings.DEFAULT_USAGE_DURATION,
+        ge=0,
+        description="مدت زمان اعتبار به روز"
+    )
+    simultaneous_connections: int = Field(
+        default=settings.DEFAULT_MAX_CONNECTIONS,
+        ge=1,
+        description="حداکثر اتصالات همزمان"
+    )
+
+    @validator('username')
+    def validate_username(cls, v):
+        if not v.isalnum():
+            raise ValueError("نام کاربری باید فقط شامل حروف و اعداد باشد")
+        return v
+
+class UserUpdate(BaseModel):
+    """مدل به‌روزرسانی کاربر"""
+    username: Optional[str] = Field(
+        None,
+        min_length=3,
+        max_length=50
+    )
+    email: Optional[EmailStr] = None
+    password: Optional[str] = Field(
+        None,
+        min_length=8
+    )
+    traffic_limit: Optional[int] = Field(
+        None,
+        ge=0
+    )
+    usage_duration: Optional[int] = Field(
+        None,
+        ge=0
+    )
+    simultaneous_connections: Optional[int] = Field(
+        None,
+        ge=1
+    )
+    is_active: Optional[bool] = None
+
+class UserInDB(UserBase):
+    """مدل نمایش کاربر از دیتابیس"""
+    id: int
+    uuid: str
+    traffic_limit: int
+    usage_duration: int
+    simultaneous_connections: int
+    is_active: bool
+    created_at: datetime
+    updated_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+def create_user(db: Session, user_data: UserCreate) -> User:
+    """ایجاد کاربر جدید در سیستم"""
+    try:
+        # بررسی تکراری نبودن نام کاربری
+        existing_user = db.query(User).filter(User.username == user_data.username).first()
+        if existing_user:
+            raise ValueError("نام کاربری قبلاً استفاده شده است")
+
+        # ایجاد کاربر جدید
+        db_user = User(
+            username=user_data.username,
+            email=user_data.email,
+            hashed_password=get_password_hash(user_data.password),
+            uuid=generate_uuid(),
+            traffic_limit=user_data.traffic_limit,
+            usage_duration=user_data.usage_duration,
+            simultaneous_connections=user_data.simultaneous_connections,
+            is_active=True,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+        
+        db.add(db_user)
+        db.commit()
+        db.refresh(db_user)
+        
+        logger.info(f"کاربر جدید ایجاد شد: {db_user.username}")
+        return db_user
+        
+    except Exception as e:
+        db.rollback()
+        logger.error(f"خطا در ایجاد کاربر: {str(e)}")
+        raise
+
+def get_user(db: Session, user_id: int) -> Optional[User]:
+    """دریافت کاربر بر اساس ID"""
+    return db.query(User).filter(User.id == user_id).first()
+
+def get_user_by_username(db: Session, username: str) -> Optional[User]:
+    """دریافت کاربر بر اساس نام کاربری"""
+    return db.query(User).filter(User.username == username).first()
+
+def update_user(db: Session, user_id: int, user_data: UserUpdate) -> Optional[User]:
+    """به‌روزرسانی اطلاعات کاربر"""
+    try:
+        db_user = db.query(User).filter(User.id == user_id).first()
+        if not db_user:
+            return None
+
+        update_data = user_data.dict(exclude_unset=True)
+        
+        if 'password' in update_data:
+            update_data['hashed_password'] = get_password_hash(update_data.pop('password'))
+            
+        for field, value in update_data.items():
+            setattr(db_user, field, value)
+            
+        db_user.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(db_user)
+        
+        logger.info(f"اطلاعات کاربر به‌روزرسانی شد: {db_user.username}")
+        return db_user
+        
+    except Exception as e:
+        db.rollback()
+        logger.error(f"خطا در به‌روزرسانی کاربر: {str(e)}")
+        raise
+
+def delete_user(db: Session, user_id: int) -> bool:
+    """حذف کاربر از سیستم"""
+    try:
+        db_user = db.query(User).filter(User.id == user_id).first()
+        if not db_user:
+            return False
+
+        db.delete(db_user)
+        db.commit()
+        
+        logger.info(f"کاربر حذف شد: ID {user_id}")
+        return True
+        
+    except Exception as e:
+        db.rollback()
+        logger.error(f"خطا در حذف کاربر: {str(e)}")
+        raise
