@@ -96,3 +96,24 @@ def generate_qr_code(data: str) -> str:
     buffered = io.BytesIO()
     img.save(buffered, format="PNG")
     return base64.b64encode(buffered.getvalue()).decode("utf-8")
+# SSL Certificate Setup
+   def setup_ssl(domain: str) -> bool:
+       """
+       تنظیم خودکار گواهی SSL برای دامنه
+       Returns: True اگر موفقیت‌آمیز بود
+       """
+       try:
+           import subprocess
+           # این دستورها بستگی به تنظیمات سرور شما دارد
+           result = subprocess.run([
+               'certbot',
+               '--nginx',
+               '-d', domain,
+               '--non-interactive',
+               '--agree-tos',
+               '--email', 'admin@example.com'  # ایمیل خود را جایگزین کنید
+           ], capture_output=True, text=True)
+           return "Congratulations" in result.stdout
+       except Exception as e:
+           print(f"Error in SSL setup: {e}")
+           return False
