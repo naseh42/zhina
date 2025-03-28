@@ -1,152 +1,78 @@
-from pydantic import BaseModel, EmailStr, validator
-from typing import Optional, List, Dict
-from datetime import datetime
+from pydantic import BaseModel, Field, EmailStr, validator
+from typing import Optional, Dict, List, Literal
+from datetime import datetime, timedelta
+from enum import Enum
 
-# Authentication Schemas
 class Token(BaseModel):
-    access_token: str
-    token_type: str
+    access_token: str = Field(..., example="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...")
+    token_type: str = Field(default="bearer")
 
 class TokenData(BaseModel):
-    username: Optional[str] = None
+    username: Optional[str] = Field(None, example="admin")
 
 class UserBase(BaseModel):
-    username: str
-    email: Optional[EmailStr] = None
-    is_active: Optional[bool] = True
+    username: str = Field(..., min_length=3, max_length=50, example="user123")
+    email: Optional[EmailStr] = Field(None, example="user@example.com")
+    is_active: Optional[bool] = Field(default=True)
 
 class UserCreate(UserBase):
-    password: str
-
-    @validator("password")
-    def validate_password(cls, v):
-        if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters")
-        return v
+    password: str = Field(..., min_length=8, example="Str0ngP@ss")
+    traffic_limit: int = Field(default=0, ge=0, description="Bytes")
+    usage_duration: int = Field(default=30, ge=1, description="Days")
+    simultaneous_connections: int = Field(default=3, ge=1)
 
 class UserInDB(UserBase):
-    hashed_password: str
-
-# User Schemas
-class UserCreate(BaseModel):
-    name: str
-    traffic_limit: int = 0
-    usage_duration: int = 0
-    simultaneous_connections: int = 1
-
-    @validator("name")
-    def validate_name(cls, value):
-        if len(value) < 3:
-            raise ValueError("نام باید حداقل ۳ کاراکتر داشته باشد.")
-        return value
-
-    @validator("traffic_limit")
-    def validate_traffic_limit(cls, value):
-        if value < 0:
-            raise ValueError("محدودیت ترافیک باید بزرگ‌تر یا مساوی صفر باشد.")
-        return value
-
-    @validator("usage_duration")
-    def validate_usage_duration(cls, value):
-        if value < 0:
-            raise ValueError("مدت زمان استفاده باید بزرگ‌تر یا مساوی صفر باشد.")
-        return value
-
-    @validator("simultaneous_connections")
-    def validate_simultaneous_connections(cls, value):
-        if value < 1:
-            raise ValueError("حداقل تعداد اتصالات هم‌زمان باید ۱ باشد.")
-        return value
-
-class UserUpdate(BaseModel):
-    name: Optional[str] = None
-    traffic_limit: Optional[int] = None
-    usage_duration: Optional[int] = None
-    simultaneous_connections: Optional[int] = None
-
-# Domain Schemas
-class DomainCreate(BaseModel):
-    name: str
-    description: Optional[str] = None
-    cdn_enabled: Optional[bool] = False
-
-    @validator("name")
-    def validate_name(cls, value):
-        if len(value) < 3:
-            raise ValueError("نام دامنه باید حداقل ۳ کاراکتر داشته باشد.")
-        return value
-
-class DomainUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    cdn_enabled: Optional[bool] = None
-
-# Subscription Schemas
-class SubscriptionCreate(BaseModel):
+    id: int
     uuid: str
-    data_limit: int
-    expiry_date: datetime
-    max_connections: int
+    created_at: datetime
+    updated_at: Optional[datetime]
 
-    @validator("data_limit")
-    def validate_data_limit(cls, value):
-        if value < 0:
-            raise ValueError("محدودیت داده باید بزرگ‌تر یا مساوی صفر باشد.")
-        return value
+    class Config:
+        from_attributes = True
 
-    @validator("max_connections")
-    def validate_max_connections(cls, value):
-        if value < 1:
-            raise ValueError("حداقل تعداد اتصالات هم‌زمان باید ۱ باشد.")
-        return value
+class DomainProtocol(str, Enum):
+    VMESS = "vmess"
+    VLESS = "vless"
+    TROJAN = "trojan"
 
-class SubscriptionUpdate(BaseModel):
-    data_limit: Optional[int] = None
-    expiry_date: Optional[datetime] = None
-    max_connections: Optional[int] = None
+class DomainCreate(BaseModel):
+    name: str = Field(..., min_length=3, max_length=253, example="example.com")
+    protocol: DomainProtocol = Field(default=DomainProtocol.VMESS)
+    cdn_enabled: bool = Field(default=False)
 
-# Node Schemas
+class SubscriptionCreate(BaseModel):
+    user_id: int
+    data_limit: int = Field(default=10737418240, ge=0)  # 10GB
+    expiry_date: datetime = Field(default_factory=lambda: datetime.now() + timedelta(days=30))
+    max_connections: int = Field(default=3, ge=1)
+
+class NodeProtocol(str, Enum):
+    VMESS = "vmess"
+    VLESS = "vless"
+    TROJAN = "trojan"
+    SHADOWSOCKS = "shadowsocks"
+
 class NodeCreate(BaseModel):
-    name: str
-    ip_address: str
-    port: int
-    protocol: str
+    name: str = Field(..., min_length=3, max_length=100)
+    ip_address: str = Field(..., example="192.168.1.1")
+    port: int = Field(..., ge=1, le=65535, example=443)
+    protocol: NodeProtocol
 
-    @validator("port")
-    def validate_port(cls, value):
-        if value < 1 or value > 65535:
-            raise ValueError("پورت باید بین ۱ تا ۶۵۵۳۵ باشد.")
-        return value
-
-    @validator("protocol")
-    def validate_protocol(cls, value):
-        valid_protocols = ["vmess", "vless", "trojan", "shadowsocks", "http", "socks"]
-        if value not in valid_protocols:
-            raise ValueError(f"پروتکل {value} معتبر نیست.")
-        return value
-
-class NodeUpdate(BaseModel):
-    name: Optional[str] = None
-    ip_address: Optional[str] = None
-    port: Optional[int] = None
-    protocol: Optional[str] = None
-
-# Xray Settings
 class XraySettings(BaseModel):
-    enable_tls: bool = True
-    tls_certificate: Optional[str] = None
-    tls_key: Optional[str] = None
-    tls_settings: Dict = {
-        "serverName": "example.com",
-        "alpn": ["h2", "http/1.1"],
-        "minVersion": "1.2",
-        "maxVersion": "1.3"
-    }
+    enable_tls: bool = Field(default=True)
+    tls_cert_path: Optional[str] = Field(None, example="/etc/ssl/cert.pem")
+    tls_key_path: Optional[str] = Field(None, example="/etc/ssl/key.pem")
 
-# HTTP Settings
-class HTTPSettings(BaseModel):
-    enable_http: bool = True
-    http_settings: Dict = {
-        "timeout": 300,
-        "allowTransparent": False
-    }
+class ServerNetworkSettings(BaseModel):
+    ip: str = Field(..., example="192.168.1.1")
+    port: int = Field(default=8001, ge=1024, le=65535)
+    host: str = Field(default="0.0.0.0")
+
+class ServerHealthCheck(BaseModel):
+    status: Literal["online", "offline", "degraded"]
+    services: Dict[str, str] = Field(default={"database": "unknown", "xray": "unknown"})
+
+class ServerStats(BaseModel):
+    cpu_usage: float = Field(..., ge=0, le=100)
+    memory_usage: float = Field(..., ge=0, le=100)
+    active_connections: int = Field(..., ge=0)
