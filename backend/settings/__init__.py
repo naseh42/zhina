@@ -5,15 +5,15 @@ from .language import *
 from .theme import *
 
 from .settings_manager import SettingsManager
-from .admin_manager import AdminManager
+from .admin_manager import admin_management
 from .domain_config import DomainConfigManager
-from .appearance import AppearanceSettings
+from .appearance import theme
 from .security import SecurityManager
 
 __all__ = [
     'SettingsManager',
-    'AdminManager',
+    'admin_management',
     'DomainConfigManager',
-    'AppearanceSettings',
+    'theme',
     'SecurityManager'
 ]
