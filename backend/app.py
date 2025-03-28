@@ -10,6 +10,9 @@ from pathlib import Path
 import logging
 import sys
 import psutil
+from sqlalchemy import text
+from fastapi import status
+
 
 sys.path.append(str(Path(__file__).parent.parent))
 from backend import schemas, models, utils
@@ -265,10 +268,15 @@ async def list_inbounds(request: Request, db: Session = Depends(get_db)):
 @app.get("/health")
 async def health_check(db: Session = Depends(get_db)):
     try:
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
+        db.commit()
         return {"status": "ok", "database": "connected"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database connection error: {str(e)}"
+        )
 
 # --- روت‌های جدید مدیریت Xray ---
 @app.get("/api/v1/xray/inbounds")
