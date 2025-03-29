@@ -1,6 +1,5 @@
 from .app import app
-from .config import
-from .config import settings  # استفاده از آبجکت settings که در config.py تعریف شده
+from .config import settings  # import کامل با مشخص کردن آبجکت مورد نظر
 from .database import Base, engine, SessionLocal
 from .models import *
 from .schemas import *
