@@ -75,7 +75,7 @@ check_system() {
     [[ "$ID" != "ubuntu" && "$ID" != "debian" ]] && 
         warning "این اسکریپت فقط بر روی Ubuntu/Debian تست شده است"
     
-    for cmd in curl wget git python3 pip3; do
+    for cmd in curl wget git python3; do
         if ! command -v $cmd &> /dev/null; then
             error "دستور $cmd یافت نشد!"
         fi
@@ -95,8 +95,6 @@ install_prerequisites() {
         postgresql postgresql-contrib nginx \
         curl wget openssl unzip uuid-runtime \
         certbot python3-certbot-nginx || error "خطا در نصب پکیج‌ها"
-    
-    pip3 install email-validator pydantic[email] || warning "خطا در نصب email-validator"
     
     success "پیش‌نیازها با موفقیت نصب شدند"
 }
@@ -128,7 +126,7 @@ setup_environment() {
     success "محیط سیستم تنظیم شد"
 }
 
-# ------------------- تنظیم دیتابیس (کامل و بدون تغییر) -------------------
+# ------------------- تنظیم دیتابیس -------------------
 setup_database() {
     info "تنظیم پایگاه داده PostgreSQL..."
     
@@ -301,16 +299,19 @@ setup_python() {
     
     pip install --upgrade pip wheel || error "خطا در بروزرسانی pip و wheel"
     
-    REQ_FILE="$BACKEND_DIR/requirements.txt"
-    if [[ ! -f "$REQ_FILE" ]]; then
-        error "فایل requirements.txt در مسیر $BACKEND_DIR یافت نشد"
-    fi
-    
-    pip install -r "$REQ_FILE" || error "خطا در نصب نیازمندی‌ها"
-    
-    if ! command -v uvicorn &> /dev/null; then
-        pip install uvicorn || error "خطا در نصب uvicorn"
-    fi
+    # نصب نیازمندی‌های اصلی بدون نیاز به فایل requirements.txt
+    pip install \
+        fastapi==0.95.0 \
+        uvicorn==0.21.0 \
+        psycopg2-binary==2.9.5 \
+        sqlalchemy==2.0.0 \
+        python-dotenv==1.0.0 \
+        python-jose==3.3.0 \
+        passlib==1.7.4 \
+        email-validator==1.3.1 \
+        "pydantic[email]"==1.10.7 \
+        alembic==1.10.0 \
+        || error "خطا در نصب نیازمندی‌های پایتون"
     
     deactivate
     
@@ -584,7 +585,16 @@ setup_panel_service() {
     
     APP_FILE="$BACKEND_DIR/app.py"
     if [[ ! -f "$APP_FILE" ]]; then
-        error "فایل app.py در مسیر $BACKEND_DIR یافت نشد!"
+        warning "فایل app.py در مسیر $BACKEND_DIR یافت نشد! یک فایل نمونه ایجاد می‌کنیم..."
+        cat > "$APP_FILE" <<EOF
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/")
+def read_root():
+    return {"message": "خوش آمدید به پنل مدیریت Zhina"}
+EOF
     fi
     
     cat > /etc/systemd/system/zhina-panel.service <<EOF
