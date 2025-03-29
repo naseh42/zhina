@@ -103,48 +103,59 @@ install_prerequisites() {
 setup_environment() {
     info "تنظیم محیط سیستم..."
     
+    # ایجاد کاربر سرویس
     if ! id "$SERVICE_USER" &>/dev/null; then
         useradd -r -s /bin/false -d "$INSTALL_DIR" "$SERVICE_USER" || 
             error "خطا در ایجاد کاربر $SERVICE_USER"
     fi
     
+    # ایجاد دایرکتوری‌های اصلی
     mkdir -p \
         "$BACKEND_DIR" \
+        "$FRONTEND_DIR" \
         "$CONFIG_DIR" \
         "$LOG_DIR/panel" \
         "$XRAY_DIR" \
         "$SECRETS_DIR" \
         "/etc/xray" || error "خطا در ایجاد دایرکتوری‌ها"
     
+    # ایجاد فایل‌های لاگ
     touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
-    chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR" "$LOG_DIR" "$SECRETS_DIR"
-    chmod -R 750 "$INSTALL_DIR" "$LOG_DIR" "$SECRETS_DIR"
     
-    mkdir -p /opt/zhina/tmp
-    chown postgres:postgres /opt/zhina/tmp
+    # انتقال فایل‌های پروژه از مسیر فعلی (نه /root/zhina-project)
+    info "انتقال فایل‌های پروژه از $(pwd)"
     
-    # انتقال فایل‌های پروژه (اضافه شده)
-    if [ -d "/root/zhina-project/backend" ]; then
-        cp -r "/root/zhina-project/backend"/* "$BACKEND_DIR"/ || error "خطا در انتقال بک‌اند"
+    # انتقال بک‌اند
+    if [ -d "./backend" ]; then
+        cp -r "./backend"/* "$BACKEND_DIR"/ || error "خطا در انتقال بک‌اند"
+        success "فایل‌های بک‌اند با موفقیت انتقال یافتند"
     else
-        error "پوشه backend یافت نشد!"
+        error "پوشه backend در مسیر جاری یافت نشد!"
     fi
     
-    if [ -d "/root/zhina-project/frontend" ]; then
-        mkdir -p "$INSTALL_DIR/frontend"
-        cp -r "/root/zhina-project/frontend"/* "$INSTALL_DIR/frontend"/ || error "خطا در انتقال فرانت‌اند"
+    # انتقال فرانت‌اند
+    if [ -d "./frontend" ]; then
+        cp -r "./frontend"/* "$FRONTEND_DIR"/ || error "خطا در انتقال فرانت‌اند"
+        success "فایل‌های فرانت‌اند با موفقیت انتقال یافتند"
     else
-        error "پوشه frontend یافت نشد!"
+        error "پوشه frontend در مسیر جاری یافت نشد!"
     fi
     
-    # تنظیم مجوزهای فایل‌های منتقل شده
-    chown -R "$SERVICE_USER":"$SERVICE_USER" "$BACKEND_DIR" "$INSTALL_DIR/frontend"
+    # تنظیم مجوزها
+    chown -R "$SERVICE_USER":"$SERVICE_USER" \
+        "$INSTALL_DIR" \
+        "$LOG_DIR" \
+        "$SECRETS_DIR"
+        
+    chown -R postgres:postgres "/opt/zhina/tmp"
+    
+    # تنظیم مجوزهای اختصاصی
     find "$BACKEND_DIR" -type d -exec chmod 750 {} \;
     find "$BACKEND_DIR" -type f -exec chmod 640 {} \;
-    find "$INSTALL_DIR/frontend" -type d -exec chmod 755 {} \;
-    find "$INSTALL_DIR/frontend" -type f -exec chmod 644 {} \;
+    find "$FRONTEND_DIR" -type d -exec chmod 755 {} \;
+    find "$FRONTEND_DIR" -type f -exec chmod 644 {} \;
     
-    success "محیط سیستم تنظیم شد"
+    success "محیط سیستم با موفقیت تنظیم شد"
 }
 # ------------------- تنظیم دیتابیس -------------------
 setup_database() {
