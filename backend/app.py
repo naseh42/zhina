@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Request, Response, Form
+from fastapi import FastAPI, Depends, HTTPException, status, Request, Response, Form, WebSocket
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -11,12 +11,13 @@ from pathlib import Path
 import logging
 import sys
 import psutil
+import asyncio
+import subprocess
+import json
 
-# تنظیم مسیرهای پروژه
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# ایمپورت‌های داخلی
 from backend import schemas, models, utils
 from backend.database import get_db, engine, Base
 from backend.config import settings
@@ -24,9 +25,7 @@ from backend.xray_config.xray_manager import XrayManager
 from backend.users.user_manager import UserManager
 from backend.domains.domain_manager import DomainManager
 from backend.dashboard.dashboard_manager import DashboardManager
-from backend.settings.settings_manager import SettingsManager
 
-# تنظیمات لاگینگ
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -45,13 +44,11 @@ app = FastAPI(
     redoc_url=None
 )
 
-# تنظیمات تمپلیت و استاتیک
 TEMPLATE_DIR = "/var/lib/zhina/frontend/templates"
 STATIC_DIR = "/var/lib/zhina/frontend/static"
 templates = Jinja2Templates(directory=TEMPLATE_DIR)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -60,7 +57,39 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# توابع کمکی
+@app.on_event("startup")
+async def startup():
+    Base.metadata.create_all(bind=engine)
+    try:
+        XrayManager(next(get_db())).update_xray_config()
+        logger.info("Xray configuration initialized")
+    except Exception as e:
+        logger.error(f"Xray init error: {str(e)}")
+    logger.info("Application started successfully")
+
+@app.websocket("/ws/status")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    while True:
+        try:
+            xray_status = subprocess.run(
+                ["systemctl", "is-active", "xray"],
+                capture_output=True,
+                text=True
+            )
+            db_status = "online" if validate_db_connection(next(get_db())) else "offline"
+            
+            await websocket.send_json({
+                "xray": xray_status.stdout.strip(),
+                "database": db_status,
+                "timestamp": datetime.now().isoformat(),
+                "users_online": utils.get_online_users_count()
+            })
+            await asyncio.sleep(5)
+        except Exception as e:
+            logger.error(f"WebSocket error: {str(e)}")
+            break
+
 def authenticate_user(username: str, password: str, db: Session):
     user = db.query(models.User).filter(models.User.username == username).first()
     if not user or not utils.verify_password(password, user.hashed_password):
@@ -74,23 +103,8 @@ def validate_db_connection(db: Session):
         return True
     except Exception as e:
         db.rollback()
-        logger.error(f"Database error: {str(e)}")
+        logger.error(f"Database connection error: {str(e)}")
         return False
-
-@app.on_event("startup")
-async def startup():
-    Base.metadata.create_all(bind=engine)
-    logger.info("Application started successfully")
-
-# روت‌های اصلی
-@app.get("/health")
-async def health_check(db: Session = Depends(get_db)):
-    if not validate_db_connection(db):
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database connection failed"
-        )
-    return {"status": "ok", "services": ["database", "xray"]}
 
 @app.get("/login", response_class=HTMLResponse)
 async def show_login(request: Request):
@@ -120,14 +134,14 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
     stats = {
         "users": db.query(models.User).count(),
         "domains": db.query(models.Domain).count(),
-        "active_nodes": db.query(models.Node).filter(models.Node.is_active == True).count()
+        "active_nodes": db.query(models.Node).filter(models.Node.is_active == True).count(),
+        "traffic": utils.get_total_traffic()
     }
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "stats": stats
     })
 
-# روت‌های API جدید
 @app.get("/api/v1/server-stats")
 async def server_stats(manager: DashboardManager = Depends(DashboardManager)):
     return manager.get_server_stats()
@@ -142,14 +156,24 @@ async def create_user(
 @app.post("/api/v1/domains")
 async def add_domain(
     domain_data: schemas.DomainCreate,
-    manager: DomainManager = Depends(DomainManager)
-):
+    manager: DomainManager = Depends(DomainManager))
+:
     return manager.create(domain_data)
 
 @app.get("/api/v1/xray/config")
 async def get_xray_config(manager: XrayManager = Depends(XrayManager)):
     return manager.get_config()
 
+@app.on_event("startup")
+@utils.repeat_every(seconds=300)
+def periodic_xray_sync():
+    try:
+        with next(get_db()) as db:
+            XrayManager(db).update_xray_config()
+            logger.info("Periodic Xray sync completed")
+    except Exception as e:
+        logger.error(f"Sync failed: {str(e)}")
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    uvicorn.run(app, host=settings.SERVER_HOST, port=settings.SERVER_PORT)
