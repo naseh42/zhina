@@ -16,16 +16,24 @@ import psutil
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# ایمپورت‌های داخلی
-from backend import schemas, models, utils
+# ایمپورت‌های داخلی با مسیرهای جدید
+from backend.models import User, Domain, Subscription, Setting, Node, Inbound
 from backend.database import get_db, engine, Base
 from backend.config import settings
-from backend.xray_config import xray_settings
-from backend.managers.user_manager import UserManager
-from backend.managers.domain_manager import DomainManager
-from backend.managers.xray_manager import XrayManager
-from backend.managers.dashboard_manager import DashboardManager
-from backend.managers.settings_manager import SettingsManager
+from backend.xray_config.xray_settings import xray_settings
+from backend.users.user_manager import UserManager
+from backend.domains.domain_manager import DomainManager
+from backend.xray_config.xray_manager import XrayManager
+from backend.dashboard.dashboard_manager import DashboardManager
+from backend.settings.settings_manager import SettingsManager
+from backend.utils import (
+    get_password_hash,
+    verify_password,
+    create_access_token,
+    verify_token,
+    generate_uuid,
+    restart_xray_service
+)
 
 # تنظیمات لاگینگ
 logging.basicConfig(
@@ -63,8 +71,8 @@ app.add_middleware(
 
 # توابع کمکی
 def authenticate_user(username: str, password: str, db: Session):
-    user = db.query(models.User).filter(models.User.username == username).first()
-    if not user or not utils.verify_password(password, user.hashed_password):
+    user = db.query(User).filter(User.username == username).first()
+    if not user or not verify_password(password, user.hashed_password):
         return False
     return user
 
@@ -111,7 +119,7 @@ async def process_login(
             "error": "Invalid credentials"
         })
     
-    access_token = utils.create_access_token(data={"sub": user.username})
+    access_token = create_access_token(data={"sub": user.username})
     response = RedirectResponse(url="/dashboard", status_code=303)
     response.set_cookie(key="access_token", value=f"Bearer {access_token}", httponly=True)
     return response
@@ -119,16 +127,16 @@ async def process_login(
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, db: Session = Depends(get_db)):
     stats = {
-        "users": db.query(models.User).count(),
-        "domains": db.query(models.Domain).count(),
-        "active_nodes": db.query(models.Node).filter(models.Node.is_active == True).count()
+        "users": db.query(User).count(),
+        "domains": db.query(Domain).count(),
+        "active_nodes": db.query(Node).filter(Node.is_active == True).count()
     }
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "stats": stats
     })
 
-# روت‌های API جدید
+# روت‌های API
 @app.get("/api/v1/server-stats")
 async def server_stats(manager: DashboardManager = Depends(DashboardManager)):
     return manager.get_server_stats()
@@ -150,9 +158,6 @@ async def add_domain(
 @app.get("/api/v1/xray/config")
 async def get_xray_config(manager: XrayManager = Depends(XrayManager)):
     return manager.get_config()
-
-# بقیه روت‌های موجود...
-# [اینجا می‌توانید سایر روت‌های موجود را حفظ کنید]
 
 if __name__ == "__main__":
     import uvicorn
