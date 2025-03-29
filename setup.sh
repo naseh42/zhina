@@ -4,6 +4,7 @@ exec > >(tee -a "/var/log/zhina-install.log") 2>&1
 
 # ------------------- تنظیمات اصلی -------------------
 INSTALL_DIR="/var/lib/zhina"
+BACKEND_DIR="$INSTALL_DIR/backend"
 CONFIG_DIR="/etc/zhina"
 LOG_DIR="/var/log/zhina"
 XRAY_DIR="/usr/local/bin/xray"
@@ -95,11 +96,17 @@ setup_environment() {
     fi
     
     mkdir -p \
+        "$BACKEND_DIR" \
         "$CONFIG_DIR" \
         "$LOG_DIR/panel" \
         "$XRAY_DIR" \
         "$SECRETS_DIR" \
         "/etc/xray" || error "خطا در ایجاد دایرکتوری‌ها"
+    
+    # اگر محتوایی در INSTALL_DIR وجود دارد به BACKEND_DIR منتقل می‌کنیم
+    if [ "$(ls -A $INSTALL_DIR | grep -v backend)" ]; then
+        mv $INSTALL_DIR/* $BACKEND_DIR/ 2>/dev/null || true
+    fi
     
     touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
     chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR" "$LOG_DIR" "$SECRETS_DIR"
@@ -266,65 +273,25 @@ EOF
     success "پایگاه داده و جداول با موفقیت ایجاد شدند"
 }
 
-# ------------------- دریافت و تنظیم کدها -------------------
-setup_repository() {
-    info "دریافت و تنظیم کدهای برنامه..."
-    
-    # حل مشکل امنیتی Git برای مالکیت دایرکتوری
-    git config --global --add safe.directory "$INSTALL_DIR"
-    
-    # اگر ریپازیتوری از قبل وجود دارد
-    if [[ -d "$INSTALL_DIR/.git" ]]; then
-        cd "$INSTALL_DIR"
-        sudo -u "$SERVICE_USER" git reset --hard || error "خطا در بازنشانی تغییرات"
-        sudo -u "$SERVICE_USER" git pull || error "خطا در بروزرسانی کدها"
-        success "کدهای برنامه بروزرسانی شدند"
-    else
-        # اگر پوشه وجود دارد اما ریپازیتوری نیست
-        if [[ -d "$INSTALL_DIR" ]]; then
-            warning "پوشه نصب خالی نیست، محتوا پاک می‌شود"
-            rm -rf "$INSTALL_DIR"/* || error "خطا در پاکسازی پوشه نصب"
-        fi
-        
-        sudo -u "$SERVICE_USER" git clone https://github.com/naseh42/zhina.git "$INSTALL_DIR" || 
-            error "خطا در دریافت کدها"
-        success "کدهای برنامه دریافت شدند"
-    fi
-
-    # تنظیم ساختار پوشه‌ها
-    if [[ -d "$INSTALL_DIR/backend" ]]; then
-        backend_dir="$INSTALL_DIR/backend"
-    else
-        backend_dir="$INSTALL_DIR"
-        warning "پوشه backend یافت نشد! از ساختار ریشه استفاده می‌شود"
-    fi
-
-    # تنظیم مجوزها
-    find "$INSTALL_DIR" -type d -exec chmod 750 {} \;
-    find "$INSTALL_DIR" -type f -exec chmod 640 {} \;
-    chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"
-    
-    echo "$backend_dir"
-}
-
 # ------------------- تنظیم محیط پایتون -------------------
 setup_python() {
-    local backend_dir="$1"
     info "تنظیم محیط پایتون..."
     
     python3 -m venv "$INSTALL_DIR/venv" || error "خطا در ایجاد محیط مجازی"
     source "$INSTALL_DIR/venv/bin/activate"
     
-    # نصب pip و wheel با نسخه ثابت برای جلوگیری از مشکلات
     pip install --upgrade pip==22.0.2 wheel==0.37.1 || error "خطا در بروزرسانی pip و wheel"
     
-    # یافتن صحیح فایل requirements.txt
-    local req_file="$backend_dir/requirements.txt"
-    if [[ ! -f "$req_file" ]]; then
-        error "فایل requirements.txt در مسیر $backend_dir یافت نشد"
+    # یافتن فایل requirements.txt
+    REQ_FILE="$BACKEND_DIR/requirements.txt"
+    if [[ ! -f "$REQ_FILE" ]]; then
+        REQ_FILE=$(find "$INSTALL_DIR" -name "requirements.txt" | head -1)
+        if [[ -z "$REQ_FILE" ]]; then
+            error "فایل requirements.txt یافت نشد"
+        fi
     fi
     
-    pip install -r "$req_file" || error "خطا در نصب نیازمندی‌ها"
+    pip install -r "$REQ_FILE" || error "خطا در نصب نیازمندی‌ها"
     
     deactivate
     
@@ -512,10 +479,9 @@ setup_ssl() {
 
 # ------------------- تنظیم فایل محیط -------------------
 setup_env() {
-    local backend_dir="$1"
     info "تنظیم فایل محیط..."
     
-    cat > "$backend_dir/.env" <<EOF
+    cat > "$BACKEND_DIR/.env" <<EOF
 # تنظیمات دیتابیس
 DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
 
@@ -539,16 +505,24 @@ DEFAULT_THEME=$DEFAULT_THEME
 DEFAULT_LANGUAGE=$DEFAULT_LANGUAGE
 EOF
 
-    chmod 600 "$backend_dir/.env"
-    chown "$SERVICE_USER":"$SERVICE_USER" "$backend_dir/.env"
+    chmod 600 "$BACKEND_DIR/.env"
+    chown "$SERVICE_USER":"$SERVICE_USER" "$BACKEND_DIR/.env"
     
-    success "فایل .env در $backend_dir/.env ایجاد شد"
+    success "فایل .env در $BACKEND_DIR/.env ایجاد شد"
 }
 
 # ------------------- تنظیم سرویس پنل -------------------
 setup_panel_service() {
-    local backend_dir="$1"
     info "تنظیم سرویس پنل..."
+    
+    # پیدا کردن فایل اصلی app.py
+    APP_FILE=$(find "$BACKEND_DIR" -name "app.py" | head -1)
+    if [[ -z "$APP_FILE" ]]; then
+        error "فایل app.py یافت نشد!"
+    fi
+    
+    # پیدا کردن مسیر اصلی پایتون
+    PYTHON_PATH=$(dirname "$APP_FILE")
     
     cat > /etc/systemd/system/zhina-panel.service <<EOF
 [Unit]
@@ -558,9 +532,9 @@ After=network.target postgresql.service
 [Service]
 User=$SERVICE_USER
 Group=$SERVICE_USER
-WorkingDirectory=$backend_dir
+WorkingDirectory=$PYTHON_PATH
 Environment="PATH=$INSTALL_DIR/venv/bin"
-Environment="PYTHONPATH=$backend_dir"
+Environment="PYTHONPATH=$PYTHON_PATH"
 ExecStart=$INSTALL_DIR/venv/bin/uvicorn \
     app:app \
     --host 0.0.0.0 \
@@ -656,20 +630,13 @@ main() {
     get_admin_credentials
     install_prerequisites
     setup_environment
-    
-    # حل مشکل امنیتی Git قبل از هر کاری
-    git config --global --add safe.directory "$INSTALL_DIR"
-    
-    # دریافت و تنظیم کدها
-    backend_dir=$(setup_repository)
-    
     setup_database
-    setup_python "$backend_dir"
+    setup_python
     install_xray
     setup_nginx
     setup_ssl
-    setup_env "$backend_dir"
-    setup_panel_service "$backend_dir"
+    setup_env
+    setup_panel_service
     show_installation_info
     
     echo -e "\n${GREEN}برای مشاهده جزئیات کامل، فایل لاگ را بررسی کنید:${NC}"
