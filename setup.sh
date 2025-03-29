@@ -5,6 +5,7 @@ exec > >(tee -a "/var/log/zhina-install.log") 2>&1
 # ------------------- تنظیمات اصلی -------------------
 INSTALL_DIR="/opt/zhina"
 BACKEND_DIR="$INSTALL_DIR/backend"
+FRONTEND_DIR="$INSTALL_DIR/frontend"  # این خط جدید اضافه شد
 CONFIG_DIR="/etc/zhina"
 LOG_DIR="/var/log/zhina"
 XRAY_DIR="/usr/local/bin/xray"
@@ -103,59 +104,48 @@ install_prerequisites() {
 setup_environment() {
     info "تنظیم محیط سیستم..."
     
-    # ایجاد کاربر سرویس
     if ! id "$SERVICE_USER" &>/dev/null; then
         useradd -r -s /bin/false -d "$INSTALL_DIR" "$SERVICE_USER" || 
             error "خطا در ایجاد کاربر $SERVICE_USER"
     fi
     
-    # ایجاد دایرکتوری‌های اصلی
     mkdir -p \
         "$BACKEND_DIR" \
-        "$FRONTEND_DIR" \
+        "$FRONTEND_DIR" \  # این خط تغییر کرد
         "$CONFIG_DIR" \
         "$LOG_DIR/panel" \
         "$XRAY_DIR" \
         "$SECRETS_DIR" \
         "/etc/xray" || error "خطا در ایجاد دایرکتوری‌ها"
     
-    # ایجاد فایل‌های لاگ
     touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
+    chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR" "$LOG_DIR" "$SECRETS_DIR"
+    chmod -R 750 "$INSTALL_DIR" "$LOG_DIR" "$SECRETS_DIR"
     
-    # انتقال فایل‌های پروژه از مسیر فعلی (نه /root/zhina-project)
-    info "انتقال فایل‌های پروژه از $(pwd)"
+    mkdir -p /opt/zhina/tmp
+    chown postgres:postgres /opt/zhina/tmp
     
-    # انتقال بک‌اند
+    # انتقال فایل‌های پروژه از مسیر فعلی
     if [ -d "./backend" ]; then
         cp -r "./backend"/* "$BACKEND_DIR"/ || error "خطا در انتقال بک‌اند"
-        success "فایل‌های بک‌اند با موفقیت انتقال یافتند"
     else
         error "پوشه backend در مسیر جاری یافت نشد!"
     fi
     
-    # انتقال فرانت‌اند
     if [ -d "./frontend" ]; then
         cp -r "./frontend"/* "$FRONTEND_DIR"/ || error "خطا در انتقال فرانت‌اند"
-        success "فایل‌های فرانت‌اند با موفقیت انتقال یافتند"
     else
         error "پوشه frontend در مسیر جاری یافت نشد!"
     fi
     
     # تنظیم مجوزها
-    chown -R "$SERVICE_USER":"$SERVICE_USER" \
-        "$INSTALL_DIR" \
-        "$LOG_DIR" \
-        "$SECRETS_DIR"
-        
-    chown -R postgres:postgres "/opt/zhina/tmp"
-    
-    # تنظیم مجوزهای اختصاصی
+    chown -R "$SERVICE_USER":"$SERVICE_USER" "$BACKEND_DIR" "$FRONTEND_DIR"
     find "$BACKEND_DIR" -type d -exec chmod 750 {} \;
     find "$BACKEND_DIR" -type f -exec chmod 640 {} \;
     find "$FRONTEND_DIR" -type d -exec chmod 755 {} \;
     find "$FRONTEND_DIR" -type f -exec chmod 644 {} \;
     
-    success "محیط سیستم با موفقیت تنظیم شد"
+    success "محیط سیستم تنظیم شد"
 }
 # ------------------- تنظیم دیتابیس -------------------
 setup_database() {
