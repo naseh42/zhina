@@ -7,8 +7,8 @@ import warnings
 import uuid
 from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv("/var/lib/zhina/backend/.env")
-print("SECRET_KEY:", os.getenv("ZHINA_SECRET_KEY"))
+
+load_dotenv("/etc/zhina/.env")
 
 class Settings(BaseSettings):
     # 1. Database Configuration
@@ -57,11 +57,8 @@ class Settings(BaseSettings):
         description="Short ID for Reality protocol"
     )
     
-   # 4. Security Settings
-    SECRET_KEY: str = os.getenv(
-        "ZHINA_SECRET_KEY", 
-        "default_fallback_key"
-    )
+    # 4. Security Settings
+    SECRET_KEY: str = os.getenv("ZHINA_SECRET_KEY", "default_fallback_key")
     DEBUG: bool = Field(
         default=False,
         description="Debug mode (DO NOT enable in production)"
@@ -144,7 +141,7 @@ class Settings(BaseSettings):
     )
 
     model_config = {
-        "env_file": "/var/lib/zhina/backend/.env",
+        "env_file": "/etc/zhina/.env",
         "env_file_encoding": "utf-8",
         "extra": "forbid",
         "env_prefix": "ZHINA_",
