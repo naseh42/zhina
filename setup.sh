@@ -162,12 +162,23 @@ EOF
 setup_repository() {
     info "دریافت و تنظیم کدهای برنامه..."
     
-    # حذف محتوای قبلی (اگر وجود دارد)
-    rm -rf "$INSTALL_DIR"/* 2>/dev/null || true
-    
-    # کلون کردن ریپازیتوری
-    git clone https://github.com/naseh42/zhina.git "$INSTALL_DIR" || 
-        error "خطا در دریافت کدها"
+    # اگر ریپازیتوری از قبل وجود دارد
+    if [[ -d "$INSTALL_DIR/.git" ]]; then
+        cd "$INSTALL_DIR"
+        git reset --hard || error "خطا در بازنشانی تغییرات"
+        git pull || error "خطا در بروزرسانی کدها"
+        success "کدهای برنامه بروزرسانی شدند"
+    else
+        # اگر پوشه وجود دارد اما ریپازیتوری نیست
+        if [[ -d "$INSTALL_DIR" ]]; then
+            warning "پوشه نصب خالی نیست، محتوا پاک می‌شود"
+            rm -rf "$INSTALL_DIR"/* || error "خطا در پاکسازی پوشه نصب"
+        fi
+        
+        git clone https://github.com/naseh42/zhina.git "$INSTALL_DIR" || 
+            error "خطا در دریافت کدها"
+        success "کدهای برنامه دریافت شدند"
+    fi
 
     # تنظیم ساختار پوشه‌ها
     if [[ -d "$INSTALL_DIR/backend" ]]; then
@@ -182,7 +193,6 @@ setup_repository() {
     find "$INSTALL_DIR" -type f -exec chmod 640 {} \;
     chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"
     
-    success "کدهای برنامه تنظیم شدند"
     echo "$backend_dir"  # بازگرداندن مسیر backend برای استفاده در توابع دیگر
 }
 
