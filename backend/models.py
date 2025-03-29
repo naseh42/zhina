@@ -38,7 +38,7 @@ class Subscription(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     uuid = Column(String(36), unique=True, index=True)
-    data_limit = Column(BigInteger, default=10737418240)  # 10GB
+    data_limit = Column(BigInteger, default=10737418240)
     expiry_date = Column(DateTime, nullable=False)
     max_connections = Column(Integer, default=3)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
@@ -63,9 +63,9 @@ class Node(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), unique=True, index=True)
-    ip_address = Column(String(45))  # Supports IPv6
+    ip_address = Column(String(45))
     port = Column(Integer, nullable=False)
-    protocol = Column(String(20), nullable=False)  # vmess, vless, etc.
+    protocol = Column(String(20), nullable=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, onupdate=func.now())
