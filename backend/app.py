@@ -44,8 +44,8 @@ app = FastAPI(
     redoc_url=None
 )
 
-TEMPLATE_DIR = "/var/lib/zhina/frontend/templates"
-STATIC_DIR = "/var/lib/zhina/frontend/static"
+TEMPLATE_DIR = "/opt/zhina/frontend/templates"
+STATIC_DIR = "/opt/zhina/frontend/static"
 templates = Jinja2Templates(directory=TEMPLATE_DIR)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -55,6 +55,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"]  # همین خط اضافه شود
 )
 
 @app.on_event("startup")
