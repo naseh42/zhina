@@ -3,7 +3,7 @@ set -euo pipefail
 exec > >(tee -a "/var/log/zhina-install.log") 2>&1
 
 # ------------------- تنظیمات اصلی -------------------
-INSTALL_DIR="/root/zhina"
+INSTALL_DIR="/opt/zhina"
 BACKEND_DIR="$INSTALL_DIR/backend"
 CONFIG_DIR="/etc/zhina"
 LOG_DIR="/var/log/zhina"
@@ -75,7 +75,6 @@ check_system() {
     [[ "$ID" != "ubuntu" && "$ID" != "debian" ]] && 
         warning "این اسکریپت فقط بر روی Ubuntu/Debian تست شده است"
     
-    # بررسی وجود دستورات پایه
     for cmd in curl wget git python3 pip3; do
         if ! command -v $cmd &> /dev/null; then
             error "دستور $cmd یافت نشد!"
@@ -97,8 +96,7 @@ install_prerequisites() {
         curl wget openssl unzip uuid-runtime \
         certbot python3-certbot-nginx || error "خطا در نصب پکیج‌ها"
     
-    # بررسی نسخه pip
-    pip3 install --upgrade pip || warning "خطا در بروزرسانی pip"
+    pip3 install email-validator pydantic[email] || warning "خطا در نصب email-validator"
     
     success "پیش‌نیازها با موفقیت نصب شدند"
 }
@@ -120,27 +118,20 @@ setup_environment() {
         "$SECRETS_DIR" \
         "/etc/xray" || error "خطا در ایجاد دایرکتوری‌ها"
     
-    # انتقال محتوای موجود به پوشه backend
-    if [ "$(ls -A $INSTALL_DIR | grep -vE 'backend|venv')" ]; then
-        mv $INSTALL_DIR/* $BACKEND_DIR/ 2>/dev/null || true
-    fi
-    
     touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
     chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR" "$LOG_DIR" "$SECRETS_DIR"
     chmod -R 750 "$INSTALL_DIR" "$LOG_DIR" "$SECRETS_DIR"
     
-    # ایجاد دایرکتوری موقت برای postgres
-    mkdir -p /root/zhina
-    chown postgres:postgres /root/zhina
+    mkdir -p /opt/zhina/tmp
+    chown postgres:postgres /opt/zhina/tmp
     
     success "محیط سیستم تنظیم شد"
 }
 
-# ------------------- تنظیم دیتابیس -------------------
+# ------------------- تنظیم دیتابیس (کامل و بدون تغییر) -------------------
 setup_database() {
     info "تنظیم پایگاه داده PostgreSQL..."
     
-    # راه‌اندازی سرویس PostgreSQL در صورت عدم اجرا
     systemctl start postgresql || error "خطا در راه‌اندازی PostgreSQL"
     
     sudo -u postgres psql <<EOF || error "خطا در اجرای دستورات PostgreSQL"
@@ -310,7 +301,6 @@ setup_python() {
     
     pip install --upgrade pip wheel || error "خطا در بروزرسانی pip و wheel"
     
-    # یافتن فایل requirements.txt
     REQ_FILE="$BACKEND_DIR/requirements.txt"
     if [[ ! -f "$REQ_FILE" ]]; then
         error "فایل requirements.txt در مسیر $BACKEND_DIR یافت نشد"
@@ -318,7 +308,6 @@ setup_python() {
     
     pip install -r "$REQ_FILE" || error "خطا در نصب نیازمندی‌ها"
     
-    # نصب uvicorn اگر وجود ندارد
     if ! command -v uvicorn &> /dev/null; then
         pip install uvicorn || error "خطا در نصب uvicorn"
     fi
@@ -436,7 +425,6 @@ EOF
     systemctl daemon-reload
     systemctl enable --now xray || error "خطا در راه‌اندازی Xray"
     
-    # بررسی وضعیت سرویس
     sleep 2
     if ! systemctl is-active --quiet xray; then
         journalctl -u xray -n 20 --no-pager
@@ -491,10 +479,8 @@ server {
 }
 EOF
 
-    # حذف فایل پیش‌فرض nginx
     rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
     
-    # تست پیکربندی nginx
     if ! nginx -t; then
         error "خطا در پیکربندی Nginx"
     fi
@@ -516,7 +502,6 @@ setup_ssl() {
             -subj "/CN=$PANEL_DOMAIN"
         ssl_type="self-signed"
         
-        # به‌روزرسانی پیکربندی nginx برای SSL
         cat >> /etc/nginx/conf.d/zhina.conf <<EOF
 
 server {
@@ -549,7 +534,7 @@ EOF
             echo "0 12 * * * root certbot renew --quiet" >> /etc/crontab
         else
             warning "خطا در دریافت گواهی Let's Encrypt، از گواهی خودامضا استفاده می‌شود"
-            setup_ssl  # بازگشت به حالت خودامضا
+            setup_ssl
             return
         fi
     fi
@@ -597,15 +582,10 @@ EOF
 setup_panel_service() {
     info "تنظیم سرویس پنل..."
     
-    # فایل اصلی پایتون
     APP_FILE="$BACKEND_DIR/app.py"
     if [[ ! -f "$APP_FILE" ]]; then
         error "فایل app.py در مسیر $BACKEND_DIR یافت نشد!"
     fi
-    
-    # مسیر اصلی پایتون
-    PYTHON_PATH="$BACKEND_DIR"
-    APP_NAME="app"
     
     cat > /etc/systemd/system/zhina-panel.service <<EOF
 [Unit]
@@ -615,11 +595,11 @@ After=network.target postgresql.service
 [Service]
 User=$SERVICE_USER
 Group=$SERVICE_USER
-WorkingDirectory=$PYTHON_PATH
+WorkingDirectory=$BACKEND_DIR
 Environment="PATH=$INSTALL_DIR/venv/bin"
-Environment="PYTHONPATH=$PYTHON_PATH"
+Environment="PYTHONPATH=$BACKEND_DIR"
 ExecStart=$INSTALL_DIR/venv/bin/uvicorn \
-    $APP_NAME:app \
+    app:app \
     --host 0.0.0.0 \
     --port $PANEL_PORT \
     --workers $UVICORN_WORKERS \
@@ -667,8 +647,6 @@ show_installation_info() {
     echo -e "• Public Key: ${YELLOW}${REALITY_PUBLIC_KEY}${NC}"
     echo -e "• Short ID: ${YELLOW}${REALITY_SHORT_ID}${NC}"
     echo -e "• مسیر WS: ${YELLOW}${XRAY_PATH}${NC}"
-    echo -e "• Port VLESS: ${YELLOW}8443${NC}"
-    echo -e "• Port VMESS: ${YELLOW}${XRAY_HTTP_PORT}${NC}"
     
     echo -e "\n${YELLOW}اطلاعات دیتابیس:${NC}"
     echo -e "• نام دیتابیس: ${YELLOW}${DB_NAME}${NC}"
@@ -677,7 +655,6 @@ show_installation_info() {
     
     echo -e "\n${YELLOW}دستورات مدیریت:${NC}"
     echo -e "• وضعیت سرویس‌ها: ${GREEN}systemctl status xray nginx zhina-panel postgresql${NC}"
-    echo -e "• راه‌اندازی مجدد پنل: ${GREEN}systemctl restart zhina-panel${NC}"
     echo -e "• مشاهده لاگ پنل: ${GREEN}tail -f $LOG_DIR/panel/{access,error}.log${NC}"
     echo -e "• مشاهده لاگ Xray: ${GREEN}journalctl -u xray -f${NC}"
     
@@ -711,8 +688,6 @@ Log Files:
 EOF
 
     chmod 600 "$INSTALL_DIR/installation-info.txt"
-    echo -e "\n${YELLOW}اطلاعات نصب در فایل زیر ذخیره شده است:${NC}"
-    echo -e "${GREEN}$INSTALL_DIR/installation-info.txt${NC}"
 }
 
 # ------------------- تابع اصلی -------------------
@@ -740,7 +715,6 @@ main() {
     
     echo -e "\n${GREEN}برای مشاهده جزئیات کامل، فایل لاگ را بررسی کنید:${NC}"
     echo -e "${YELLOW}tail -f /var/log/zhina-install.log${NC}"
-    echo -e "\n${GREEN}نصب با موفقیت به پایان رسید!${NC}"
 }
 
 main
