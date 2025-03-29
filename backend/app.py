@@ -156,8 +156,8 @@ async def create_user(
 @app.post("/api/v1/domains")
 async def add_domain(
     domain_data: schemas.DomainCreate,
-    manager: DomainManager = Depends(DomainManager))
-:
+    manager: DomainManager = Depends(DomainManager)
+ ):   
     return manager.create(domain_data)
 
 @app.get("/api/v1/xray/config")
