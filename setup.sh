@@ -3,7 +3,7 @@ set -euo pipefail
 exec > >(tee -a "/var/log/zhina-install.log") 2>&1
 
 # ------------------- تنظیمات اصلی -------------------
-INSTALL_DIR="/opt/zhina"  # تغییر از /root به /opt برای مشکلات دسترسی
+INSTALL_DIR="/root/zhina"
 BACKEND_DIR="$INSTALL_DIR/backend"
 CONFIG_DIR="/etc/zhina"
 LOG_DIR="/var/log/zhina"
@@ -25,6 +25,7 @@ XRAY_PATH="/$(openssl rand -hex 8)"
 SECRETS_DIR="/etc/zhina/secrets"
 DEFAULT_THEME="dark"
 DEFAULT_LANGUAGE="fa"
+PANEL_DOMAIN=""
 
 # ------------------- رنگ‌ها و توابع -------------------
 RED='\033[0;31m'
@@ -44,9 +45,15 @@ warning() { echo -e "${YELLOW}[!] $1${NC}"; }
 
 # ------------------- دریافت اطلاعات ادمین -------------------
 get_admin_credentials() {
-    read -p "لطفا ایمیل ادمین را وارد کنید: " ADMIN_EMAIL
+    while [[ -z "$ADMIN_EMAIL" ]]; do
+        read -p "لطفا ایمیل ادمین را وارد کنید: " ADMIN_EMAIL
+        if [[ -z "$ADMIN_EMAIL" ]]; then
+            echo -e "${RED}ایمیل ادمین نمی‌تواند خالی باشد!${NC}"
+        fi
+    done
+
     while [[ -z "$ADMIN_PASS" ]]; do
-        read -sp "لطفا رمز عبور ادمین را وارد کنید: " ADMIN_PASS
+        read -sp "لطفا رمز عبور ادمین را وارد کنید (حداقل 8 کاراکتر): " ADMIN_PASS
         echo
         if [[ ${#ADMIN_PASS} -lt 8 ]]; then
             echo -e "${RED}رمز عبور باید حداقل 8 کاراکتر باشد!${NC}"
@@ -68,6 +75,13 @@ check_system() {
     [[ "$ID" != "ubuntu" && "$ID" != "debian" ]] && 
         warning "این اسکریپت فقط بر روی Ubuntu/Debian تست شده است"
     
+    # بررسی وجود دستورات پایه
+    for cmd in curl wget git python3 pip3; do
+        if ! command -v $cmd &> /dev/null; then
+            error "دستور $cmd یافت نشد!"
+        fi
+    done
+    
     success "بررسی سیستم کامل شد"
 }
 
@@ -83,6 +97,9 @@ install_prerequisites() {
         curl wget openssl unzip uuid-runtime \
         certbot python3-certbot-nginx || error "خطا در نصب پکیج‌ها"
     
+    # بررسی نسخه pip
+    pip3 install --upgrade pip || warning "خطا در بروزرسانی pip"
+    
     success "پیش‌نیازها با موفقیت نصب شدند"
 }
 
@@ -96,7 +113,6 @@ setup_environment() {
     fi
     
     mkdir -p \
-        "$INSTALL_DIR" \
         "$BACKEND_DIR" \
         "$CONFIG_DIR" \
         "$LOG_DIR/panel" \
@@ -104,8 +120,8 @@ setup_environment() {
         "$SECRETS_DIR" \
         "/etc/xray" || error "خطا در ایجاد دایرکتوری‌ها"
     
-    # انتقال محتوا به پوشه backend
-    if [ -d "$INSTALL_DIR" ] && [ "$(ls -A $INSTALL_DIR | grep -vE 'backend|venv')" ]; then
+    # انتقال محتوای موجود به پوشه backend
+    if [ "$(ls -A $INSTALL_DIR | grep -vE 'backend|venv')" ]; then
         mv $INSTALL_DIR/* $BACKEND_DIR/ 2>/dev/null || true
     fi
     
@@ -113,12 +129,19 @@ setup_environment() {
     chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR" "$LOG_DIR" "$SECRETS_DIR"
     chmod -R 750 "$INSTALL_DIR" "$LOG_DIR" "$SECRETS_DIR"
     
+    # ایجاد دایرکتوری موقت برای postgres
+    mkdir -p /root/zhina
+    chown postgres:postgres /root/zhina
+    
     success "محیط سیستم تنظیم شد"
 }
 
 # ------------------- تنظیم دیتابیس -------------------
 setup_database() {
     info "تنظیم پایگاه داده PostgreSQL..."
+    
+    # راه‌اندازی سرویس PostgreSQL در صورت عدم اجرا
+    systemctl start postgresql || error "خطا در راه‌اندازی PostgreSQL"
     
     sudo -u postgres psql <<EOF || error "خطا در اجرای دستورات PostgreSQL"
     DROP DATABASE IF EXISTS $DB_NAME;
@@ -137,14 +160,142 @@ EOF
     GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO $DB_USER;
     " || error "خطا در اعطای دسترسی‌های بیشتر به کاربر دیتابیس"
     
-    local pg_conf="/etc/postgresql/$(ls /etc/postgresql)/main/postgresql.conf"
-    sed -i '/^#listen_addresses/s/^#//; s/localhost/*/' "$pg_conf"
-    echo "host $DB_NAME $DB_USER 127.0.0.1/32 scram-sha-256" >> /etc/postgresql/*/main/pg_hba.conf
+    local pg_conf="/etc/postgresql/$(ls /etc/postgresql | head -1)/main/postgresql.conf"
+    if [ -f "$pg_conf" ]; then
+        sed -i '/^#listen_addresses/s/^#//; s/localhost/*/' "$pg_conf"
+        echo "host $DB_NAME $DB_USER 127.0.0.1/32 scram-sha-256" >> /etc/postgresql/*/main/pg_hba.conf
+    else
+        warning "فایل پیکربندی PostgreSQL یافت نشد!"
+    fi
     
     systemctl restart postgresql || error "خطا در راه‌اندازی مجدد PostgreSQL"
     
     sudo -u postgres psql -d "$DB_NAME" <<EOF
-    [همان دستورات قبلی برای ایجاد جداول]
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(50) UNIQUE NOT NULL,
+        email VARCHAR(100) UNIQUE,
+        hashed_password VARCHAR(255) NOT NULL,
+        uuid UUID DEFAULT uuid_generate_v4(),
+        traffic_limit BIGINT DEFAULT 0,
+        usage_duration INTEGER DEFAULT 0,
+        simultaneous_connections INTEGER DEFAULT 1,
+        is_active BOOLEAN DEFAULT TRUE,
+        is_admin BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS domains (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) UNIQUE NOT NULL,
+        description TEXT,
+        owner_id INTEGER REFERENCES users(id),
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS subscriptions (
+        id SERIAL PRIMARY KEY,
+        uuid UUID DEFAULT uuid_generate_v4(),
+        data_limit BIGINT,
+        expiry_date TIMESTAMP,
+        max_connections INTEGER,
+        user_id INTEGER REFERENCES users(id),
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS settings (
+        id SERIAL PRIMARY KEY,
+        language VARCHAR(10) DEFAULT '$DEFAULT_LANGUAGE',
+        theme VARCHAR(20) DEFAULT '$DEFAULT_THEME',
+        enable_notifications BOOLEAN DEFAULT TRUE,
+        preferences JSONB,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS nodes (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        ip_address VARCHAR(45) NOT NULL,
+        port INTEGER NOT NULL,
+        protocol VARCHAR(20) NOT NULL,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS inbounds (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        settings JSONB NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS xray_configs (
+        id SERIAL PRIMARY KEY,
+        config_name VARCHAR(100) NOT NULL,
+        protocol VARCHAR(20) NOT NULL,
+        port INTEGER NOT NULL,
+        settings JSONB NOT NULL,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS xray_users (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        username VARCHAR(100),
+        email VARCHAR(100),
+        password VARCHAR(100),
+        limit_ip INTEGER,
+        limit_device INTEGER,
+        expire_date TIMESTAMP,
+        data_limit BIGINT,
+        enabled BOOLEAN DEFAULT TRUE,
+        config_id INTEGER REFERENCES xray_configs(id),
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS user_traffic (
+        id SERIAL PRIMARY KEY,
+        user_id UUID REFERENCES xray_users(id),
+        download BIGINT DEFAULT 0,
+        upload BIGINT DEFAULT 0,
+        total BIGINT GENERATED ALWAYS AS (download + upload) STORED,
+        date DATE NOT NULL DEFAULT CURRENT_DATE,
+        UNIQUE(user_id, date)
+    );
+
+    CREATE TABLE IF NOT EXISTS connection_logs (
+        id SERIAL PRIMARY KEY,
+        user_id UUID REFERENCES xray_users(id),
+        ip VARCHAR(45) NOT NULL,
+        user_agent TEXT,
+        connected_at TIMESTAMP DEFAULT NOW(),
+        disconnected_at TIMESTAMP,
+        duration INTERVAL GENERATED ALWAYS AS (
+            CASE WHEN disconnected_at IS NULL THEN NULL
+            ELSE disconnected_at - connected_at END
+        ) STORED
+    );
+
+    INSERT INTO users (username, email, hashed_password, uuid, traffic_limit, usage_duration, simultaneous_connections, is_active, is_admin, created_at, updated_at)
+    VALUES ('$ADMIN_USER', '$ADMIN_EMAIL', crypt('$ADMIN_PASS', gen_salt('bf')), uuid_generate_v4(), 0, 0, 1, TRUE, TRUE, NOW(), NOW())
+    ON CONFLICT (username) DO NOTHING;
+
+    INSERT INTO settings (language, theme, enable_notifications)
+    VALUES ('$DEFAULT_LANGUAGE', '$DEFAULT_THEME', TRUE)
+    ON CONFLICT (id) DO NOTHING;
+
+    INSERT INTO xray_configs (config_name, protocol, port, settings)
+    VALUES ('default_vless', 'vless', 8443, '{"flow": "xtls-rprx-vision", "security": "reality"}'),
+           ('default_vmess', 'vmess', $XRAY_HTTP_PORT, '{"network": "ws", "path": "$XRAY_PATH"}')
+    ON CONFLICT (id) DO NOTHING;
 EOF
     
     success "پایگاه داده و جداول با موفقیت ایجاد شدند"
@@ -157,19 +308,18 @@ setup_python() {
     python3 -m venv "$INSTALL_DIR/venv" || error "خطا در ایجاد محیط مجازی"
     source "$INSTALL_DIR/venv/bin/activate"
     
-    pip install --upgrade pip==22.0.2 wheel==0.37.1 || error "خطا در بروزرسانی pip و wheel"
+    pip install --upgrade pip wheel || error "خطا در بروزرسانی pip و wheel"
     
     # یافتن فایل requirements.txt
     REQ_FILE="$BACKEND_DIR/requirements.txt"
     if [[ ! -f "$REQ_FILE" ]]; then
-        REQ_FILE=$(find "$INSTALL_DIR" -name "requirements.txt" | head -1)
-        [[ -z "$REQ_FILE" ]] && error "فایل requirements.txt یافت نشد"
+        error "فایل requirements.txt در مسیر $BACKEND_DIR یافت نشد"
     fi
     
     pip install -r "$REQ_FILE" || error "خطا در نصب نیازمندی‌ها"
     
     # نصب uvicorn اگر وجود ندارد
-    if [ ! -f "$INSTALL_DIR/venv/bin/uvicorn" ]; then
+    if ! command -v uvicorn &> /dev/null; then
         pip install uvicorn || error "خطا در نصب uvicorn"
     fi
     
@@ -286,6 +436,13 @@ EOF
     systemctl daemon-reload
     systemctl enable --now xray || error "خطا در راه‌اندازی Xray"
     
+    # بررسی وضعیت سرویس
+    sleep 2
+    if ! systemctl is-active --quiet xray; then
+        journalctl -u xray -n 20 --no-pager
+        error "سرویس Xray فعال نشد. لطفاً خطاهای بالا را بررسی کنید."
+    fi
+    
     success "Xray با موفقیت نصب و پیکربندی شد"
 }
 
@@ -297,10 +454,15 @@ setup_nginx() {
     
     read -p "آیا از دامنه اختصاصی استفاده می‌کنید؟ (y/n) " use_domain
     if [[ "$use_domain" =~ ^[Yy]$ ]]; then
-        read -p "نام دامنه خود را وارد کنید: " domain
-        PANEL_DOMAIN="$domain"
+        while [[ -z "$PANEL_DOMAIN" ]]; do
+            read -p "نام دامنه خود را وارد کنید (مثال: example.com): " PANEL_DOMAIN
+            if [[ -z "$PANEL_DOMAIN" ]]; then
+                echo -e "${RED}نام دامنه نمی‌تواند خالی باشد!${NC}"
+            fi
+        done
     else
         PANEL_DOMAIN="$(curl -s ifconfig.me)"
+        echo -e "${YELLOW}از آدرس IP عمومی استفاده می‌شود: ${PANEL_DOMAIN}${NC}"
     fi
 
     cat > /etc/nginx/conf.d/zhina.conf <<EOF
@@ -329,6 +491,14 @@ server {
 }
 EOF
 
+    # حذف فایل پیش‌فرض nginx
+    rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+    
+    # تست پیکربندی nginx
+    if ! nginx -t; then
+        error "خطا در پیکربندی Nginx"
+    fi
+    
     systemctl start nginx || error "خطا در راه‌اندازی Nginx"
     
     success "Nginx با موفقیت پیکربندی شد"
@@ -345,14 +515,46 @@ setup_ssl() {
             -out /etc/nginx/ssl/fullchain.pem \
             -subj "/CN=$PANEL_DOMAIN"
         ssl_type="self-signed"
+        
+        # به‌روزرسانی پیکربندی nginx برای SSL
+        cat >> /etc/nginx/conf.d/zhina.conf <<EOF
+
+server {
+    listen 443 ssl;
+    server_name $PANEL_DOMAIN;
+    
+    ssl_certificate /etc/nginx/ssl/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+    
+    location / {
+        proxy_pass http://127.0.0.1:$PANEL_PORT;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+    
+    location $XRAY_PATH {
+        proxy_pass http://127.0.0.1:$XRAY_HTTP_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+    }
+}
+EOF
     else
-        if certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --agree-tos --email admin@${PANEL_DOMAIN#*.}; then
+        if certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --agree-tos --email admin@${PANEL_DOMAIN#*.} || \
+           certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --agree-tos --email admin@${PANEL_DOMAIN#*.}; then
             ssl_type="letsencrypt"
             echo "0 12 * * * root certbot renew --quiet" >> /etc/crontab
         else
-            error "خطا در دریافت گواهی Let's Encrypt"
+            warning "خطا در دریافت گواهی Let's Encrypt، از گواهی خودامضا استفاده می‌شود"
+            setup_ssl  # بازگشت به حالت خودامضا
+            return
         fi
     fi
+    
+    systemctl restart nginx || error "خطا در راه‌اندازی مجدد Nginx"
     
     success "SSL تنظیم شد (نوع: $ssl_type)"
 }
@@ -395,12 +597,15 @@ EOF
 setup_panel_service() {
     info "تنظیم سرویس پنل..."
     
-    # پیدا کردن فایل اصلی پایتون
-    APP_FILE=$(find "$BACKEND_DIR" -name "app.py" -o -name "main.py" | head -1)
-    [[ -z "$APP_FILE" ]] && error "فایل app.py/main.py یافت نشد!"
+    # فایل اصلی پایتون
+    APP_FILE="$BACKEND_DIR/app.py"
+    if [[ ! -f "$APP_FILE" ]]; then
+        error "فایل app.py در مسیر $BACKEND_DIR یافت نشد!"
+    fi
     
-    PYTHON_PATH=$(dirname "$APP_FILE")
-    APP_NAME=$(basename "$APP_FILE" .py)
+    # مسیر اصلی پایتون
+    PYTHON_PATH="$BACKEND_DIR"
+    APP_NAME="app"
     
     cat > /etc/systemd/system/zhina-panel.service <<EOF
 [Unit]
@@ -434,9 +639,9 @@ EOF
     systemctl daemon-reload
     systemctl enable --now zhina-panel || error "خطا در راه‌اندازی سرویس پنل"
     
-    sleep 5
+    sleep 3
     if ! systemctl is-active --quiet zhina-panel; then
-        journalctl -u zhina-panel -n 50 --no-pager
+        journalctl -u zhina-panel -n 30 --no-pager
         error "سرویس پنل فعال نشد. لطفاً خطاهای بالا را بررسی کنید."
     fi
     
@@ -445,7 +650,10 @@ EOF
 
 # ------------------- نمایش اطلاعات نصب -------------------
 show_installation_info() {
-    local panel_url="http://${PANEL_DOMAIN}:${PANEL_PORT}"
+    local panel_url="https://${PANEL_DOMAIN}"
+    if [[ "$PANEL_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        panel_url="http://${PANEL_DOMAIN}:${PANEL_PORT}"
+    fi
     
     echo -e "\n${GREEN}=== نصب با موفقیت کامل شد ===${NC}"
     echo -e "\n${YELLOW}مشخصات دسترسی:${NC}"
@@ -459,6 +667,80 @@ show_installation_info() {
     echo -e "• Public Key: ${YELLOW}${REALITY_PUBLIC_KEY}${NC}"
     echo -e "• Short ID: ${YELLOW}${REALITY_SHORT_ID}${NC}"
     echo -e "• مسیر WS: ${YELLOW}${XRAY_PATH}${NC}"
+    echo -e "• Port VLESS: ${YELLOW}8443${NC}"
+    echo -e "• Port VMESS: ${YELLOW}${XRAY_HTTP_PORT}${NC}"
     
     echo -e "\n${YELLOW}اطلاعات دیتابیس:${NC}"
-    echo -e "• نام دیتابی
+    echo -e "• نام دیتابیس: ${YELLOW}${DB_NAME}${NC}"
+    echo -e "• کاربر دیتابیس: ${YELLOW}${DB_USER}${NC}"
+    echo -e "• رمز عبور دیتابیس: ${YELLOW}${DB_PASSWORD}${NC}"
+    
+    echo -e "\n${YELLOW}دستورات مدیریت:${NC}"
+    echo -e "• وضعیت سرویس‌ها: ${GREEN}systemctl status xray nginx zhina-panel postgresql${NC}"
+    echo -e "• راه‌اندازی مجدد پنل: ${GREEN}systemctl restart zhina-panel${NC}"
+    echo -e "• مشاهده لاگ پنل: ${GREEN}tail -f $LOG_DIR/panel/{access,error}.log${NC}"
+    echo -e "• مشاهده لاگ Xray: ${GREEN}journalctl -u xray -f${NC}"
+    
+    cat > "$INSTALL_DIR/installation-info.txt" <<EOF
+=== Zhina Panel Installation Details ===
+
+Panel URL: ${panel_url}
+Admin Username: ${ADMIN_USER}
+Admin Email: ${ADMIN_EMAIL}
+Admin Password: ${ADMIN_PASS}
+
+Database Info:
+- Database: ${DB_NAME}
+- Username: ${DB_USER}
+- Password: ${DB_PASSWORD}
+
+Xray Settings:
+- VLESS+Reality:
+  • Port: 8443
+  • UUID: ${XRAY_UUID}
+  • Public Key: ${REALITY_PUBLIC_KEY}
+  • Short ID: ${REALITY_SHORT_ID}
+- VMESS+WS:
+  • Port: ${XRAY_HTTP_PORT}
+  • Path: ${XRAY_PATH}
+
+Log Files:
+- Panel Access: ${LOG_DIR}/panel/access.log
+- Panel Errors: ${LOG_DIR}/panel/error.log
+- Xray Logs: /var/log/zhina/xray-{access,error}.log
+EOF
+
+    chmod 600 "$INSTALL_DIR/installation-info.txt"
+    echo -e "\n${YELLOW}اطلاعات نصب در فایل زیر ذخیره شده است:${NC}"
+    echo -e "${GREEN}$INSTALL_DIR/installation-info.txt${NC}"
+}
+
+# ------------------- تابع اصلی -------------------
+main() {
+    clear
+    echo -e "${GREEN}"
+    echo "   ____  _     _           "
+    echo "  |__ / (_) __| | ___  _ _ "
+    echo "   |_ \ | |/ _\` |/ _ \| '_|"
+    echo "  |___/ |_|\__,_|\___/|_|  "
+    echo -e "${NC}"
+    
+    check_system
+    get_admin_credentials
+    install_prerequisites
+    setup_environment
+    setup_database
+    setup_python
+    install_xray
+    setup_nginx
+    setup_ssl
+    setup_env
+    setup_panel_service
+    show_installation_info
+    
+    echo -e "\n${GREEN}برای مشاهده جزئیات کامل، فایل لاگ را بررسی کنید:${NC}"
+    echo -e "${YELLOW}tail -f /var/log/zhina-install.log${NC}"
+    echo -e "\n${GREEN}نصب با موفقیت به پایان رسید!${NC}"
+}
+
+main
