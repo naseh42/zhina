@@ -5,6 +5,7 @@ exec > >(tee -a "/var/log/zhina-install.log") 2>&1
 # ------------------- تنظیمات اصلی -------------------
 INSTALL_DIR="/opt/zhina"
 BACKEND_DIR="$INSTALL_DIR/backend"
+FRONTEND_DIR="/var/www/zhina"  # اضافه شد
 CONFIG_DIR="/etc/zhina"
 LOG_DIR="/var/log/zhina"
 XRAY_DIR="/usr/local/bin/xray"
@@ -110,18 +111,27 @@ setup_environment() {
     
     mkdir -p \
         "$BACKEND_DIR" \
+        "$FRONTEND_DIR" \  # اضافه شد
         "$CONFIG_DIR" \
         "$LOG_DIR/panel" \
         "$XRAY_DIR" \
         "$SECRETS_DIR" \
         "/etc/xray" || error "خطا در ایجاد دایرکتوری‌ها"
     
-    # انتقال فایل‌های پروژه از مسیر فعلی به مسیر نصب
+    # انتقال فایل‌های پروژه
     if [ -d "$(pwd)/backend" ]; then
-        cp -r "$(pwd)/backend"/* "$BACKEND_DIR"/ || error "خطا در انتقال فایل‌های پروژه"
+        cp -r "$(pwd)/backend"/* "$BACKEND_DIR"/ || error "خطا در انتقال فایل‌های بک‌اند"
         chown -R "$SERVICE_USER":"$SERVICE_USER" "$BACKEND_DIR"
     else
         warning "پوشه backend در مسیر جاری یافت نشد!"
+    fi
+    
+    if [ -d "$(pwd)/frontend" ]; then
+        cp -r "$(pwd)/frontend"/* "$FRONTEND_DIR"/ || error "خطا در انتقال فایل‌های فرانت‌اند"
+        chown -R www-data:www-data "$FRONTEND_DIR"
+        chmod -R 755 "$FRONTEND_DIR"
+    else
+        warning "پوشه frontend در مسیر جاری یافت نشد!"
     fi
     
     touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
@@ -131,7 +141,7 @@ setup_environment() {
     mkdir -p /opt/zhina/tmp
     chown postgres:postgres /opt/zhina/tmp
     
-    success "محیط سیستم تنظیم شد"
+    success "محیط سیستم و فایل‌ها تنظیم شد"
 }
 
 # ------------------- تنظیم دیتابیس -------------------
@@ -307,7 +317,7 @@ setup_python() {
     
     pip install --upgrade pip wheel || error "خطا در بروزرسانی pip و wheel"
     
-    # نصب نیازمندی‌های اصلی بدون نیاز به فایل requirements.txt
+    # نصب نیازمندی‌های اصلی
     pip install \
         fastapi==0.95.0 \
         uvicorn==0.21.0 \
@@ -467,13 +477,23 @@ server {
     listen 80;
     server_name $PANEL_DOMAIN;
     
+    # Frontend
+    root $FRONTEND_DIR;
+    index index.html;
+    
     location / {
+        try_files \$uri /index.html;
+    }
+    
+    # Backend API
+    location /api {
         proxy_pass http://127.0.0.1:$PANEL_PORT;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     }
     
+    # Xray Websocket
     location $XRAY_PATH {
         proxy_pass http://127.0.0.1:$XRAY_HTTP_PORT;
         proxy_http_version 1.1;
@@ -482,6 +502,7 @@ server {
         proxy_set_header Host \$host;
     }
     
+    # Let's Encrypt
     location /.well-known/acme-challenge/ {
         root /var/www/html;
     }
@@ -494,7 +515,7 @@ EOF
         error "خطا در پیکربندی Nginx"
     fi
     
-    systemctl start nginx || error "خطا در راه‌اندازی Nginx"
+    systemctl restart nginx || error "خطا در راه‌اندازی Nginx"
     
     success "Nginx با موفقیت پیکربندی شد"
 }
@@ -520,11 +541,17 @@ server {
     ssl_certificate /etc/nginx/ssl/fullchain.pem;
     ssl_certificate_key /etc/nginx/ssl/privkey.pem;
     
+    root $FRONTEND_DIR;
+    index index.html;
+    
     location / {
+        try_files \$uri /index.html;
+    }
+    
+    location /api {
         proxy_pass http://127.0.0.1:$PANEL_PORT;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     }
     
     location $XRAY_PATH {
@@ -532,7 +559,6 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
     }
 }
 EOF
@@ -591,18 +617,9 @@ EOF
 setup_panel_service() {
     info "تنظیم سرویس پنل..."
     
-    APP_FILE="$BACKEND_DIR/app.py"
-    if [[ ! -f "$APP_FILE" ]]; then
-        warning "فایل app.py در مسیر $BACKEND_DIR یافت نشد! یک فایل نمونه ایجاد می‌کنیم..."
-        cat > "$APP_FILE" <<EOF
-from fastapi import FastAPI
-
-app = FastAPI()
-
-@app.get("/")
-def read_root():
-    return {"message": "خوش آمدید به پنل مدیریت Zhina"}
-EOF
+    # اگر فایل app.py وجود ندارد، از فایل اصلی شما استفاده می‌کنیم
+    if [[ ! -f "$BACKEND_DIR/app.py" && -f "$(pwd)/backend/app.py" ]]; then
+        cp "$(pwd)/backend/app.py" "$BACKEND_DIR"/
     fi
     
     cat > /etc/systemd/system/zhina-panel.service <<EOF
@@ -650,7 +667,7 @@ EOF
 show_installation_info() {
     local panel_url="https://${PANEL_DOMAIN}"
     if [[ "$PANEL_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        panel_url="http://${PANEL_DOMAIN}:${PANEL_PORT}"
+        panel_url="http://${PANEL_DOMAIN}"
     fi
     
     echo -e "\n${GREEN}=== نصب با موفقیت کامل شد ===${NC}"
@@ -671,6 +688,10 @@ show_installation_info() {
     echo -e "• کاربر دیتابیس: ${YELLOW}${DB_USER}${NC}"
     echo -e "• رمز عبور دیتابیس: ${YELLOW}${DB_PASSWORD}${NC}"
     
+    echo -e "\n${YELLOW}مسیرهای مهم:${NC}"
+    echo -e "• فایل‌های فرانت‌اند: ${GREEN}${FRONTEND_DIR}${NC}"
+    echo -e "• فایل‌های بک‌اند: ${GREEN}${BACKEND_DIR}${NC}"
+    
     echo -e "\n${YELLOW}دستورات مدیریت:${NC}"
     echo -e "• وضعیت سرویس‌ها: ${GREEN}systemctl status xray nginx zhina-panel postgresql${NC}"
     echo -e "• مشاهده لاگ پنل: ${GREEN}tail -f $LOG_DIR/panel/{access,error}.log${NC}"
@@ -683,6 +704,9 @@ Panel URL: ${panel_url}
 Admin Username: ${ADMIN_USER}
 Admin Email: ${ADMIN_EMAIL}
 Admin Password: ${ADMIN_PASS}
+
+Frontend Path: ${FRONTEND_DIR}
+Backend Path: ${BACKEND_DIR}
 
 Database Info:
 - Database: ${DB_NAME}
