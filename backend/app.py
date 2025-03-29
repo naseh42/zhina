@@ -13,7 +13,7 @@ import sys
 import psutil
 
 # تنظیم مسیرهای پروژه
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 # ایمپورت‌های داخلی
@@ -46,10 +46,10 @@ app = FastAPI(
 )
 
 # تنظیمات تمپلیت و استاتیک
-TEMPLATE_DIR = PROJECT_ROOT / "frontend/templates"
-STATIC_DIR = PROJECT_ROOT / "frontend/static"
-templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+TEMPLATE_DIR = "/var/lib/zhina/frontend/templates"
+STATIC_DIR = "/var/lib/zhina/frontend/static"
+templates = Jinja2Templates(directory=TEMPLATE_DIR)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # CORS
 app.add_middleware(
@@ -127,7 +127,7 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         "stats": stats
     })
 
-# روت‌های API
+# روت‌های API جدید
 @app.get("/api/v1/server-stats")
 async def server_stats(manager: DashboardManager = Depends(DashboardManager)):
     return manager.get_server_stats()
@@ -152,4 +152,4 @@ async def get_xray_config(manager: XrayManager = Depends(XrayManager)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host=settings.SERVER_HOST, port=settings.SERVER_PORT)
+    uvicorn.run(app, host="0.0.0.0", port=8001)
