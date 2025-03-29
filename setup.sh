@@ -135,7 +135,6 @@ EOF
     
     systemctl restart postgresql || error "خطا در راه‌اندازی مجدد PostgreSQL"
     
-    # ایجاد جداول و درج کاربر ادمین
     sudo -u postgres psql -d "$DB_NAME" <<EOF
     CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
@@ -316,8 +315,16 @@ setup_python() {
     python3 -m venv "$INSTALL_DIR/venv" || error "خطا در ایجاد محیط مجازی"
     source "$INSTALL_DIR/venv/bin/activate"
     
-    pip install -U pip wheel || error "خطا در بروزرسانی pip"
-    pip install -r "$backend_dir/requirements.txt" || error "خطا در نصب نیازمندی‌ها"
+    # نصب pip و wheel با نسخه ثابت برای جلوگیری از مشکلات
+    pip install --upgrade pip==22.0.2 wheel==0.37.1 || error "خطا در بروزرسانی pip و wheel"
+    
+    # یافتن صحیح فایل requirements.txt
+    local req_file="$backend_dir/requirements.txt"
+    if [[ ! -f "$req_file" ]]; then
+        error "فایل requirements.txt در مسیر $backend_dir یافت نشد"
+    fi
+    
+    pip install -r "$req_file" || error "خطا در نصب نیازمندی‌ها"
     
     deactivate
     
