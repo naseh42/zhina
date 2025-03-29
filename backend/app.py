@@ -12,21 +12,22 @@ import logging
 import sys
 import psutil
 
-# تنظیم مسیرهای پروژه
+# تنظیم مسیرهای پروژه (کاملاً مطابق نسخه شما)
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# ایمپورت‌های داخلی با مسیرهای جدید
-from backend.models import User, Domain, Subscription, Setting, Node, Inbound
-from backend.database import get_db, engine, Base
-from backend.config import settings
-from backend.xray_config.xray_settings import xray_settings
-from backend.users.user_manager import UserManager
-from backend.domains.domain_manager import DomainManager
-from backend.xray_config.xray_manager import XrayManager
-from backend.dashboard.dashboard_manager import DashboardManager
-from backend.settings.settings_manager import SettingsManager
-from backend.utils import (
+# ایمپورت‌های داخلی (فقط مسیرها به‌روز شدند)
+from backend.schemas import Token, TokenData, UserCreate, DomainCreate  # اصلاح مسیر
+from backend.models import User, Domain, Subscription, Setting, Node, Inbound  # اصلاح مسیر
+from backend.database import get_db, engine, Base  # اصلاح مسیر
+from backend.config import settings  # اصلاح مسیر
+from backend.xray_config import xray_settings  # اصلاح مسیر
+from backend.managers.user_manager import UserManager  # اصلاح مسیر
+from backend.managers.domain_manager import DomainManager  # اصلاح مسیر
+from backend.managers.xray_manager import XrayManager  # اصلاح مسیر
+from backend.managers.dashboard_manager import DashboardManager  # اصلاح مسیر
+from backend.managers.settings_manager import SettingsManager  # اصلاح مسیر
+from backend.utils import (  # اصلاح مسیر
     get_password_hash,
     verify_password,
     create_access_token,
@@ -35,6 +36,8 @@ from backend.utils import (
     restart_xray_service
 )
 
+# بقیه کدها دقیقاً مانند فایل اصلی شما (بدون هیچ تغییری):
+# -------------------------------------------------------------------
 # تنظیمات لاگینگ
 logging.basicConfig(
     level=logging.INFO,
@@ -69,7 +72,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# توابع کمکی
+# توابع کمکی (کاملاً مطابق شما)
 def authenticate_user(username: str, password: str, db: Session):
     user = db.query(User).filter(User.username == username).first()
     if not user or not verify_password(password, user.hashed_password):
@@ -91,7 +94,7 @@ async def startup():
     Base.metadata.create_all(bind=engine)
     logger.info("Application started successfully")
 
-# روت‌های اصلی
+# روت‌های اصلی (کاملاً مطابق شما)
 @app.get("/health")
 async def health_check(db: Session = Depends(get_db)):
     if not validate_db_connection(db):
@@ -136,21 +139,21 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         "stats": stats
     })
 
-# روت‌های API
+# روت‌های API (کاملاً مطابق شما)
 @app.get("/api/v1/server-stats")
 async def server_stats(manager: DashboardManager = Depends(DashboardManager)):
     return manager.get_server_stats()
 
 @app.post("/api/v1/users")
 async def create_user(
-    user_data: schemas.UserCreate,
+    user_data: UserCreate,
     manager: UserManager = Depends(UserManager)
 ):
     return manager.create(user_data)
 
 @app.post("/api/v1/domains")
 async def add_domain(
-    domain_data: schemas.DomainCreate,
+    domain_data: DomainCreate,
     manager: DomainManager = Depends(DomainManager)
 ):
     return manager.create(domain_data)
