@@ -8,7 +8,7 @@ CONFIG_DIR="/etc/zhina"
 LOG_DIR="/var/log/zhina"
 XRAY_DIR="/usr/local/bin/xray"
 XRAY_EXECUTABLE="$XRAY_DIR/xray"
-XRAY_CONFIG="/etc/xray/config.json"  # تغییر مسیر به /etc/xray
+XRAY_CONFIG="/etc/xray/config.json"
 SERVICE_USER="zhina"
 DB_NAME="zhina_db"
 DB_USER="zhina_user"
@@ -95,12 +95,11 @@ setup_environment() {
     fi
     
     mkdir -p \
-        "$INSTALL_DIR" \
         "$CONFIG_DIR" \
         "$LOG_DIR/panel" \
         "$XRAY_DIR" \
         "$SECRETS_DIR" \
-        "/etc/xray" || error "خطا در ایجاد دایرکتوری‌ها"  # اضافه کردن /etc/xray
+        "/etc/xray" || error "خطا در ایجاد دایرکتوری‌ها"
     
     touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
     chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR" "$LOG_DIR" "$SECRETS_DIR"
@@ -151,167 +150,56 @@ EOF
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
     );
-
-    CREATE TABLE IF NOT EXISTS domains (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(255) UNIQUE NOT NULL,
-        description TEXT,
-        owner_id INTEGER REFERENCES users(id),
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS subscriptions (
-        id SERIAL PRIMARY KEY,
-        uuid UUID DEFAULT uuid_generate_v4(),
-        data_limit BIGINT,
-        expiry_date TIMESTAMP,
-        max_connections INTEGER,
-        user_id INTEGER REFERENCES users(id),
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS settings (
-        id SERIAL PRIMARY KEY,
-        language VARCHAR(10) DEFAULT '$DEFAULT_LANGUAGE',
-        theme VARCHAR(20) DEFAULT '$DEFAULT_THEME',
-        enable_notifications BOOLEAN DEFAULT TRUE,
-        preferences JSONB,
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS nodes (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
-        ip_address VARCHAR(45) NOT NULL,
-        port INTEGER NOT NULL,
-        protocol VARCHAR(20) NOT NULL,
-        is_active BOOLEAN DEFAULT TRUE,
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS inbounds (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
-        settings JSONB NOT NULL,
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS xray_configs (
-        id SERIAL PRIMARY KEY,
-        config_name VARCHAR(100) NOT NULL,
-        protocol VARCHAR(20) NOT NULL,
-        port INTEGER NOT NULL,
-        settings JSONB NOT NULL,
-        is_active BOOLEAN DEFAULT TRUE,
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS xray_users (
-        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        username VARCHAR(100),
-        email VARCHAR(100),
-        password VARCHAR(100),
-        limit_ip INTEGER,
-        limit_device INTEGER,
-        expire_date TIMESTAMP,
-        data_limit BIGINT,
-        enabled BOOLEAN DEFAULT TRUE,
-        config_id INTEGER REFERENCES xray_configs(id),
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS user_traffic (
-        id SERIAL PRIMARY KEY,
-        user_id UUID REFERENCES xray_users(id),
-        download BIGINT DEFAULT 0,
-        upload BIGINT DEFAULT 0,
-        total BIGINT GENERATED ALWAYS AS (download + upload) STORED,
-        date DATE NOT NULL DEFAULT CURRENT_DATE,
-        UNIQUE(user_id, date)
-    );
-
-    CREATE TABLE IF NOT EXISTS connection_logs (
-        id SERIAL PRIMARY KEY,
-        user_id UUID REFERENCES xray_users(id),
-        ip VARCHAR(45) NOT NULL,
-        user_agent TEXT,
-        connected_at TIMESTAMP DEFAULT NOW(),
-        disconnected_at TIMESTAMP,
-        duration INTERVAL GENERATED ALWAYS AS (
-            CASE WHEN disconnected_at IS NULL THEN NULL
-            ELSE disconnected_at - connected_at END
-        ) STORED
-    );
-
     INSERT INTO users (username, email, hashed_password, uuid, traffic_limit, usage_duration, simultaneous_connections, is_active, is_admin, created_at, updated_at)
     VALUES ('$ADMIN_USER', '$ADMIN_EMAIL', crypt('$ADMIN_PASS', gen_salt('bf')), uuid_generate_v4(), 0, 0, 1, TRUE, TRUE, NOW(), NOW())
     ON CONFLICT (username) DO NOTHING;
-
-    INSERT INTO settings (language, theme, enable_notifications)
-    VALUES ('$DEFAULT_LANGUAGE', '$DEFAULT_THEME', TRUE)
-    ON CONFLICT (id) DO NOTHING;
-
-    INSERT INTO xray_configs (config_name, protocol, port, settings)
-    VALUES ('default_vless', 'vless', 8443, '{"flow": "xtls-rprx-vision", "security": "reality"}'),
-           ('default_vmess', 'vmess', $XRAY_HTTP_PORT, '{"network": "ws", "path": "$XRAY_PATH"}')
-    ON CONFLICT (id) DO NOTHING;
 EOF
     
     success "پایگاه داده و جداول با موفقیت ایجاد شدند"
 }
 
-# ------------------- دریافت کدها -------------------
-clone_repository() {
-    info "دریافت کدهای برنامه..."
+# ------------------- دریافت و تنظیم کدها -------------------
+setup_repository() {
+    info "دریافت و تنظیم کدهای برنامه..."
     
-    if [[ -d "$INSTALL_DIR/.git" ]]; then
-        cd "$INSTALL_DIR"
-        git reset --hard || error "خطا در بازنشانی تغییرات"
-        git pull || error "خطا در بروزرسانی کدها"
+    # حذف محتوای قبلی (اگر وجود دارد)
+    rm -rf "$INSTALL_DIR"/* 2>/dev/null || true
+    
+    # کلون کردن ریپازیتوری
+    git clone https://github.com/naseh42/zhina.git "$INSTALL_DIR" || 
+        error "خطا در دریافت کدها"
+
+    # تنظیم ساختار پوشه‌ها
+    if [[ -d "$INSTALL_DIR/backend" ]]; then
+        backend_dir="$INSTALL_DIR/backend"
     else
-        git clone https://github.com/naseh42/zhina.git "$INSTALL_DIR" || 
-            error "خطا در دریافت کدها"
+        backend_dir="$INSTALL_DIR"
+        warning "پوشه backend یافت نشد! از ساختار ریشه استفاده می‌شود"
     fi
-    
+
+    # تنظیم مجوزها
     find "$INSTALL_DIR" -type d -exec chmod 750 {} \;
     find "$INSTALL_DIR" -type f -exec chmod 640 {} \;
     chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR"
     
-    success "کدهای برنامه دریافت شدند"
+    success "کدهای برنامه تنظیم شدند"
+    echo "$backend_dir"  # بازگرداندن مسیر backend برای استفاده در توابع دیگر
 }
 
 # ------------------- تنظیم محیط پایتون -------------------
 setup_python() {
+    local backend_dir="$1"
     info "تنظیم محیط پایتون..."
     
     python3 -m venv "$INSTALL_DIR/venv" || error "خطا در ایجاد محیط مجازی"
     source "$INSTALL_DIR/venv/bin/activate"
     
     pip install -U pip wheel || error "خطا در بروزرسانی pip"
-    pip install \
-        fastapi==0.103.2 \
-        uvicorn==0.23.2 \
-        sqlalchemy==2.0.28 \
-        psycopg2-binary==2.9.9 \
-        python-dotenv==1.0.0 \
-        pydantic-settings==2.0.3 \
-        pydantic[email] \
-        passlib==1.7.4 \
-        python-jose==3.3.0 \
-        python-multipart \
-        cryptography \
-        jinja2==3.1.2 || error "خطا در نصب نیازمندی‌ها"
+    pip install -r "$backend_dir/requirements.txt" || error "خطا در نصب نیازمندی‌ها"
     
     deactivate
     
-    chown "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/venv/bin/uvicorn"
+    chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/venv"
     chmod 750 "$INSTALL_DIR/venv/bin/uvicorn"
     
     success "محیط پایتون تنظیم شد"
@@ -493,50 +381,44 @@ setup_ssl() {
     success "SSL تنظیم شد (نوع: $ssl_type)"
 }
 
-# ------------------- تنظیم فایل .env -------------------
-setup_env_file() {
-    info "تنظیم فایل محیط (.env)..."
+# ------------------- تنظیم فایل محیط -------------------
+setup_env() {
+    local backend_dir="$1"
+    info "تنظیم فایل محیط..."
     
-    mkdir -p "$INSTALL_DIR/backend"
-    
-    cat > "$INSTALL_DIR/backend/.env" <<EOF
+    cat > "$backend_dir/.env" <<EOF
 # تنظیمات دیتابیس
-ZHINA_DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
+DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
 
 # تنظیمات Xray
-ZHINA_REALITY_PUBLIC_KEY=$REALITY_PUBLIC_KEY
-ZHINA_REALITY_PRIVATE_KEY=$REALITY_PRIVATE_KEY
-ZHINA_XRAY_UUID=$XRAY_UUID
-ZHINA_XRAY_PATH=$XRAY_PATH
-ZHINA_XRAY_HTTP_PORT=$XRAY_HTTP_PORT
+REALITY_PUBLIC_KEY=$REALITY_PUBLIC_KEY
+REALITY_PRIVATE_KEY=$REALITY_PRIVATE_KEY
+XRAY_UUID=$XRAY_UUID
+XRAY_PATH=$XRAY_PATH
+XRAY_HTTP_PORT=$XRAY_HTTP_PORT
 
 # تنظیمات امنیتی
-ZHINA_ADMIN_USERNAME=$ADMIN_USER
-ZHINA_ADMIN_PASSWORD=$ADMIN_PASS
-ZHINA_ADMIN_EMAIL=$ADMIN_EMAIL
-ZHINA_SECRET_KEY=$(openssl rand -hex 32)
-
-# تنظیمات لاگ
-ZHINA_LOG_DIR=$LOG_DIR/panel
-ZHINA_ACCESS_LOG=$LOG_DIR/panel/access.log
-ZHINA_ERROR_LOG=$LOG_DIR/panel/error.log
-ZHINA_LOG_LEVEL=info
+ADMIN_USERNAME=$ADMIN_USER
+ADMIN_PASSWORD=$ADMIN_PASS
+ADMIN_EMAIL=$ADMIN_EMAIL
+SECRET_KEY=$(openssl rand -hex 32)
 
 # تنظیمات پنل
-ZHINA_PANEL_PORT=$PANEL_PORT
-ZHINA_PANEL_DOMAIN=$PANEL_DOMAIN
-ZHINA_DEFAULT_THEME=$DEFAULT_THEME
-ZHINA_DEFAULT_LANGUAGE=$DEFAULT_LANGUAGE
+PANEL_PORT=$PANEL_PORT
+PANEL_DOMAIN=$PANEL_DOMAIN
+DEFAULT_THEME=$DEFAULT_THEME
+DEFAULT_LANGUAGE=$DEFAULT_LANGUAGE
 EOF
 
-    chown "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/backend/.env"
-    chmod 600 "$INSTALL_DIR/backend/.env"
+    chmod 600 "$backend_dir/.env"
+    chown "$SERVICE_USER":"$SERVICE_USER" "$backend_dir/.env"
     
-    success "فایل .env با موفقیت تنظیم شد"
+    success "فایل .env در $backend_dir/.env ایجاد شد"
 }
 
 # ------------------- تنظیم سرویس پنل -------------------
 setup_panel_service() {
+    local backend_dir="$1"
     info "تنظیم سرویس پنل..."
     
     cat > /etc/systemd/system/zhina-panel.service <<EOF
@@ -547,9 +429,9 @@ After=network.target postgresql.service
 [Service]
 User=$SERVICE_USER
 Group=$SERVICE_USER
-WorkingDirectory=$INSTALL_DIR/backend
+WorkingDirectory=$backend_dir
 Environment="PATH=$INSTALL_DIR/venv/bin"
-Environment="PYTHONPATH=$INSTALL_DIR/backend"
+Environment="PYTHONPATH=$backend_dir"
 ExecStart=$INSTALL_DIR/venv/bin/uvicorn \
     app:app \
     --host 0.0.0.0 \
@@ -582,9 +464,11 @@ EOF
 
 # ------------------- نمایش اطلاعات نصب -------------------
 show_installation_info() {
+    local panel_url="http://${PANEL_DOMAIN}:${PANEL_PORT}"
+    
     echo -e "\n${GREEN}=== نصب با موفقیت کامل شد ===${NC}"
     echo -e "\n${YELLOW}مشخصات دسترسی:${NC}"
-    echo -e "• پنل مدیریت: ${GREEN}http://${PANEL_DOMAIN}:${PANEL_PORT}${NC}"
+    echo -e "• پنل مدیریت: ${GREEN}${panel_url}${NC}"
     echo -e "• کاربر ادمین: ${YELLOW}${ADMIN_USER}${NC}"
     echo -e "• ایمیل ادمین: ${YELLOW}${ADMIN_EMAIL}${NC}"
     echo -e "• رمز عبور: ${YELLOW}${ADMIN_PASS}${NC}"
@@ -608,7 +492,7 @@ show_installation_info() {
     cat > "$INSTALL_DIR/installation-info.txt" <<EOF
 === Zhina Panel Installation Details ===
 
-Panel URL: http://${PANEL_DOMAIN}:${PANEL_PORT}
+Panel URL: ${panel_url}
 Admin Username: ${ADMIN_USER}
 Admin Email: ${ADMIN_EMAIL}
 Admin Password: ${ADMIN_PASS}
@@ -643,14 +527,17 @@ main() {
     get_admin_credentials
     install_prerequisites
     setup_environment
+    
+    # دریافت و تنظیم کدها
+    backend_dir=$(setup_repository)
+    
     setup_database
-    clone_repository
-    setup_python
+    setup_python "$backend_dir"
     install_xray
     setup_nginx
     setup_ssl
-    setup_env_file
-    setup_panel_service
+    setup_env "$backend_dir"
+    setup_panel_service "$backend_dir"
     show_installation_info
     
     echo -e "\n${GREEN}برای مشاهده جزئیات کامل، فایل لاگ را بررسی کنید:${NC}"
