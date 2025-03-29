@@ -42,7 +42,7 @@ class DomainCreate(BaseModel):
 
 class SubscriptionCreate(BaseModel):
     user_id: int
-    data_limit: int = Field(default=10737418240, ge=0)  # 10GB
+    data_limit: int = Field(default=10737418240, ge=0)
     expiry_date: datetime = Field(default_factory=lambda: datetime.now() + timedelta(days=30))
     max_connections: int = Field(default=3, ge=1)
 
