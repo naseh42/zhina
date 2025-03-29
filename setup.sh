@@ -104,48 +104,53 @@ install_prerequisites() {
 setup_environment() {
     info "تنظیم محیط سیستم..."
     
+    # ایجاد کاربر سرویس
     if ! id "$SERVICE_USER" &>/dev/null; then
         useradd -r -s /bin/false -d "$INSTALL_DIR" "$SERVICE_USER" || 
             error "خطا در ایجاد کاربر $SERVICE_USER"
     fi
     
-    mkdir -p \
+    # ایجاد دایرکتوری‌ها با دسترسی ریشه
+    sudo mkdir -p \
         "$BACKEND_DIR" \
-        "$FRONTEND_DIR" \  # این خط تغییر کرد
+        "$FRONTEND_DIR" \
         "$CONFIG_DIR" \
         "$LOG_DIR/panel" \
         "$XRAY_DIR" \
         "$SECRETS_DIR" \
         "/etc/xray" || error "خطا در ایجاد دایرکتوری‌ها"
     
-    touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
-    chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR" "$LOG_DIR" "$SECRETS_DIR"
-    chmod -R 750 "$INSTALL_DIR" "$LOG_DIR" "$SECRETS_DIR"
+    # تنظیم مالکیت‌ها
+    sudo chown -R "$SERVICE_USER":"$SERVICE_USER" \
+        "$INSTALL_DIR" \
+        "$LOG_DIR" \
+        "$SECRETS_DIR" \
+        "$CONFIG_DIR"
     
-    mkdir -p /opt/zhina/tmp
-    chown postgres:postgres /opt/zhina/tmp
+    # ایجاد و تنظیم فایل‌های لاگ
+    sudo touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
+    sudo chown "$SERVICE_USER":"$SERVICE_USER" "$LOG_DIR/panel"/*.log
     
-    # انتقال فایل‌های پروژه از مسیر فعلی
+    # انتقال فایل‌های پروژه (از مسیر جاری)
     if [ -d "./backend" ]; then
-        cp -r "./backend"/* "$BACKEND_DIR"/ || error "خطا در انتقال بک‌اند"
+        sudo cp -r "./backend"/* "$BACKEND_DIR"/ || error "خطا در انتقال بک‌اند"
     else
         error "پوشه backend در مسیر جاری یافت نشد!"
     fi
     
     if [ -d "./frontend" ]; then
-        cp -r "./frontend"/* "$FRONTEND_DIR"/ || error "خطا در انتقال فرانت‌اند"
+        sudo cp -r "./frontend"/* "$FRONTEND_DIR"/ || error "خطا در انتقال فرانت‌اند"
     else
         error "پوشه frontend در مسیر جاری یافت نشد!"
     fi
     
-    # تنظیم مجوزها
-    chown -R "$SERVICE_USER":"$SERVICE_USER" "$BACKEND_DIR" "$FRONTEND_DIR"
-    find "$BACKEND_DIR" -type d -exec chmod 750 {} \;
-    find "$BACKEND_DIR" -type f -exec chmod 640 {} \;
-    find "$FRONTEND_DIR" -type d -exec chmod 755 {} \;
-    find "$FRONTEND_DIR" -type f -exec chmod 644 {} \;
+    # تنظیم مجوزهای نهایی
+    sudo find "$BACKEND_DIR" -type d -exec chmod 750 {} \;
+    sudo find "$BACKEND_DIR" -type f -exec chmod 640 {} \;
+    sudo find "$FRONTEND_DIR" -type d -exec chmod 755 {} \;
+    sudo find "$FRONTEND_DIR" -type f -exec chmod 644 {} \;
     
-    success "محیط سیستم تنظیم شد"
+    success "محیط سیستم با موفقیت تنظیم شد"
 }
 # ------------------- تنظیم دیتابیس -------------------
 setup_database() {
