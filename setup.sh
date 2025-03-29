@@ -3,7 +3,7 @@ set -euo pipefail
 exec > >(tee -a "/var/log/zhina-install.log") 2>&1
 
 # ------------------- تنظیمات اصلی -------------------
-INSTALL_DIR="/var/lib/zhina"
+INSTALL_DIR="/root/zhina"
 BACKEND_DIR="$INSTALL_DIR/backend"
 CONFIG_DIR="/etc/zhina"
 LOG_DIR="/var/log/zhina"
@@ -103,14 +103,18 @@ setup_environment() {
         "$SECRETS_DIR" \
         "/etc/xray" || error "خطا در ایجاد دایرکتوری‌ها"
     
-    # اگر محتوایی در INSTALL_DIR وجود دارد به BACKEND_DIR منتقل می‌کنیم
-    if [ "$(ls -A $INSTALL_DIR | grep -v backend)" ]; then
+    # انتقال محتوای موجود به پوشه backend
+    if [ "$(ls -A $INSTALL_DIR | grep -vE 'backend|venv')" ]; then
         mv $INSTALL_DIR/* $BACKEND_DIR/ 2>/dev/null || true
     fi
     
     touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
     chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR" "$LOG_DIR" "$SECRETS_DIR"
     chmod -R 750 "$INSTALL_DIR" "$LOG_DIR" "$SECRETS_DIR"
+    
+    # ایجاد دایرکتوری موقت برای postgres
+    mkdir -p /root/zhina
+    chown postgres:postgres /root/zhina
     
     success "محیط سیستم تنظیم شد"
 }
@@ -293,10 +297,15 @@ setup_python() {
     
     pip install -r "$REQ_FILE" || error "خطا در نصب نیازمندی‌ها"
     
+    # نصب uvicorn اگر وجود ندارد
+    if [ ! -f "$INSTALL_DIR/venv/bin/uvicorn" ]; then
+        pip install uvicorn || error "خطا در نصب uvicorn"
+    fi
+    
     deactivate
     
     chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/venv"
-    chmod 750 "$INSTALL_DIR/venv/bin/uvicorn"
+    chmod 750 "$INSTALL_DIR/venv/bin/uvicorn" 2>/dev/null || true
     
     success "محیط پایتون تنظیم شد"
 }
@@ -515,14 +524,15 @@ EOF
 setup_panel_service() {
     info "تنظیم سرویس پنل..."
     
-    # پیدا کردن فایل اصلی app.py
-    APP_FILE=$(find "$BACKEND_DIR" -name "app.py" | head -1)
+    # پیدا کردن فایل اصلی پایتون
+    APP_FILE=$(find "$BACKEND_DIR" -name "app.py" -o -name "main.py" | head -1)
     if [[ -z "$APP_FILE" ]]; then
-        error "فایل app.py یافت نشد!"
+        error "فایل app.py/main.py یافت نشد!"
     fi
     
     # پیدا کردن مسیر اصلی پایتون
     PYTHON_PATH=$(dirname "$APP_FILE")
+    APP_NAME=$(basename "$APP_FILE" .py)
     
     cat > /etc/systemd/system/zhina-panel.service <<EOF
 [Unit]
@@ -536,7 +546,7 @@ WorkingDirectory=$PYTHON_PATH
 Environment="PATH=$INSTALL_DIR/venv/bin"
 Environment="PYTHONPATH=$PYTHON_PATH"
 ExecStart=$INSTALL_DIR/venv/bin/uvicorn \
-    app:app \
+    $APP_NAME:app \
     --host 0.0.0.0 \
     --port $PANEL_PORT \
     --workers $UVICORN_WORKERS \
