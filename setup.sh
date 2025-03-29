@@ -123,9 +123,29 @@ setup_environment() {
     mkdir -p /opt/zhina/tmp
     chown postgres:postgres /opt/zhina/tmp
     
+    # انتقال فایل‌های پروژه (اضافه شده)
+    if [ -d "/root/zhina-project/backend" ]; then
+        cp -r "/root/zhina-project/backend"/* "$BACKEND_DIR"/ || error "خطا در انتقال بک‌اند"
+    else
+        error "پوشه backend یافت نشد!"
+    fi
+    
+    if [ -d "/root/zhina-project/frontend" ]; then
+        mkdir -p "$INSTALL_DIR/frontend"
+        cp -r "/root/zhina-project/frontend"/* "$INSTALL_DIR/frontend"/ || error "خطا در انتقال فرانت‌اند"
+    else
+        error "پوشه frontend یافت نشد!"
+    fi
+    
+    # تنظیم مجوزهای فایل‌های منتقل شده
+    chown -R "$SERVICE_USER":"$SERVICE_USER" "$BACKEND_DIR" "$INSTALL_DIR/frontend"
+    find "$BACKEND_DIR" -type d -exec chmod 750 {} \;
+    find "$BACKEND_DIR" -type f -exec chmod 640 {} \;
+    find "$INSTALL_DIR/frontend" -type d -exec chmod 755 {} \;
+    find "$INSTALL_DIR/frontend" -type f -exec chmod 644 {} \;
+    
     success "محیط سیستم تنظیم شد"
 }
-
 # ------------------- تنظیم دیتابیس -------------------
 setup_database() {
     info "تنظیم پایگاه داده PostgreSQL..."
@@ -445,9 +465,7 @@ setup_nginx() {
     if [[ "$use_domain" =~ ^[Yy]$ ]]; then
         while [[ -z "$PANEL_DOMAIN" ]]; do
             read -p "نام دامنه خود را وارد کنید (مثال: example.com): " PANEL_DOMAIN
-            if [[ -z "$PANEL_DOMAIN" ]]; then
-                echo -e "${RED}نام دامنه نمی‌تواند خالی باشد!${NC}"
-            fi
+            [[ -z "$PANEL_DOMAIN" ]] && echo -e "${RED}نام دامنه نمی‌تواند خالی باشد!${NC}"
         done
     else
         PANEL_DOMAIN="$(curl -s ifconfig.me)"
@@ -459,13 +477,32 @@ server {
     listen 80;
     server_name $PANEL_DOMAIN;
     
+    # فرانت‌اند
+    root $INSTALL_DIR/frontend;
+    index index.html;
+    
     location / {
+        try_files \$uri /index.html;
+    }
+    
+    # بک‌اند API
+    location /api {
         proxy_pass http://127.0.0.1:$PANEL_PORT;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     }
     
+    # WebSocket
+    location /ws {
+        proxy_pass http://127.0.0.1:$PANEL_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+    }
+    
+    # Xray
     location $XRAY_PATH {
         proxy_pass http://127.0.0.1:$XRAY_HTTP_PORT;
         proxy_http_version 1.1;
@@ -474,6 +511,7 @@ server {
         proxy_set_header Host \$host;
     }
     
+    # Let's Encrypt
     location /.well-known/acme-challenge/ {
         root /var/www/html;
     }
@@ -482,11 +520,8 @@ EOF
 
     rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
     
-    if ! nginx -t; then
-        error "خطا در پیکربندی Nginx"
-    fi
-    
-    systemctl start nginx || error "خطا در راه‌اندازی Nginx"
+    nginx -t || error "خطا در پیکربندی Nginx"
+    systemctl restart nginx || error "خطا در راه‌اندازی Nginx"
     
     success "Nginx با موفقیت پیکربندی شد"
 }
