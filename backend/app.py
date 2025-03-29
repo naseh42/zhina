@@ -12,32 +12,20 @@ import logging
 import sys
 import psutil
 
-# تنظیم مسیرهای پروژه (کاملاً مطابق نسخه شما)
-PROJECT_ROOT = Path(__file__).parent.parent
+# تنظیم مسیرهای پروژه
+PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# ایمپورت‌های داخلی (فقط مسیرها به‌روز شدند)
-from backend.schemas import Token, TokenData, UserCreate, DomainCreate  # اصلاح مسیر
-from backend.models import User, Domain, Subscription, Setting, Node, Inbound  # اصلاح مسیر
-from backend.database import get_db, engine, Base  # اصلاح مسیر
-from backend.config import settings  # اصلاح مسیر
-from backend.xray_config import xray_settings  # اصلاح مسیر
-from backend.managers.user_manager import UserManager  # اصلاح مسیر
-from backend.managers.domain_manager import DomainManager  # اصلاح مسیر
-from backend.managers.xray_manager import XrayManager  # اصلاح مسیر
-from backend.managers.dashboard_manager import DashboardManager  # اصلاح مسیر
-from backend.managers.settings_manager import SettingsManager  # اصلاح مسیر
-from backend.utils import (  # اصلاح مسیر
-    get_password_hash,
-    verify_password,
-    create_access_token,
-    verify_token,
-    generate_uuid,
-    restart_xray_service
-)
+# ایمپورت‌های داخلی
+from backend import schemas, models, utils
+from backend.database import get_db, engine, Base
+from backend.config import settings
+from backend.xray_config.xray_manager import XrayManager
+from backend.users.user_manager import UserManager
+from backend.domains.domain_manager import DomainManager
+from backend.dashboard.dashboard_manager import DashboardManager
+from backend.settings.settings_manager import SettingsManager
 
-# بقیه کدها دقیقاً مانند فایل اصلی شما (بدون هیچ تغییری):
-# -------------------------------------------------------------------
 # تنظیمات لاگینگ
 logging.basicConfig(
     level=logging.INFO,
@@ -58,10 +46,10 @@ app = FastAPI(
 )
 
 # تنظیمات تمپلیت و استاتیک
-TEMPLATE_DIR = "/var/lib/zhina/frontend/templates"
-STATIC_DIR = "/var/lib/zhina/frontend/static"
-templates = Jinja2Templates(directory=TEMPLATE_DIR)
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+TEMPLATE_DIR = PROJECT_ROOT / "frontend/templates"
+STATIC_DIR = PROJECT_ROOT / "frontend/static"
+templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # CORS
 app.add_middleware(
@@ -72,10 +60,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# توابع کمکی (کاملاً مطابق شما)
+# توابع کمکی
 def authenticate_user(username: str, password: str, db: Session):
-    user = db.query(User).filter(User.username == username).first()
-    if not user or not verify_password(password, user.hashed_password):
+    user = db.query(models.User).filter(models.User.username == username).first()
+    if not user or not utils.verify_password(password, user.hashed_password):
         return False
     return user
 
@@ -94,7 +82,7 @@ async def startup():
     Base.metadata.create_all(bind=engine)
     logger.info("Application started successfully")
 
-# روت‌های اصلی (کاملاً مطابق شما)
+# روت‌های اصلی
 @app.get("/health")
 async def health_check(db: Session = Depends(get_db)):
     if not validate_db_connection(db):
@@ -122,7 +110,7 @@ async def process_login(
             "error": "Invalid credentials"
         })
     
-    access_token = create_access_token(data={"sub": user.username})
+    access_token = utils.create_access_token(data={"sub": user.username})
     response = RedirectResponse(url="/dashboard", status_code=303)
     response.set_cookie(key="access_token", value=f"Bearer {access_token}", httponly=True)
     return response
@@ -130,30 +118,30 @@ async def process_login(
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, db: Session = Depends(get_db)):
     stats = {
-        "users": db.query(User).count(),
-        "domains": db.query(Domain).count(),
-        "active_nodes": db.query(Node).filter(Node.is_active == True).count()
+        "users": db.query(models.User).count(),
+        "domains": db.query(models.Domain).count(),
+        "active_nodes": db.query(models.Node).filter(models.Node.is_active == True).count()
     }
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "stats": stats
     })
 
-# روت‌های API (کاملاً مطابق شما)
+# روت‌های API
 @app.get("/api/v1/server-stats")
 async def server_stats(manager: DashboardManager = Depends(DashboardManager)):
     return manager.get_server_stats()
 
 @app.post("/api/v1/users")
 async def create_user(
-    user_data: UserCreate,
+    user_data: schemas.UserCreate,
     manager: UserManager = Depends(UserManager)
 ):
     return manager.create(user_data)
 
 @app.post("/api/v1/domains")
 async def add_domain(
-    domain_data: DomainCreate,
+    domain_data: schemas.DomainCreate,
     manager: DomainManager = Depends(DomainManager)
 ):
     return manager.create(domain_data)
@@ -164,4 +152,4 @@ async def get_xray_config(manager: XrayManager = Depends(XrayManager)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    uvicorn.run(app, host=settings.SERVER_HOST, port=settings.SERVER_PORT)
