@@ -116,6 +116,14 @@ setup_environment() {
         "$SECRETS_DIR" \
         "/etc/xray" || error "خطا در ایجاد دایرکتوری‌ها"
     
+    # انتقال فایل‌های پروژه از مسیر فعلی به مسیر نصب
+    if [ -d "$(pwd)/backend" ]; then
+        cp -r "$(pwd)/backend"/* "$BACKEND_DIR"/ || error "خطا در انتقال فایل‌های پروژه"
+        chown -R "$SERVICE_USER":"$SERVICE_USER" "$BACKEND_DIR"
+    else
+        warning "پوشه backend در مسیر جاری یافت نشد!"
+    fi
+    
     touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
     chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR" "$LOG_DIR" "$SECRETS_DIR"
     chmod -R 750 "$INSTALL_DIR" "$LOG_DIR" "$SECRETS_DIR"
