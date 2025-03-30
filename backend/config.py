@@ -3,14 +3,17 @@ import secrets
 import uuid
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr, field_validator
-from typing import Dict, List, Optional, Literal
+from typing import Optional, Literal
 import warnings
 
 class Settings(BaseModel):
+    # تنظیمات پایگاه داده
     DATABASE_URL: str = Field(
         default="postgresql://zhina_user:1b4becba55eab852259f6b0051414ace@localhost:5432/zhina_db",
         examples=["postgresql://user:password@localhost:5432/dbname"]
     )
+
+    # تنظیمات XRAY
     REALITY_PUBLIC_KEY: str = Field(
         ...,
         min_length=43,
@@ -32,9 +35,9 @@ class Settings(BaseModel):
         default_factory=lambda: f"/{secrets.token_hex(8)}",
         pattern=r'^/[a-zA-Z0-9]{16}$'
     )
-    XRAY_CONFIG_PATH: Path = Field(
-        default=Path("/etc/xray/config.json")
-    )
+    XRAY_CONFIG_PATH: Path = Field(default=Path("/etc/xray/config.json"))
+
+    # سایر تنظیمات
     REALITY_SHORT_ID: str = Field(
         default_factory=lambda: secrets.token_hex(8),
         min_length=16,
@@ -79,11 +82,17 @@ class Settings(BaseModel):
         ge=60,
         description="Sync interval in seconds"
     )
-    model_config = {
-        "env_file": "/etc/zhina/.env",
-        "env_file_encoding": "utf-8",
-        "extra": "forbid"
-    }
+
+    # تنظیمات اضافی از فایل .env
+    PANEL_PORT: int = Field(default=8001)
+    PANEL_DOMAIN: str = Field(default="46.101.84.20")
+    DEFAULT_THEME: str = Field(default="dark")
+    DEFAULT_LANGUAGE: str = Field(default="fa")
+
+    class Config:
+        env_file = "/etc/zhina/.env"
+        env_file_encoding = "utf-8"
+        extra = "allow"
 
     @field_validator("DATABASE_URL")
     @classmethod
