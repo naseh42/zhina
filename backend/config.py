@@ -8,13 +8,27 @@ import uuid
 from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv("/etc/zhina/.env")
+env_path = Path(__file__).parent / '.env'
+load_dotenv(env_path)
 
 class Settings(BaseSettings):
+    class Config:
+        env_file = str(Path(__file__).parent / '.env')  # پرانتز اضافه شد
+        env_file_encoding = 'utf-8'
+    
     DATABASE_URL: str = Field(
         default="postgresql://zhina_user:1b4becba55eab852259f6b0051414ace@localhost:5432/zhina_db",
         examples=["postgresql://user:password@localhost:5432/dbname"]
     )
+    REALITY_PUBLIC_KEY: str
+    REALITY_PRIVATE_KEY: str
+    XRAY_UUID: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        min_length=36,
+        max_length=36
+    )
+    XRAY_PATH: str
+    # بقیه فیلدها...
     
     XRAY_UUID: str = Field(
         default_factory=lambda: str(uuid.uuid4()),
