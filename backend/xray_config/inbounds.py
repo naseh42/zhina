@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Dict, Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
@@ -17,16 +17,18 @@ class InboundCreate(BaseModel):
     tag: Optional[str] = Field(None, max_length=50, description="برچسب اینباند")
     remark: Optional[str] = Field(None, max_length=100, description="توضیحات اختیاری")
 
-    @validator('protocol')
+    @field_validator('protocol')
+    @classmethod
     def validate_protocol(cls, v):
         valid_protocols = ["vmess", "vless", "trojan", "shadowsocks", "http", "socks"]
         if v.lower() not in valid_protocols:
             raise ValueError(f"پروتکل نامعتبر. باید یکی از این موارد باشد: {', '.join(valid_protocols)}")
         return v.lower()
 
-    @validator('settings')
+    @field_validator('settings')
+    @classmethod
     def validate_settings(cls, v, values):
-        protocol = values.get('protocol')
+        protocol = values.data.get('protocol')
         if protocol == 'vmess' and 'clients' not in v:
             raise ValueError("تنظیمات vmess باید شامل لیست clients باشد")
         return v
@@ -39,7 +41,8 @@ class InboundUpdate(BaseModel):
     tag: Optional[str] = Field(None, max_length=50)
     remark: Optional[str] = Field(None, max_length=100)
 
-    @validator('protocol')
+    @field_validator('protocol')
+    @classmethod
     def validate_protocol(cls, v):
         if v is not None:
             valid_protocols = ["vmess", "vless", "trojan", "shadowsocks", "http", "socks"]
@@ -65,9 +68,8 @@ def create_inbound(db: Session, inbound_data: InboundCreate):
         db.commit()
         db.refresh(db_inbound)
         
-        # اعمال تغییرات در Xray
         if settings.XRAY_AUTO_APPLY:
-            from backend.managers.xray_manager import apply_xray_config
+            from backend.xray_config.xray_manager import apply_xray_config
             apply_xray_config()
             
         return db_inbound
@@ -91,7 +93,7 @@ def update_inbound(db: Session, inbound_id: int, inbound_data: InboundUpdate):
         if not db_inbound:
             return None
 
-        update_data = inbound_data.dict(exclude_unset=True)
+        update_data = inbound_data.model_dump(exclude_unset=True)
         for field, value in update_data.items():
             setattr(db_inbound, field, value)
         
@@ -99,9 +101,8 @@ def update_inbound(db: Session, inbound_id: int, inbound_data: InboundUpdate):
         db.commit()
         db.refresh(db_inbound)
         
-        # اعمال تغییرات در Xray
         if settings.XRAY_AUTO_APPLY:
-            from backend.managers.xray_manager import apply_xray_config
+            from backend.xray_config.xray_manager import apply_xray_config
             apply_xray_config()
             
         return db_inbound
@@ -120,9 +121,8 @@ def delete_inbound(db: Session, inbound_id: int):
         db.delete(db_inbound)
         db.commit()
         
-        # اعمال تغییرات در Xray
         if settings.XRAY_AUTO_APPLY:
-            from backend.managers.xray_manager import apply_xray_config
+            from backend.xray_config.xray_manager import apply_xray_config
             apply_xray_config()
             
         return True
