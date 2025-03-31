@@ -8,15 +8,16 @@ import uuid
 from pathlib import Path
 from dotenv import load_dotenv
 
-# اصلاح مسیر فایل .env به محل صحیح
 load_dotenv("/opt/zhina/backend/.env")
 
 class Settings(BaseSettings):
+    # Database Configuration
     DATABASE_URL: str = Field(
         default="postgresql://zhina_user:1b4becba55eab852259f6b0051414ace@localhost:5432/zhina_db",
         examples=["postgresql://user:password@localhost:5432/dbname"]
     )
     
+    # Xray Core Configuration
     XRAY_UUID: str = Field(
         default_factory=lambda: str(uuid.uuid4()),
         min_length=36,
@@ -32,6 +33,7 @@ class Settings(BaseSettings):
         default=Path("/etc/xray/config.json")
     )
     
+    # Reality Keys
     REALITY_PUBLIC_KEY: str = Field(
         ...,
         min_length=43,
@@ -52,7 +54,18 @@ class Settings(BaseSettings):
         max_length=16
     )
     
-    SECRET_KEY: str = os.getenv("ZHINA_SECRET_KEY", "default-secret-key")
+    # Xray Additional Settings
+    XRAY_HTTP_PORT: int = Field(
+        default=8080,
+        ge=1024,
+        le=65535
+    )
+    
+    # Security Settings
+    SECRET_KEY: str = Field(
+        default=secrets.token_urlsafe(32),
+        min_length=32
+    )
     
     DEBUG: bool = Field(default=False)
     
@@ -64,6 +77,7 @@ class Settings(BaseSettings):
     
     JWT_ALGORITHM: Literal["HS256", "HS384", "HS512"] = Field(default="HS256")
     
+    # Admin Configuration
     ADMIN_USERNAME: str = Field(
         default="admin",
         min_length=4,
@@ -77,12 +91,25 @@ class Settings(BaseSettings):
     
     ADMIN_EMAIL: EmailStr = Field(default="admin@example.com")
     
+    # Panel Configuration
+    PANEL_PORT: int = Field(
+        default=8001,
+        ge=1024,
+        le=65535
+    )
+    
+    PANEL_DOMAIN: str = Field(
+        default="localhost"
+    )
+    
+    # UI Configuration
     LANGUAGE: Literal["fa", "en"] = Field(default="fa")
     
-    THEME: Literal["dark", "light", "auto"] = Field(default="dark")
+    DEFAULT_THEME: Literal["dark", "light", "auto"] = Field(default="dark")
     
     ENABLE_NOTIFICATIONS: bool = Field(default=True)
     
+    # Server Configuration
     SERVER_IP: Optional[str] = Field(default=None)
     
     SERVER_PORT: int = Field(
@@ -97,22 +124,23 @@ class Settings(BaseSettings):
     
     SSL_KEY_PATH: Optional[Path] = Field(default=None)
     
+    # Rate Limiting
     RATE_LIMIT: int = Field(
         default=100,
         ge=10
     )
     
+    # Xray Sync Interval
     XRAY_SYNC_INTERVAL: int = Field(
         default=300,
         ge=60,
         description="Sync interval in seconds"
     )
 
-    model_config = {
-        "env_file": "/opt/zhina/backend/.env",  # اصلاح مسیر اینجا
-        "env_file_encoding": "utf-8",
-        "extra": "forbid"
-    }
+    class Config:
+        env_file = "/opt/zhina/backend/.env"
+        env_file_encoding = 'utf-8'
+        extra = 'ignore'  # تغییر از 'forbid' به 'ignore' برای جلوگیری از خطا
 
     @field_validator("DATABASE_URL")
     @classmethod
@@ -125,7 +153,7 @@ class Settings(BaseSettings):
     @classmethod
     def validate_admin_password(cls, v: str) -> str:
         if v == "ChangeMe123!":
-            warnings.warn("Default admin password detected!", UserWarning)
+            warnings.warn("Default admin password detected! Please change it immediately.", UserWarning)
         return v
 
 settings = Settings()
