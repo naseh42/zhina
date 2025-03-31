@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, EmailStr, validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Optional, Dict, List, Literal
 from datetime import datetime, timedelta
 from enum import Enum
@@ -12,7 +12,7 @@ class TokenData(BaseModel):
 
 class UserBase(BaseModel):
     username: str = Field(..., min_length=3, max_length=50, example="user123")
-    email: Optional[EmailStr] = Field(None, example="user@example.com")
+    email: Optional[str] = Field(None, example="user@example.com")
     is_active: Optional[bool] = Field(default=True)
 
 class UserCreate(UserBase):
@@ -27,8 +27,7 @@ class UserInDB(UserBase):
     created_at: datetime
     updated_at: Optional[datetime]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class DomainProtocol(str, Enum):
     VMESS = "vmess"
