@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Dict, List, Optional
 from enum import Enum
 from backend.config import settings
@@ -15,14 +15,6 @@ class ProtocolType(str, Enum):
     SOCKS = "socks"
 
 class ProtocolSettings(BaseModel):
-    """
-    تنظیمات پیشرفته پروتکل‌های شبکه
-    
-    شامل:
-    - لیست پروتکل‌های قابل استفاده
-    - تنظیمات پیش‌فرض هر پروتکل
-    - متدهای مدیریت پروتکل‌ها
-    """
     available_protocols: List[ProtocolType] = Field(
         default=list(ProtocolType),
         description="لیست تمام پروتکل‌های پشتیبانی شده"
@@ -65,9 +57,10 @@ class ProtocolSettings(BaseModel):
         description="تنظیمات اختصاصی هر پروتکل"
     )
 
-    @validator('default_protocol')
+    @field_validator('default_protocol')
+    @classmethod
     def validate_default_protocol(cls, v):
-        if v not in cls.available_protocols:
+        if v not in cls.model_fields['available_protocols'].default:
             raise ValueError("پروتکل پیش‌فرض باید در لیست پروتکل‌های موجود باشد")
         return v
 
