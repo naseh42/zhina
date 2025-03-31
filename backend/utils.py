@@ -1,17 +1,20 @@
 from passlib.context import CryptContext
 from jose import jwt, JWTError
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Union
 import secrets
 import string
-from backend.config import settings
 import qrcode
 import io
 import base64
 import subprocess
 from pathlib import Path
+from backend.config import settings
+import logging
 
-# Password hashing
+logger = logging.getLogger(__name__)
+
+# --- Password Hashing ---
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def get_password_hash(password: str) -> str:
@@ -22,7 +25,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against its hash"""
     return pwd_context.verify(plain_password, hashed_password)
 
-# JWT Token
+# --- JWT Tokens ---
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """Create JWT token with optional expiration"""
     to_encode = data.copy()
@@ -46,12 +49,12 @@ def verify_token(token: str) -> Optional[str]:
     except JWTError:
         return None
 
-# UUID Generation
+# --- UUID Generation ---
 def generate_uuid() -> str:
     """Generate random UUID"""
     return str(secrets.token_hex(16))
 
-# Subscription Management
+# --- Subscription Management ---
 def generate_subscription_link(domain: str, uuid: str) -> str:
     """Generate subscription link"""
     return f"https://{domain}/sub/{uuid}"
@@ -64,13 +67,13 @@ def calculate_remaining_days(expiry_date: datetime) -> int:
     """Calculate days until expiration"""
     return (expiry_date - datetime.now()).days if expiry_date else 0
 
-# Password Generation
+# --- Password Generation ---
 def generate_random_password(length: int = 12) -> str:
     """Generate secure random password"""
     chars = string.ascii_letters + string.digits + "!@#$%^&*"
     return ''.join(secrets.choice(chars) for _ in range(length))
 
-# QR Code Generation
+# --- QR Code Generation ---
 def generate_qr_code(data: str) -> str:
     """Generate base64 encoded QR code"""
     qr = qrcode.QRCode(
@@ -87,7 +90,7 @@ def generate_qr_code(data: str) -> str:
     img.save(buffered, format="PNG")
     return base64.b64encode(buffered.getvalue()).decode()
 
-# SSL Certificate
+# --- SSL Certificate ---
 def setup_ssl(domain: str, email: str = "admin@example.com") -> bool:
     """Setup SSL certificate using certbot"""
     try:
@@ -105,7 +108,7 @@ def setup_ssl(domain: str, email: str = "admin@example.com") -> bool:
         logger.error(f"SSL Setup Error: {e}")
         return False
 
-# System Utilities
+# --- System Utilities ---
 def restart_xray_service() -> bool:
     """Restart Xray core service"""
     try:
@@ -117,3 +120,11 @@ def restart_xray_service() -> bool:
     except subprocess.CalledProcessError as e:
         logger.error(f"Xray restart failed: {e}")
         return False
+
+def format_bytes(size: int) -> str:
+    """Format bytes to human readable format"""
+    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+        if size < 1024:
+            return f"{size:.2f} {unit}"
+        size /= 1024
+    return f"{size:.2f} PB"
