@@ -102,7 +102,43 @@ class ProtocolSettings(BaseModel):
 
     def get_all_configs(self) -> Dict[ProtocolType, Dict]:
         """دریافت تمام تنظیمات پروتکل‌ها به صورت دیکشنری"""
-        return self.protocol_configs
+        return self.protocol_configs# ... (بقیه کدهای قبلی بدون تغییر)
 
-# نمونه singleton از تنظیمات پروتکل‌ها
+# =====================
+# بخش انتهایی فایل
+# =====================
+
+# نمونه Singleton از تنظیمات پروتکل‌ها
 protocol_settings = ProtocolSettings()
+
+def get_protocol_config(protocol_name: str) -> dict:
+    """
+    دریافت تنظیمات پروتکل به صورت تابع مستقل
+    Args:
+        protocol_name: نام پروتکل (vmess, vless, ...)
+    Returns:
+        dict: تنظیمات مربوط به پروتکل
+    Raises:
+        ValueError: اگر نام پروتکل نامعتبر باشد
+    """
+    try:
+        protocol = ProtocolType(protocol_name.lower())
+        return protocol_settings.get_protocol_config(protocol)
+    except ValueError as e:
+        logger.error(f"Invalid protocol requested: {protocol_name}")
+        raise ValueError("پروتکل مورد نظر پشتیبانی نمی‌شود") from e
+
+def set_default_protocol(protocol_name: str) -> None:
+    """
+    تنظیم پروتکل پیش‌فرض به صورت تابع مستقل
+    Args:
+        protocol_name: نام پروتکل (vmess, vless, ...)
+    Raises:
+        ValueError: اگر نام پروتکل نامعتبر باشد
+    """
+    try:
+        protocol = ProtocolType(protocol_name.lower())
+        protocol_settings.set_default_protocol(protocol)
+    except ValueError as e:
+        logger.error(f"Attempt to set invalid default protocol: {protocol_name}")
+        raise ValueError("پروتکل معتبر نیست") from e
