@@ -8,7 +8,8 @@ import uuid
 from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv("/etc/zhina/.env")
+# اصلاح مسیر فایل .env به محل صحیح
+load_dotenv("/opt/zhina/backend/.env")
 
 class Settings(BaseSettings):
     DATABASE_URL: str = Field(
@@ -108,7 +109,7 @@ class Settings(BaseSettings):
     )
 
     model_config = {
-        "env_file": "/etc/zhina/.env",
+        "env_file": "/opt/zhina/backend/.env",  # اصلاح مسیر اینجا
         "env_file_encoding": "utf-8",
         "extra": "forbid"
     }
