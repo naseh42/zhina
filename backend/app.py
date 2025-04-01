@@ -14,6 +14,8 @@ import psutil
 import asyncio
 import subprocess
 import json
+from typing import Dict, Any, List
+from pydantic import BaseModel
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -26,11 +28,15 @@ from backend.users.user_manager import UserManager
 from backend.domains.domain_manager import DomainManager
 from backend.dashboard.dashboard_manager import DashboardManager
 
+# ایجاد دایرکتوری لاگ اگر وجود نداشته باشد
+log_dir = Path('/opt/zhina/logs')
+log_dir.mkdir(parents=True, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('/opt/zhina/logs/panel.log'),  # تغییر مسیر به /opt
+        logging.FileHandler('/opt/zhina/logs/panel.log'),
         logging.StreamHandler()
     ]
 )
@@ -55,8 +61,19 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"]  # تغییر درخواستی شما
+    expose_headers=["*"]
 )
+
+# مدل‌های پاسخ
+class ServerStatsResponse(BaseModel):
+    cpu: float
+    memory: Dict[str, Any]
+    disk: Dict[str, Any]
+    users_online: int
+
+class XrayConfigResponse(BaseModel):
+    config: Dict[str, Any]
+    status: str
 
 @app.on_event("startup")
 async def startup():
@@ -84,7 +101,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 "xray": xray_status.stdout.strip(),
                 "database": db_status,
                 "timestamp": datetime.now().isoformat(),
-                "users_online": get_online_users_count()  # تغییر به تابع داخلی
+                "users_online": get_online_users_count()
             })
             await asyncio.sleep(5)
         except Exception as e:
@@ -143,27 +160,39 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         "stats": stats
     })
 
-@app.get("/api/v1/server-stats")
-async def server_stats(manager: DashboardManager = Depends(DashboardManager)):
-    return manager.get_server_stats()
+@app.get("/api/v1/server-stats", response_model=ServerStatsResponse)
+async def server_stats(db: Session = Depends(get_db)):
+    stats = {
+        "cpu": psutil.cpu_percent(interval=1),
+        "memory": dict(psutil.virtual_memory()._asdict()),
+        "disk": dict(psutil.disk_usage('/')._asdict()),
+        "users_online": get_online_users_count()
+    }
+    return stats
 
-@app.post("/api/v1/users")
+@app.post("/api/v1/users", response_model=schemas.UserResponse)
 async def create_user(
     user_data: schemas.UserCreate,
-    manager: UserManager = Depends(UserManager)
+    db: Session = Depends(get_db)
 ):
+    manager = UserManager(db)
     return manager.create(user_data)
 
-@app.post("/api/v1/domains")
+@app.post("/api/v1/domains", response_model=schemas.DomainResponse)
 async def add_domain(
     domain_data: schemas.DomainCreate,
-    manager: DomainManager = Depends(DomainManager)
- ):   
+    db: Session = Depends(get_db)
+):
+    manager = DomainManager(db)
     return manager.create(domain_data)
 
-@app.get("/api/v1/xray/config")
-async def get_xray_config(manager: XrayManager = Depends(XrayManager)):
-    return manager.get_config()
+@app.get("/api/v1/xray/config", response_model=XrayConfigResponse)
+async def get_xray_config(db: Session = Depends(get_db)):
+    manager = XrayManager(db)
+    return {
+        "config": manager.get_config(),
+        "status": "active"
+    }
 
 @app.on_event("startup")
 @utils.repeat_every(seconds=300)
@@ -175,8 +204,7 @@ def periodic_xray_sync():
     except Exception as e:
         logger.error(f"Sync failed: {str(e)}")
 
-# ============ توابع اضافه شده ============
-def get_online_users_count() -> int:  # ADDED
+def get_online_users_count() -> int:
     """پیاده‌سازی موقت شمارش کاربران آنلاین"""
     # TODO: جایگزینی با منطق واقعی
     return 0
