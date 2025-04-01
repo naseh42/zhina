@@ -62,7 +62,8 @@ def create_inbound(db: Session, inbound_data: InboundCreate):
             tag=inbound_data.tag,
             remark=inbound_data.remark,
             created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            updated_at=datetime.utcnow(),
+            config_path=f"/opt/xray/configs/inbound_{inbound_data.port}.json"  # تغییر مسیر به /opt
         )
         db.add(db_inbound)
         db.commit()
@@ -118,6 +119,11 @@ def delete_inbound(db: Session, inbound_id: int):
         if not db_inbound:
             return False
 
+        # حذف فایل کانفیگ مربوطه
+        config_path = Path(f"/opt/xray/configs/inbound_{db_inbound.port}.json")  # تغییر مسیر به /opt
+        if config_path.exists():
+            config_path.unlink()
+
         db.delete(db_inbound)
         db.commit()
         
@@ -130,3 +136,12 @@ def delete_inbound(db: Session, inbound_id: int):
         db.rollback()
         logger.error(f"Error deleting inbound: {str(e)}")
         raise
+
+# ============ توابع اضافه شده ============
+def get_inbound_by_port(db: Session, port: int) -> Optional[Inbound]:  # ADDED
+    """دریافت اینباند بر اساس پورت"""
+    return db.query(Inbound).filter(Inbound.port == port).first()
+
+def count_active_inbounds(db: Session) -> int:  # ADDED
+    """شمارش اینباندهای فعال"""
+    return db.query(Inbound).filter(Inbound.is_active == True).count()
