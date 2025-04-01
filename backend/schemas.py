@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from datetime import datetime, timedelta
-from typing import Optional, Dict, List, Literal
+from typing import Optional, Dict, List, Literal, Union
 from enum import Enum
 
 # -------------------- Authentication --------------------
@@ -23,17 +23,24 @@ class UserCreate(UserBase):
     usage_duration: int = Field(default=30, ge=1, description="مدت زمان استفاده به روز")
     simultaneous_connections: int = Field(default=3, ge=1)
 
-class User(UserBase):
+class UserResponse(UserBase):
     id: int
     uuid: str
     created_at: datetime
     updated_at: Optional[datetime]
-    traffic_used: int = Field(default=0)
+    traffic_limit: int
+    traffic_used: int
+    usage_duration: int
+    remaining_days: int
+    simultaneous_connections: int
     expiry_date: Optional[datetime] = None
     
     model_config = ConfigDict(from_attributes=True)
 
-class UserInDB(User):
+class User(UserResponse):
+    pass
+
+class UserInDB(UserResponse):
     hashed_password: str
 
 # -------------------- Domain Models --------------------
@@ -47,7 +54,7 @@ class DomainCreate(BaseModel):
     protocol: DomainProtocol = Field(default=DomainProtocol.VMESS)
     cdn_enabled: bool = Field(default=False)
 
-class Domain(BaseModel):
+class DomainResponse(BaseModel):
     id: int
     name: str
     protocol: DomainProtocol
@@ -57,6 +64,9 @@ class Domain(BaseModel):
     owner_id: int
     
     model_config = ConfigDict(from_attributes=True)
+
+class Domain(DomainResponse):
+    pass
 
 # -------------------- Subscription Models --------------------
 class SubscriptionCreate(BaseModel):
@@ -87,11 +97,27 @@ class NodeCreate(BaseModel):
     port: int = Field(..., ge=1, le=65535, examples=[443])
     protocol: NodeProtocol
 
+class NodeResponse(BaseModel):
+    id: int
+    name: str
+    ip_address: str
+    port: int
+    protocol: NodeProtocol
+    is_active: bool
+    created_at: datetime
+    
+    model_config = ConfigDict(from_attributes=True)
+
 # -------------------- Xray Settings --------------------
 class XraySettings(BaseModel):
     enable_tls: bool = Field(default=True)
     tls_cert_path: Optional[str] = Field(None, examples=["/etc/ssl/cert.pem"])
     tls_key_path: Optional[str] = Field(None, examples=["/etc/ssl/key.pem"])
+
+class XrayConfigResponse(BaseModel):
+    config: Dict[str, Union[str, int, bool, List[Dict]]]
+    status: str
+    last_updated: datetime
 
 # -------------------- Server Models --------------------
 class ServerNetworkSettings(BaseModel):
@@ -107,3 +133,5 @@ class ServerStats(BaseModel):
     cpu_usage: float = Field(..., ge=0, le=100)
     memory_usage: float = Field(..., ge=0, le=100)
     active_connections: int = Field(..., ge=0)
+    total_users: int
+    online_users: int
