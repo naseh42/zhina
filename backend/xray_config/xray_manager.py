@@ -14,8 +14,17 @@ from .tls_http import tls_settings
 from backend.models import Inbound, User
 from backend.config import settings
 from backend.utils import generate_uuid
+from backend.database import SessionLocal  # تغییر این خط
 
 logger = logging.getLogger(__name__)
+
+# اضافه کردن تابع get_db به طور کامل
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 class XrayManager:
     """
@@ -28,6 +37,8 @@ class XrayManager:
 
     def __init__(self, db: Session):
         self.db = db
+
+    # ... (همه متدهای دیگر دقیقاً مانند قبل بدون هیچ تغییری باقی می‌مانند) ...
 
     def add_user(self, user_id: int, protocol: str = None) -> Dict:
         """
