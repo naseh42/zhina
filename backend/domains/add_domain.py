@@ -11,9 +11,9 @@ router = APIRouter(prefix="/api/domains", tags=["Domains"])
 
 class DomainCreate(BaseModel):
     name: str
-    type: str  # نوع دامنه (مثلاً: reality, direct, subscription, ...)
-    config: Optional[Dict] = None  # تنظیمات خاص دامنه
-    description: Optional[Dict] = None  # توضیحات اضافی
+    type: str
+    config: Optional[Dict] = None
+    description: Optional[Dict] = None
 
     @validator("name")
     def validate_name(cls, value):
@@ -29,19 +29,16 @@ class DomainCreate(BaseModel):
         return value
 
 def add_domain(db: Session, domain: DomainCreate, owner_id: int):
-    """ اضافه کردن دامنه جدید """
-    # دریافت خودکار سرتیفیکیت SSL
     ssl_certificate = setup_ssl(domain.name)
     if not ssl_certificate:
         raise ValueError("خطا در دریافت سرتیفیکیت SSL.")
 
-    # ذخیره‌سازی دامنه در دیتابیس
     db_domain = Domain(
         name=domain.name,
         type=domain.type,
         config={
             "ssl_certificate": ssl_certificate,
-            **domain.config if domain.config else {}
+            **(domain.config if domain.config else {})
         },
         description=domain.description,
         owner_id=owner_id
@@ -57,9 +54,6 @@ async def add_domain_endpoint(
     db: Session = Depends(get_db),
     current_user: schemas.User = Depends(get_current_user),
 ):
-    """
-    افزودن دامنه جدید (نیاز به احراز هویت دارد)
-    """
     try:
         new_domain = add_domain(db, domain, current_user.id)
         return new_domain
