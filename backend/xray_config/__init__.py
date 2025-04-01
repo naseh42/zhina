@@ -1,5 +1,16 @@
+# backend/xray_config/__init__.py
+
+# ابتدا ایمپورت تنظیمات پایه
 from .settings import xray_settings
 from .tls_http import http_settings, tls_settings
+from .protocols import (
+    ProtocolType,
+    protocol_settings,
+    get_protocol_config,
+    set_default_protocol
+)
+
+# ایمپورت مدل‌ها و توابع پایه
 from .inbounds import (
     InboundCreate,
     InboundUpdate,
@@ -9,12 +20,7 @@ from .inbounds import (
     get_inbound,
     get_inbounds
 )
-from .protocols import (
-    ProtocolType,
-    protocol_settings,
-    get_protocol_config,
-    set_default_protocol
-)
+
 from .subscription import (
     SubscriptionCreate,
     SubscriptionUpdate,
@@ -23,10 +29,25 @@ from .subscription import (
     delete_subscription,
     get_subscription
 )
-from .xray_manager import XrayManager
 
+# مدیریت Lazy Import برای XrayManager
+_xray_manager_instance = None
+
+def get_xray_manager(db_session=None):
+    """تابع برای دریافت نمونه XrayManager با الگوی Singleton"""
+    global _xray_manager_instance
+    
+    if _xray_manager_instance is None:
+        from .xray_manager import XrayManager
+        from backend.database import SessionLocal
+        
+        _xray_manager_instance = XrayManager(db_session or SessionLocal())
+    
+    return _xray_manager_instance
+
+# لیست صادرات ماژول
 __all__ = [
-    # تنظیمات اصلی
+    # تنظیمات
     'xray_settings',
     'http_settings',
     'tls_settings',
@@ -61,5 +82,5 @@ __all__ = [
     'set_default_protocol',
     
     # مدیریت Xray
-    'XrayManager'
+    'get_xray_manager'
 ]
