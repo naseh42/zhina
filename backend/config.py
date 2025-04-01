@@ -74,6 +74,11 @@ class Settings(BaseSettings):
         default="ChangeMe123!",
         min_length=12
     )
+    DEFAULT_USAGE_DURATION: int = Field(
+    default=30,  # 30 روز پیش‌فرض
+    description="Default usage duration in days",
+    ge=1  # حداقل 1 روز
+    )
     
     ADMIN_EMAIL: EmailStr = Field(default="admin@example.com")
     
