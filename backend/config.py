@@ -4,6 +4,7 @@ from typing import Optional, Literal
 import os
 import secrets
 import uuid
+import warnings
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -28,7 +29,7 @@ class Settings(BaseSettings):
     )
     
     XRAY_CONFIG_PATH: Path = Field(
-        default=Path("/opt/xray/config.json")  # تغییر مسیر
+        default=Path("/opt/xray/config.json")
     )
     
     REALITY_PUBLIC_KEY: str = Field(
@@ -92,9 +93,9 @@ class Settings(BaseSettings):
     
     SERVER_HOST: str = Field(default="0.0.0.0")
     
-    SSL_CERT_PATH: Optional[Path] = Field(default=Path("/opt/ssl/cert.pem"))  # تغییر مسیر
+    SSL_CERT_PATH: Optional[Path] = Field(default=Path("/opt/ssl/cert.pem"))
     
-    SSL_KEY_PATH: Optional[Path] = Field(default=Path("/opt/ssl/key.pem"))  # تغییر مسیر
+    SSL_KEY_PATH: Optional[Path] = Field(default=Path("/opt/ssl/key.pem"))
     
     RATE_LIMIT: int = Field(
         default=100,
@@ -107,8 +108,15 @@ class Settings(BaseSettings):
         description="Sync interval in seconds"
     )
 
+    # اضافه شده: تنظیمات جدید برای محدودیت ترافیک
+    DEFAULT_TRAFFIC_LIMIT: int = Field(
+        default=1073741824,  # 1GB به بایت
+        description="Default traffic limit per user in bytes",
+        ge=0
+    )
+
     model_config = {
-        "env_file": "/opt/zhina/backend/.env",  # تغییر مسیر
+        "env_file": "/opt/zhina/backend/.env",
         "env_file_encoding": "utf-8",
         "extra": "forbid"
     }
