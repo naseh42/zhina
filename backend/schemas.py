@@ -65,6 +65,15 @@ class SubscriptionCreate(BaseModel):
     expiry_date: datetime = Field(default_factory=lambda: datetime.now() + timedelta(days=30))
     max_connections: int = Field(default=3, ge=1)
 
+class SubscriptionLink(BaseModel):
+    """مدل لینک سابسکریپشن"""
+    link: str = Field(..., description="لینک کامل سابسکریپشن")
+    domain_names: List[str] = Field(..., description="لیست نام دامنه‌های موجود در لینک")
+    generated_at: datetime = Field(default_factory=datetime.now)
+    expires_at: Optional[datetime] = Field(None, description="تاریخ انقضای لینک")
+    
+    model_config = ConfigDict(from_attributes=True)
+
 # -------------------- Node Models --------------------
 class NodeProtocol(str, Enum):
     VMESS = "vmess"
