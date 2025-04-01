@@ -134,3 +134,14 @@ def get_online_users_count() -> int:
     """Get count of online users (mock implementation)"""
     # TODO: Replace with actual logic
     return 0
+
+# اضافه شده: تابع format_bytes
+def format_bytes(size: int) -> str:
+    """تبدیل بایت به فرمت خوانا (KB, MB, GB)"""
+    power = 2**10
+    n = 0
+    power_labels = {0: 'B', 1: 'KB', 2: 'MB', 3: 'GB', 4: 'TB'}
+    while size > power and n < len(power_labels)-1:
+        size /= power
+        n += 1
+    return f"{size:.2f} {power_labels[n]}"
