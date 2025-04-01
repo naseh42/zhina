@@ -178,13 +178,13 @@ async def create_user(
     return manager.create(user_data)
 
 @app.post("/api/v1/domains", response_model=schemas.DomainResponse)
-async def add_domain)
+async def add_domain(
     domain_data: schemas.DomainCreate,
     db: Session = Depends(get_db)
-:
+):  # پرانتز بسته اضافه شد
     manager = DomainManager(db)
     return manager.create(domain_data)
-
+    
 @app.get("/api/v1/xray/config", response_model=XrayConfigResponse)
 async def get_xray_config(db: Session = Depends(get_db)):
     manager = XrayManager(db)
