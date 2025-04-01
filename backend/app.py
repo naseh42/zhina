@@ -23,10 +23,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from backend import schemas, models, utils
 from backend.database import get_db, engine, Base
 from backend.config import settings
-from backend.xray_config.xray_manager import XrayManager
+from backend.xray_config import get_xray_manager
 from backend.users.user_manager import UserManager
 from backend.domains.domain_manager import DomainManager
 from backend.dashboard.dashboard_manager import DashboardManager
+
+xray_manager = get_xray_manager()
 
 # ایجاد دایرکتوری لاگ اگر وجود نداشته باشد
 log_dir = Path('/opt/zhina/logs')
