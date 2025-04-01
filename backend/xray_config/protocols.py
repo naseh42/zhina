@@ -3,6 +3,7 @@ from typing import Dict, List, Optional
 from enum import Enum
 from backend.config import settings
 import logging
+from pathlib import Path  # ADDED
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,12 @@ class ProtocolType(str, Enum):
     SOCKS = "socks"
 
 class ProtocolSettings(BaseModel):
+    """
+    کلاس تنظیمات پروتکل‌ها با قابلیت‌های:
+    - مدیریت پروتکل‌های موجود
+    - تنظیمات اختصاصی هر پروتکل
+    - تغییر پروتکل پیش‌فرض
+    """
     available_protocols: List[ProtocolType] = Field(
         default=list(ProtocolType),
         description="لیست تمام پروتکل‌های پشتیبانی شده"
@@ -30,28 +37,34 @@ class ProtocolSettings(BaseModel):
             ProtocolType.VMESS: {
                 "security": "auto",
                 "alterId": 64,
-                "disableInsecureEncryption": True
+                "disableInsecureEncryption": True,
+                "config_path": Path("/opt/xray/configs/vmess.json")  # ADDED
             },
             ProtocolType.VLESS: {
                 "flow": "xtls-rprx-direct",
                 "encryption": "none",
-                "serviceName": settings.XRAY_PATH
+                "serviceName": settings.XRAY_PATH,
+                "config_path": Path("/opt/xray/configs/vless.json")  # ADDED
             },
             ProtocolType.TROJAN: {
                 "password": settings.XRAY_UUID,
-                "email": f"admin@{settings.SERVER_IP}"
+                "email": f"admin@{settings.SERVER_IP}",
+                "config_path": Path("/opt/xray/configs/trojan.json")  # ADDED
             },
             ProtocolType.SHADOWSOCKS: {
                 "method": "aes-128-gcm",
-                "password": settings.XRAY_UUID
+                "password": settings.XRAY_UUID,
+                "config_path": Path("/opt/xray/configs/shadowsocks.json")  # ADDED
             },
             ProtocolType.HTTP: {
                 "timeout": 300,
-                "allowTransparent": False
+                "allowTransparent": False,
+                "config_path": Path("/opt/xray/configs/http.json")  # ADDED
             },
             ProtocolType.SOCKS: {
                 "auth": "noauth",
-                "udp": True
+                "udp": True,
+                "config_path": Path("/opt/xray/configs/socks.json")  # ADDED
             }
         },
         description="تنظیمات اختصاصی هر پروتکل"
@@ -102,16 +115,13 @@ class ProtocolSettings(BaseModel):
 
     def get_all_configs(self) -> Dict[ProtocolType, Dict]:
         """دریافت تمام تنظیمات پروتکل‌ها به صورت دیکشنری"""
-        return self.protocol_configs# ... (بقیه کدهای قبلی بدون تغییر)
-
-# =====================
-# بخش انتهایی فایل
-# =====================
+        return self.protocol_configs
 
 # نمونه Singleton از تنظیمات پروتکل‌ها
 protocol_settings = ProtocolSettings()
 
-def get_protocol_config(protocol_name: str) -> dict:
+# ============ توابع اضافه شده ============
+def get_protocol_config(protocol_name: str) -> dict:  # ADDED
     """
     دریافت تنظیمات پروتکل به صورت تابع مستقل
     Args:
@@ -128,7 +138,7 @@ def get_protocol_config(protocol_name: str) -> dict:
         logger.error(f"Invalid protocol requested: {protocol_name}")
         raise ValueError("پروتکل مورد نظر پشتیبانی نمی‌شود") from e
 
-def set_default_protocol(protocol_name: str) -> None:
+def set_default_protocol(protocol_name: str) -> None:  # ADDED
     """
     تنظیم پروتکل پیش‌فرض به صورت تابع مستقل
     Args:
@@ -142,3 +152,28 @@ def set_default_protocol(protocol_name: str) -> None:
     except ValueError as e:
         logger.error(f"Attempt to set invalid default protocol: {protocol_name}")
         raise ValueError("پروتکل معتبر نیست") from e
+
+def validate_protocol_config(config: dict) -> bool:  # ADDED
+    """
+    اعتبارسنجی تنظیمات پروتکل
+    Args:
+        config: دیکشنری تنظیمات
+    Returns:
+        bool: True اگر تنظیمات معتبر باشد
+    """
+    required_fields = {
+        ProtocolType.VMESS: ["security", "alterId"],
+        ProtocolType.VLESS: ["flow", "encryption"],
+        ProtocolType.TROJAN: ["password"],
+        ProtocolType.SHADOWSOCKS: ["method", "password"]
+    }
+    
+    protocol_type = config.get("protocol")
+    if not protocol_type:
+        return False
+        
+    try:
+        protocol = ProtocolType(protocol_type)
+        return all(field in config for field in required_fields.get(protocol, []))
+    except ValueError:
+        return False
