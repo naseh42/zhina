@@ -1,7 +1,7 @@
 import json
 import subprocess
 import logging
-from typing import Dict, List, Optional, Any  # اضافه کردن Any
+from typing import Dict, List, Optional, Any
 from pathlib import Path
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
@@ -68,8 +68,8 @@ class XrayManager:
             with open(self.config_path, 'w') as f:
                 json.dump(config, f, indent=4, ensure_ascii=False)
 
-            # 5. ریستارت سرویس
-            if xray_settings.restart_on_update:
+            # 5. ریستارت سرویس (با بررسی وجود ویژگی restart_on_update)
+            if hasattr(xray_settings, 'restart_on_update') and xray_settings.restart_on_update:
                 return self.restart_service()
             
             logger.info("Xray config updated successfully")
@@ -128,7 +128,8 @@ class XrayManager:
             inbound_config = self._generate_inbound_config(protocol, uuid)
             inbound = create_inbound(self.db, inbound_config)
 
-            if xray_settings.auto_apply:
+            # اضافه کردن بررسی وجود ویژگی auto_apply
+            if hasattr(xray_settings, 'auto_apply') and xray_settings.auto_apply:
                 self.update_xray_config()
 
             sub_link = self.generate_subscription_link(uuid, protocol)
@@ -168,7 +169,7 @@ class XrayManager:
 
     def generate_subscription_link(self, uuid: str, protocol: str) -> str:
         """تولید لینک اشتراک‌گذاری"""
-        domain = settings.DOMAIN or xray_settings.server_name
+        domain = settings.DOMAIN or getattr(xray_settings, 'server_name', 'localhost')
         base_link = f"https://{domain}/sub/{uuid}"
         
         if protocol == "vless":
