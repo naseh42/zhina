@@ -1,7 +1,7 @@
 from passlib.context import CryptContext
 from jose import jwt, JWTError
 from datetime import datetime, timedelta
-from typing import Optional, Callable, Any
+from typing import Optional, Callable, Any, Coroutine
 import secrets
 import string
 import qrcode
@@ -29,17 +29,24 @@ logger = logging.getLogger(__name__)
 
 def repeat_every(seconds: float) -> Callable:
     """
-    دکوراتور برای اجرای دوره‌ای یک تابع
+    دکوراتور برای اجرای دوره‌ای یک تابع با مدیریت خطاهای بهبود یافته
     """
-    def decorator(func: Callable) -> Callable:
+    def decorator(func: Callable[..., Coroutine[Any, Any, None]]) -> Callable[..., Coroutine[Any, Any, None]]:
         @wraps(func)
         async def wrapped(*args: Any, **kwargs: Any) -> None:
             while True:
                 try:
+                    if func is None:
+                        raise ValueError("Provided function cannot be None")
+                    if not asyncio.iscoroutinefunction(func):
+                        raise TypeError("Decorated function must be a coroutine")
+                    
                     await func(*args, **kwargs)
                 except Exception as e:
-                    logger.error(f"Error in periodic task: {e}")
-                await asyncio.sleep(seconds)
+                    logger.error(f"Periodic task error: {str(e)}", exc_info=True)
+                    await asyncio.sleep(min(60, seconds))  # Cap retry delay at 60s
+                else:
+                    await asyncio.sleep(seconds)
         return wrapped
     return decorator
 
