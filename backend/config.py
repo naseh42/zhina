@@ -8,7 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # تغییر مسیر از /etc به /opt
-load_dotenv("/opt/zhina/.env")
+load_dotenv("/opt/zhina/backend/.env")
 
 class Settings(BaseSettings):
     DATABASE_URL: str = Field(
@@ -108,7 +108,7 @@ class Settings(BaseSettings):
     )
 
     model_config = {
-        "env_file": "/opt/zhina/.env",  # تغییر مسیر
+        "env_file": "/opt/zhina/backend/.env",  # تغییر مسیر
         "env_file_encoding": "utf-8",
         "extra": "forbid"
     }
