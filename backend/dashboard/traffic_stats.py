@@ -1,7 +1,15 @@
+from fastapi import APIRouter, Depends
 from typing import Dict
 from backend.database import get_db
 from backend.models import User
 from sqlalchemy.orm import Session
+
+router = APIRouter()
+
+@router.get("/traffic")
+async def traffic_stats_endpoint(db: Session = Depends(get_db)):
+    """Endpoint برای دریافت آمار ترافیک"""
+    return get_traffic_stats(db)
 
 def get_traffic_stats(db: Session) -> Dict:
     """ دریافت آمار ترافیک مصرفی """
