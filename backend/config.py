@@ -79,7 +79,12 @@ class Settings(BaseSettings):
     description="Default usage duration in days",
     ge=1  # حداقل 1 روز
     )
-    
+    DEFAULT_USAGE_DURATION: int = Field(
+    default=30,  # 30 روز مدت زمان پیش‌فرض
+    description="Default usage duration in days", 
+    ge=1  # حداقل باید 1 روز باشد
+    )
+   
     ADMIN_EMAIL: EmailStr = Field(default="admin@example.com")
     
     LANGUAGE: Literal["fa", "en"] = Field(default="fa")
