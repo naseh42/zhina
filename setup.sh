@@ -20,8 +20,7 @@ ADMIN_EMAIL=""
 ADMIN_PASS=""
 XRAY_VERSION="1.8.11"
 UVICORN_WORKERS=4
-XRAY_HTTP_PORT=8080
-DB_PASSWORD=$(openssl rand -hex 16)
+XRAY_HTTP_PORT=2083  # تغییر پورت از 8080 به 2083 برای جلوگیری از تداخل
 XRAY_PATH="/$(openssl rand -hex 8)"
 SECRETS_DIR="/etc/zhina/secrets"
 DEFAULT_THEME="dark"
@@ -95,7 +94,8 @@ install_prerequisites() {
         git python3 python3-venv python3-pip \
         postgresql postgresql-contrib nginx \
         curl wget openssl unzip uuid-runtime \
-        certbot python3-certbot-nginx || error "خطا در نصب پکیج‌ها"
+        certbot python3-certbot-nginx \
+        build-essential python3-dev libpq-dev || error "خطا در نصب پکیج‌ها"
     
     success "پیش‌نیازها با موفقیت نصب شدند"
 }
@@ -152,6 +152,7 @@ setup_environment() {
     
     success "محیط سیستم با موفقیت تنظیم شد"
 }
+
 # ------------------- تنظیم دیتابیس -------------------
 setup_database() {
     info "تنظیم پایگاه داده PostgreSQL..."
@@ -325,7 +326,7 @@ setup_python() {
     
     pip install --upgrade pip wheel || error "خطا در بروزرسانی pip و wheel"
     
-    # نصب نیازمندی‌های اصلی بدون نیاز به فایل requirements.txt
+    # نصب نیازمندی‌های اصلی با استفاده از psycopg2-binary و نسخه‌های سازگار
     pip install \
         fastapi==0.95.0 \
         uvicorn==0.21.0 \
@@ -337,7 +338,29 @@ setup_python() {
         email-validator==1.3.1 \
         "pydantic[email]"==1.10.7 \
         alembic==1.10.0 \
+        aiofiles==23.1.0 \
+        python-multipart==0.0.6 \
         || error "خطا در نصب نیازمندی‌های پایتون"
+    
+    # نصب نیازمندی‌های اضافی برای جلوگیری از مشکلات وابستگی
+    pip install \
+        anyio==3.6.2 \
+        async-timeout==4.0.2 \
+        certifi==2022.12.7 \
+        cffi==1.15.1 \
+        charset-normalizer==2.1.1 \
+        cryptography==38.0.4 \
+        greenlet==2.0.1 \
+        h11==0.14.0 \
+        idna==3.4 \
+        pyasn1==0.4.8 \
+        pycparser==2.21 \
+        rsa==4.9 \
+        sniffio==1.3.0 \
+        starlette==0.26.1 \
+        typing-extensions==4.4.0 \
+        urllib3==1.26.13 \
+        || error "خطا در نصب وابستگی‌های تکمیلی"
     
     deactivate
     
