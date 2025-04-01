@@ -1,5 +1,8 @@
+from fastapi import APIRouter
 import psutil
 from typing import Dict
+
+router = APIRouter()  # این خط را اضافه کنید
 
 def get_server_stats() -> Dict:
     """ دریافت آمار سرور """
@@ -28,3 +31,8 @@ def get_server_stats() -> Dict:
         }
     }
     return stats
+
+# اضافه کردن route برای دریافت آمار سرور
+@router.get("/stats", response_model=Dict)
+async def fetch_server_stats():
+    return get_server_stats()
