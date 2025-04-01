@@ -19,10 +19,10 @@ from pydantic import BaseModel
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-
 from backend import schemas, models, utils
 from backend.database import get_db, engine, Base
 from backend.config import settings
+from backend.xray_config.xray_manager import XrayManager
 from backend.xray_config import get_xray_manager
 from backend.users.user_manager import UserManager
 from backend.domains.domain_manager import DomainManager
@@ -33,7 +33,6 @@ xray_manager = get_xray_manager()
 # ایجاد دایرکتوری لاگ اگر وجود نداشته باشد
 log_dir = Path('/opt/zhina/logs')
 log_dir.mkdir(parents=True, exist_ok=True)
-
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -98,7 +97,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 text=True
             )
             db_status = "online" if validate_db_connection(next(get_db())) else "offline"
-            
             await websocket.send_json({
                 "xray": xray_status.stdout.strip(),
                 "database": db_status,
@@ -143,7 +141,6 @@ async def process_login(
             "request": request,
             "error": "Invalid credentials"
         })
-    
     access_token = utils.create_access_token(data={"sub": user.username})
     response = RedirectResponse(url="/dashboard", status_code=303)
     response.set_cookie(key="access_token", value=f"Bearer {access_token}", httponly=True)
@@ -184,7 +181,7 @@ async def create_user(
 async def add_domain(
     domain_data: schemas.DomainCreate,
     db: Session = Depends(get_db)
-):
+:
     manager = DomainManager(db)
     return manager.create(domain_data)
 
@@ -198,17 +195,20 @@ async def get_xray_config(db: Session = Depends(get_db)):
 
 @app.on_event("startup")
 @utils.repeat_every(seconds=300)
-def periodic_xray_sync():
+async def periodic_xray_sync():  # تغییر به async
     try:
         with next(get_db()) as db:
-            XrayManager(db).update_xray_config()
+            manager = XrayManager(db)
+            if asyncio.iscoroutinefunction(manager.update_xray_config):
+                await manager.update_xray_config()
+            else:
+                manager.update_xray_config()
             logger.info("Periodic Xray sync completed")
     except Exception as e:
         logger.error(f"Sync failed: {str(e)}")
 
 def get_online_users_count() -> int:
     """پیاده‌سازی موقت شمارش کاربران آنلاین"""
-    # TODO: جایگزینی با منطق واقعی
     return 0
 
 if __name__ == "__main__":
