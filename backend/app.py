@@ -30,7 +30,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('/var/log/zhina/panel.log'),
+        logging.FileHandler('/opt/zhina/logs/panel.log'),  # تغییر مسیر به /opt
         logging.StreamHandler()
     ]
 )
@@ -55,7 +55,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"]  # همین خط اضافه شود
+    expose_headers=["*"]  # تغییر درخواستی شما
 )
 
 @app.on_event("startup")
@@ -84,7 +84,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 "xray": xray_status.stdout.strip(),
                 "database": db_status,
                 "timestamp": datetime.now().isoformat(),
-                "users_online": utils.get_online_users_count()
+                "users_online": get_online_users_count()  # تغییر به تابع داخلی
             })
             await asyncio.sleep(5)
         except Exception as e:
@@ -174,6 +174,12 @@ def periodic_xray_sync():
             logger.info("Periodic Xray sync completed")
     except Exception as e:
         logger.error(f"Sync failed: {str(e)}")
+
+# ============ توابع اضافه شده ============
+def get_online_users_count() -> int:  # ADDED
+    """پیاده‌سازی موقت شمارش کاربران آنلاین"""
+    # TODO: جایگزینی با منطق واقعی
+    return 0
 
 if __name__ == "__main__":
     import uvicorn
