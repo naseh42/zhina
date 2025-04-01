@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 from pathlib import Path
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
+from functools import wraps
 
 from .inbounds import get_inbounds, create_inbound
 from .protocols import protocol_settings
@@ -14,17 +15,9 @@ from .tls_http import tls_settings
 from backend.models import Inbound, User
 from backend.config import settings
 from backend.utils import generate_uuid
-from backend.database import SessionLocal  # تغییر این خط
+from backend.database import SessionLocal
 
 logger = logging.getLogger(__name__)
-
-# اضافه کردن تابع get_db به طور کامل
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 class XrayManager:
     """
@@ -37,87 +30,11 @@ class XrayManager:
 
     def __init__(self, db: Session):
         self.db = db
+        self.config_path = Path("/etc/xray/config.json")
+        self.backup_path = Path("/etc/xray/config.json.bak")
 
-    # ... (همه متدهای دیگر دقیقاً مانند قبل بدون هیچ تغییری باقی می‌مانند) ...
-
-    def add_user(self, user_id: int, protocol: str = None) -> Dict:
-        """
-        ایجاد کاربر جدید در Xray به همراه سابسکریپشن و اینباند
-        
-        Args:
-            user_id: آیدی کاربر در دیتابیس
-            protocol: پروتکل مورد نظر (در صورت عدم انتخاب از پیش‌فرض استفاده می‌شود)
-            
-        Returns:
-            Dict: اطلاعات کاربر شامل uuid, sub_link, config
-        """
-        try:
-            # 1. ایجاد سابسکریپشن
-            protocol = protocol or protocol_settings.default_protocol
-            uuid = generate_uuid()
-            
-            sub_data = {
-                "uuid": uuid,
-                "user_id": user_id,
-                "data_limit": settings.DEFAULT_DATA_LIMIT,
-                "expiry_date": (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
-                "max_connections": settings.DEFAULT_MAX_CONNECTIONS
-            }
-            subscription = create_subscription(self.db, sub_data)
-
-            # 2. ایجاد اینباند
-            inbound_config = self._generate_inbound_config(protocol, uuid)
-            inbound = create_inbound(self.db, inbound_config)
-
-            # 3. اعمال تغییرات در Xray
-            if xray_settings.auto_apply:
-                self.apply_config()
-
-            # 4. تولید لینک اشتراک‌گذاری
-            sub_link = self.generate_subscription_link(uuid, protocol)
-
-            return {
-                "status": "success",
-                "user_id": user_id,
-                "uuid": uuid,
-                "protocol": protocol,
-                "subscription_link": sub_link,
-                "config": inbound_config
-            }
-
-        except Exception as e:
-            logger.error(f"خطا در ایجاد کاربر: {str(e)}")
-            raise
-
-    def _generate_inbound_config(self, protocol: str, uuid: str) -> Dict:
-        """تولید کانفیگ اینباند بر اساس پروتکل"""
-        base_config = {
-            "port": settings.XRAY_DEFAULT_PORT,
-            "protocol": protocol,
-            "tag": f"inbound-{uuid[:8]}",
-            "settings": {
-                "clients": [{"id": uuid}]
-            },
-            "streamSettings": {
-                "network": "tcp",
-                "security": "tls" if tls_settings.enable else "none",
-                "tlsSettings": tls_settings.dict() if tls_settings.enable else None
-            }
-        }
-        
-        # اضافه کردن تنظیمات خاص پروتکل
-        protocol_config = protocol_settings.get_protocol_config(protocol)
-        base_config["settings"].update(protocol_config)
-        
-        return base_config
-
-    def apply_config(self) -> bool:
-        """
-        اعمال تغییرات کانفیگ و ریستارت سرویس Xray
-        
-        Returns:
-            bool: True اگر عملیات موفقیت‌آمیز بود
-        """
+    def update_xray_config(self) -> bool:
+        """به‌روزرسانی پیکربندی Xray"""
         try:
             # 1. جمع‌آوری تمام اینباندهای فعال
             active_inbounds = [
@@ -144,30 +61,35 @@ class XrayManager:
                 }
             }
 
-            # 3. ذخیره فایل کانفیگ
-            with open(xray_settings.config_path, 'w') as f:
+            # 3. ایجاد پشتیبان
+            self._create_backup()
+
+            # 4. ذخیره فایل کانفیگ
+            with open(self.config_path, 'w') as f:
                 json.dump(config, f, indent=4, ensure_ascii=False)
 
-            # 4. ریستارت سرویس
+            # 5. ریستارت سرویس
             if xray_settings.restart_on_update:
                 return self.restart_service()
             
+            logger.info("Xray config updated successfully")
             return True
 
         except Exception as e:
-            logger.error(f"خطا در اعمال کانفیگ Xray: {str(e)}")
+            logger.error(f"Failed to update Xray config: {str(e)}")
             return False
 
+    def _create_backup(self) -> None:
+        """ایجاد پشتیبان از فایل پیکربندی"""
+        if self.config_path.exists():
+            with open(self.config_path, 'r') as src, open(self.backup_path, 'w') as dst:
+                dst.write(src.read())
+
     def restart_service(self) -> bool:
-        """
-        ریستارت سرویس Xray
-        
-        Returns:
-            bool: True اگر سرویس با موفقیت ریستارت شد
-        """
+        """ریستارت سرویس Xray"""
         try:
             result = subprocess.run(
-                xray_settings.restart_command,
+                ["systemctl", "restart", "xray"],
                 check=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -176,20 +98,76 @@ class XrayManager:
             logger.info(f"Xray restarted: {result.stdout}")
             return True
         except subprocess.CalledProcessError as e:
-            logger.error(f"خطا در ریستارت Xray: {e.stderr}")
+            logger.error(f"Xray restart failed: {e.stderr}")
             return False
 
-    def generate_subscription_link(self, uuid: str, protocol: str) -> str:
-        """
-        تولید لینک اشتراک‌گذاری
-        
-        Args:
-            uuid: شناسه کاربر
-            protocol: پروتکل مورد استفاده
+    def get_config(self) -> Dict[str, Any]:
+        """دریافت پیکربندی فعلی"""
+        try:
+            with open(self.config_path, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Failed to get Xray config: {str(e)}")
+            return {}
+
+    def add_user(self, user_id: int, protocol: str = None) -> Dict:
+        """ایجاد کاربر جدید در Xray"""
+        try:
+            protocol = protocol or protocol_settings.default_protocol
+            uuid = generate_uuid()
             
-        Returns:
-            str: لینک نهایی
-        """
+            sub_data = {
+                "uuid": uuid,
+                "user_id": user_id,
+                "data_limit": settings.DEFAULT_DATA_LIMIT,
+                "expiry_date": (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
+                "max_connections": settings.DEFAULT_MAX_CONNECTIONS
+            }
+            subscription = create_subscription(self.db, sub_data)
+
+            inbound_config = self._generate_inbound_config(protocol, uuid)
+            inbound = create_inbound(self.db, inbound_config)
+
+            if xray_settings.auto_apply:
+                self.update_xray_config()
+
+            sub_link = self.generate_subscription_link(uuid, protocol)
+
+            return {
+                "status": "success",
+                "user_id": user_id,
+                "uuid": uuid,
+                "protocol": protocol,
+                "subscription_link": sub_link,
+                "config": inbound_config
+            }
+        except Exception as e:
+            logger.error(f"Error adding user: {str(e)}")
+            raise
+
+    def _generate_inbound_config(self, protocol: str, uuid: str) -> Dict:
+        """تولید کانفیگ اینباند"""
+        base_config = {
+            "port": settings.XRAY_DEFAULT_PORT,
+            "protocol": protocol,
+            "tag": f"inbound-{uuid[:8]}",
+            "settings": {
+                "clients": [{"id": uuid}]
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "tls" if tls_settings.enable else "none",
+                "tlsSettings": tls_settings.dict() if tls_settings.enable else None
+            }
+        }
+        
+        protocol_config = protocol_settings.get_protocol_config(protocol)
+        base_config["settings"].update(protocol_config)
+        
+        return base_config
+
+    def generate_subscription_link(self, uuid: str, protocol: str) -> str:
+        """تولید لینک اشتراک‌گذاری"""
         domain = settings.DOMAIN or xray_settings.server_name
         base_link = f"https://{domain}/sub/{uuid}"
         
@@ -197,6 +175,3 @@ class XrayManager:
             return f"vless://{uuid}@{domain}:443?security=tls&type=tcp#{uuid[:8]}"
         
         return base_link
-
-# نمونه Singleton از XrayManager
-xray_manager = XrayManager(get_db())
