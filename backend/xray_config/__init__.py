@@ -30,7 +30,10 @@ from .subscription import (
     get_subscription
 )
 
-# مدیریت Lazy Import برای XrayManager
+# ایمپورت اصلی کلاس XrayManager
+from .xray_manager import XrayManager
+
+# مدیریت Singleton
 _xray_manager_instance = None
 
 def get_xray_manager(db_session=None):
@@ -38,9 +41,7 @@ def get_xray_manager(db_session=None):
     global _xray_manager_instance
     
     if _xray_manager_instance is None:
-        from .xray_manager import XrayManager
         from backend.database import SessionLocal
-        
         _xray_manager_instance = XrayManager(db_session or SessionLocal())
     
     return _xray_manager_instance
@@ -82,5 +83,6 @@ __all__ = [
     'set_default_protocol',
     
     # مدیریت Xray
+    'XrayManager',
     'get_xray_manager'
 ]
