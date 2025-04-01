@@ -29,7 +29,7 @@ class UserInDB(UserBase):
     created_at: datetime
     updated_at: Optional[datetime]
     
-    model_config = ConfigDict(from_attributes=True)  # جایگزین Config کلاس
+    model_config = ConfigDict(from_attributes=True)
 
 # -------------------- Domain Models --------------------
 class DomainProtocol(str, Enum):
@@ -41,6 +41,17 @@ class DomainCreate(BaseModel):
     name: str = Field(..., min_length=3, max_length=253, examples=["example.com"])
     protocol: DomainProtocol = Field(default=DomainProtocol.VMESS)
     cdn_enabled: bool = Field(default=False)
+
+class Domain(BaseModel):
+    id: int
+    name: str
+    protocol: DomainProtocol
+    cdn_enabled: bool
+    created_at: datetime
+    updated_at: Optional[datetime]
+    owner_id: int
+    
+    model_config = ConfigDict(from_attributes=True)
 
 # -------------------- Subscription Models --------------------
 class SubscriptionCreate(BaseModel):
