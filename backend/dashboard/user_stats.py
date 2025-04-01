@@ -4,8 +4,28 @@ from datetime import datetime
 from backend.database import get_db
 from backend.models import User
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 
 router = APIRouter()
+
+# تعریف مدل‌های Pydantic برای پاسخ‌ها
+class UserStatsResponse(BaseModel):
+    total_users: int
+    online_users: int
+    offline_users: int
+    inactive_users: int
+
+class UserListItem(BaseModel):
+    id: int
+    name: str
+    uuid: str
+    traffic_limit: float
+    traffic_used: float
+    usage_duration: float
+    remaining_days: int
+    simultaneous_connections: int
+    is_active: bool
+    is_online: bool
 
 def calculate_remaining_days(expiry_date: datetime) -> int:
     """محاسبه روزهای باقیمانده تا انقضا"""
@@ -14,18 +34,9 @@ def calculate_remaining_days(expiry_date: datetime) -> int:
     remaining = expiry_date - datetime.now()
     return remaining.days if remaining.days > 0 else 0
 
-@router.get("/stats")
+@router.get("/stats", response_model=UserStatsResponse)
 async def user_stats_endpoint(db: Session = Depends(get_db)):
     """Endpoint برای دریافت آمار کاربران"""
-    return get_user_stats(db)
-
-@router.get("/list")
-async def user_list_endpoint(db: Session = Depends(get_db)):
-    """Endpoint برای دریافت لیست کاربران"""
-    return get_user_list(db)
-
-def get_user_stats(db: Session) -> Dict:
-    """دریافت آمار کاربران"""
     users = db.query(User).all()
     stats = {
         "total_users": len(users),
@@ -33,12 +44,13 @@ def get_user_stats(db: Session) -> Dict:
         "offline_users": len([user for user in users if not user.is_online and user.is_active]),
         "inactive_users": len([user for user in users if not user.is_active])
     }
-    return stats
+    return UserStatsResponse(**stats)
 
-def get_user_list(db: Session) -> List[Dict]:
-    """دریافت لیست کاربران با جزئیات"""
+@router.get("/list", response_model=List[UserListItem])
+async def user_list_endpoint(db: Session = Depends(get_db)):
+    """Endpoint برای دریافت لیست کاربران"""
     users = db.query(User).all()
-    return [
+    user_list = [
         {
             "id": user.id,
             "name": user.name,
@@ -53,3 +65,4 @@ def get_user_list(db: Session) -> List[Dict]:
         }
         for user in users
     ]
+    return [UserListItem(**user) for user in user_list]
