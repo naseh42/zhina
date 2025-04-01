@@ -23,13 +23,18 @@ class UserCreate(UserBase):
     usage_duration: int = Field(default=30, ge=1, description="مدت زمان استفاده به روز")
     simultaneous_connections: int = Field(default=3, ge=1)
 
-class UserInDB(UserBase):
+class User(UserBase):
     id: int
     uuid: str
     created_at: datetime
     updated_at: Optional[datetime]
+    traffic_used: int = Field(default=0)
+    expiry_date: Optional[datetime] = None
     
     model_config = ConfigDict(from_attributes=True)
+
+class UserInDB(User):
+    hashed_password: str
 
 # -------------------- Domain Models --------------------
 class DomainProtocol(str, Enum):
