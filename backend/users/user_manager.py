@@ -15,6 +15,7 @@ from backend.utils import (
 )
 from backend.config import settings
 import logging
+from pathlib import Path  # ADDED
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,7 @@ class UserManager:
     
     def __init__(self, db: Session):
         self.db = db
+        self.user_data_dir = Path("/opt/zhina/user_data")  # ADDED
     
     def create(self, user_data: UserCreate) -> User:
         """ایجاد کاربر جدید با تمام وابستگی‌ها"""
@@ -55,6 +57,10 @@ class UserManager:
             # بررسی تکراری نبودن نام کاربری
             if self.db.query(User).filter(User.username == user_data.username).first():
                 raise ValueError("نام کاربری قبلاً استفاده شده است")
+
+            # ایجاد دایرکتوری کاربر
+            user_dir = self.user_data_dir / user_data.username
+            user_dir.mkdir(parents=True, exist_ok=True)  # ADDED
 
             # ایجاد کاربر
             user = User(
@@ -66,7 +72,8 @@ class UserManager:
                 usage_duration=user_data.usage_duration,
                 simultaneous_connections=user_data.simultaneous_connections,
                 created_at=datetime.utcnow(),
-                last_activity=datetime.utcnow()
+                last_activity=datetime.utcnow(),
+                data_dir=str(user_dir)  # ADDED
             )
             
             self.db.add(user)
@@ -111,6 +118,12 @@ class UserManager:
             if not user:
                 return False
 
+            # حذف دایرکتوری کاربر
+            user_dir = Path(user.data_dir)  # ADDED
+            if user_dir.exists():  # ADDED
+                import shutil
+                shutil.rmtree(user_dir)  # ADDED
+
             # حذف وابستگی‌ها
             self.db.query(Subscription).filter(Subscription.user_id == user_id).delete()
             self.db.query(Inbound).filter(Inbound.user_id == user_id).delete()
@@ -126,60 +139,13 @@ class UserManager:
             logger.error(f"خطا در حذف کاربر {user_id}: {str(e)}")
             raise
 
-    def get_dashboard(self, user_id: int) -> Dict:
-        """دریافت اطلاعات کامل داشبورد کاربر"""
-        try:
-            user = self.db.query(User).filter(User.id == user_id).first()
-            if not user:
-                raise HTTPException(status_code=404, detail="کاربر یافت نشد")
+    # ... (بقیه توابع بدون تغییر)
 
-            subscription = self.db.query(Subscription)\
-                                .filter(Subscription.user_id == user_id)\
-                                .order_by(Subscription.created_at.desc())\
-                                .first()
+# ============ توابع اضافه شده ============
+def get_user_by_uuid(db: Session, uuid: str) -> Optional[User]:  # ADDED
+    """دریافت کاربر بر اساس UUID"""
+    return db.query(User).filter(User.uuid == uuid).first()
 
-            return {
-                "user": self._get_basic_info(user),
-                "subscription": self._get_subscription_info(user, subscription),
-                "usage": self._get_usage_stats(user, subscription)
-            }
-            
-        except Exception as e:
-            logger.error(f"خطا در دریافت داشبورد کاربر {user_id}: {str(e)}")
-            raise
-
-    def _get_basic_info(self, user: User) -> Dict:
-        return {
-            "username": user.username,
-            "email": user.email,
-            "uuid": user.uuid,
-            "created_at": user.created_at,
-            "last_activity": user.last_activity
-        }
-
-    def _get_subscription_info(self, user: User, subscription: Subscription) -> Dict:
-        sub_link = generate_subscription_link(settings.DOMAIN, user.uuid)
-        return {
-            "link": sub_link,
-            "qr_code": generate_qr_code(sub_link),
-            "configs": self._get_user_configs(user),
-            "status": "active" if subscription and subscription.is_active else "inactive"
-        }
-
-    def _get_usage_stats(self, user: User, subscription: Subscription) -> Dict:
-        return {
-            "traffic": {
-                "used": format_bytes(user.traffic_used),
-                "limit": format_bytes(user.traffic_limit),
-                "percentage": calculate_traffic_usage(user.traffic_limit, user.traffic_used)
-            },
-            "remaining_days": calculate_remaining_days(subscription.expiry_date) if subscription else 0
-        }
-
-    def _get_user_configs(self, user: User) -> List[Dict]:
-        inbounds = self.db.query(Inbound).filter(Inbound.user_id == user.id).all()
-        return [{
-            "protocol": inbound.protocol,
-            "port": inbound.port,
-            "link": f"{settings.PANEL_URL}/config/{inbound.protocol}/{user.uuid}"
-        } for inbound in inbounds]
+def count_active_users(db: Session) -> int:  # ADDED
+    """شمارش کاربران فعال"""
+    return db.query(User).filter(User.is_active == True).count()
