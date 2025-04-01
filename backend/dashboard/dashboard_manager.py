@@ -1,9 +1,14 @@
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 import psutil
 from typing import Dict, List
-from sqlalchemy.orm import Session
 from datetime import datetime
+from backend.database import get_db
 from backend.models import User
 from backend.utils import calculate_remaining_days
+from backend import schemas
+
+router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
 
 class DashboardManager:
     def __init__(self, db: Session):
@@ -126,3 +131,32 @@ class DashboardManager:
             },
             "last_activity": u.last_activity.isoformat() if u.last_activity else None
         } for u in users]
+
+# Endpointهای FastAPI
+@router.get("/server-stats", response_model=Dict)
+async def server_stats(db: Session = Depends(get_db)):
+    """آمار لحظه‌ای سرور"""
+    return DashboardManager(db).get_server_stats()
+
+@router.get("/traffic-stats", response_model=Dict)
+async def traffic_stats(db: Session = Depends(get_db)):
+    """آمار ترافیک"""
+    return DashboardManager(db).get_traffic_stats()
+
+@router.get("/user-stats", response_model=Dict)
+async def user_stats(db: Session = Depends(get_db)):
+    """آمار کاربران"""
+    return DashboardManager(db).get_user_stats()
+
+@router.get("/full-report", response_model=Dict)
+async def full_report(db: Session = Depends(get_db)):
+    """گزارش کامل"""
+    return DashboardManager(db).get_full_report()
+
+@router.get("/users", response_model=List[Dict])
+async def user_list(
+    detailed: bool = False,
+    db: Session = Depends(get_db)
+):
+    """لیست کاربران"""
+    return DashboardManager(db).get_user_list(detailed)
