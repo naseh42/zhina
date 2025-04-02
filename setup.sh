@@ -150,6 +150,8 @@ setup_environment() {
 setup_database() {
     info "تنظیم پایگاه داده PostgreSQL..."
     
+    export DB_PASSWORD="your_password"
+    
     systemctl start postgresql || error "خطا در راه‌اندازی PostgreSQL"
     
     sudo -u postgres psql <<EOF || error "خطا در اجرای دستورات PostgreSQL"
@@ -161,6 +163,7 @@ setup_database() {
     CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
     CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 EOF
+
 
     sudo -u postgres psql -c "
     ALTER USER $DB_USER WITH SUPERUSER;
