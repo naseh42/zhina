@@ -31,7 +31,7 @@ class XraySettings(BaseModel):
     log_level: str = Field(
         default="warning",
         description="سطح لاگ‌گیری (مقادیر معتبر: debug, info, warning, error, none)",
-        regex="^(debug|info|warning|error|none)$"
+        pattern="^(debug|info|warning|error|none)$"
     )
     
     api_enabled: bool = Field(
