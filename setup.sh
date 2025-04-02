@@ -20,7 +20,7 @@ ADMIN_EMAIL=""
 ADMIN_PASS=""
 XRAY_VERSION="1.8.11"
 UVICORN_WORKERS=4
-XRAY_HTTP_PORT=2083  # تغییر داده شده به 2083
+XRAY_HTTP_PORT=2083  # تغییر پورت به 2083
 XRAY_PATH="/$(openssl rand -hex 8)"
 SECRETS_DIR="/etc/zhina/secrets"
 DEFAULT_THEME="dark"
@@ -34,7 +34,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-error() {
+error() { 
     echo -e "${RED}[✗] $1${NC}" >&2
     echo -e "برای مشاهده خطاهای کامل، فایل لاگ را بررسی کنید: ${YELLOW}/var/log/zhina-install.log${NC}"
     exit 1
@@ -148,12 +148,11 @@ setup_environment() {
 
 # ------------------- تنظیم دیتابیس -------------------
 setup_database() {
-[[ -z "$DB_PASSWORD" ]] && DB_PASSWORD=$(openssl rand -hex 16 || echo "fallback_password_$(date +%s)")
-
-info "تنظیم پایگاه داده PostgreSQL..."
-systemctl start postgresql || error "خطا در راه‌اندازی PostgreSQL"
-
-sudo -u postgres psql <<EOF || error "خطا در اجرای دستورات PostgreSQL"
+    info "تنظیم پایگاه داده PostgreSQL..."
+    
+    systemctl start postgresql || error "خطا در راه‌اندازی PostgreSQL"
+    
+    sudo -u postgres psql <<EOF || error "خطا در اجرای دستورات PostgreSQL"
     DROP DATABASE IF EXISTS $DB_NAME;
     DROP USER IF EXISTS $DB_USER;
     CREATE USER $DB_USER WITH PASSWORD '$DB_PASSWORD';
@@ -329,7 +328,7 @@ setup_python() {
         python-jose==3.3.0 \
         passlib==1.7.4 \
         email-validator==1.3.1 \
-        "pydantic>=2.0.0" \  # تغییر داده شده به نسخه 2
+        "pydantic>=2.0.0" \  # تغییر به نسخه 2
         alembic==1.10.0 \
         || error "خطا در نصب نیازمندی‌های پایتون"
     
