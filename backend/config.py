@@ -128,7 +128,7 @@ class Settings(BaseSettings):
     model_config = {
         "env_file": "/opt/zhina/backend/.env",
         "env_file_encoding": "utf-8",
-        "extra": "forbid"
+        "extra": "allow"
     }
 
     @field_validator("DATABASE_URL")
