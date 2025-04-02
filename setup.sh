@@ -148,11 +148,12 @@ setup_environment() {
 
 # ------------------- تنظیم دیتابیس -------------------
 setup_database() {
-    info "تنظیم پایگاه داده PostgreSQL..."
-    
-    systemctl start postgresql || error "خطا در راه‌اندازی PostgreSQL"
-    
-    sudo -u postgres psql <<EOF || error "خطا در اجرای دستورات PostgreSQL"
+[[ -z "$DB_PASSWORD" ]] && DB_PASSWORD=$(openssl rand -hex 16 || echo "fallback_password_$(date +%s)")
+
+info "تنظیم پایگاه داده PostgreSQL..."
+systemctl start postgresql || error "خطا در راه‌اندازی PostgreSQL"
+
+sudo -u postgres psql <<EOF || error "خطا در اجرای دستورات PostgreSQL"
     DROP DATABASE IF EXISTS $DB_NAME;
     DROP USER IF EXISTS $DB_USER;
     CREATE USER $DB_USER WITH PASSWORD '$DB_PASSWORD';
