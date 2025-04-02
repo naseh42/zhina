@@ -5,7 +5,7 @@ exec > >(tee -a "/var/log/zhina-install.log") 2>&1
 # ------------------- تنظیمات اصلی -------------------
 INSTALL_DIR="/opt/zhina"
 BACKEND_DIR="$INSTALL_DIR/backend"
-FRONTEND_DIR="$INSTALL_DIR/frontend"
+FRONTEND_DIR="$INSTALL_DIR/frontend"  # این خط جدید اضافه شد
 CONFIG_DIR="/etc/zhina"
 LOG_DIR="/var/log/zhina"
 XRAY_DIR="/usr/local/bin/xray"
@@ -20,8 +20,7 @@ ADMIN_EMAIL=""
 ADMIN_PASS=""
 XRAY_VERSION="1.8.11"
 UVICORN_WORKERS=4
-XRAY_HTTP_PORT=2083  # تغییر 1: پورت Xray از 8080 به 2083
-DB_PASSWORD=$(openssl rand -hex 16)
+XRAY_HTTP_PORT=2083  # Changed from 8080 to avoid conflicts
 XRAY_PATH="/$(openssl rand -hex 8)"
 SECRETS_DIR="/etc/zhina/secrets"
 DEFAULT_THEME="dark"
@@ -95,8 +94,7 @@ install_prerequisites() {
         git python3 python3-venv python3-pip \
         postgresql postgresql-contrib nginx \
         curl wget openssl unzip uuid-runtime \
-        certbot python3-certbot-nginx \
-        build-essential python3-dev libpq-dev || error "خطا در نصب پکیج‌ها"
+        certbot python3-certbot-nginx || error "خطا در نصب پکیج‌ها"
     
     success "پیش‌نیازها با موفقیت نصب شدند"
 }
@@ -105,11 +103,13 @@ install_prerequisites() {
 setup_environment() {
     info "تنظیم محیط سیستم..."
     
+    # ایجاد کاربر سرویس
     if ! id "$SERVICE_USER" &>/dev/null; then
         useradd -r -s /bin/false -d "$INSTALL_DIR" "$SERVICE_USER" || 
             error "خطا در ایجاد کاربر $SERVICE_USER"
     fi
     
+    # ایجاد دایرکتوری‌ها با دسترسی ریشه
     sudo mkdir -p \
         "$BACKEND_DIR" \
         "$FRONTEND_DIR" \
@@ -119,15 +119,18 @@ setup_environment() {
         "$SECRETS_DIR" \
         "/etc/xray" || error "خطا در ایجاد دایرکتوری‌ها"
     
+    # تنظیم مالکیت‌ها
     sudo chown -R "$SERVICE_USER":"$SERVICE_USER" \
         "$INSTALL_DIR" \
         "$LOG_DIR" \
         "$SECRETS_DIR" \
         "$CONFIG_DIR"
     
+    # ایجاد و تنظیم فایل‌های لاگ
     sudo touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
     sudo chown "$SERVICE_USER":"$SERVICE_USER" "$LOG_DIR/panel"/*.log
     
+    # انتقال فایل‌های پروژه (از مسیر جاری)
     if [ -d "./backend" ]; then
         sudo cp -r "./backend"/* "$BACKEND_DIR"/ || error "خطا در انتقال بک‌اند"
     else
@@ -140,6 +143,7 @@ setup_environment() {
         error "پوشه frontend در مسیر جاری یافت نشد!"
     fi
     
+    # تنظیم مجوزهای نهایی
     sudo find "$BACKEND_DIR" -type d -exec chmod 750 {} \;
     sudo find "$BACKEND_DIR" -type f -exec chmod 640 {} \;
     sudo find "$FRONTEND_DIR" -type d -exec chmod 755 {} \;
@@ -321,7 +325,7 @@ setup_python() {
     
     pip install --upgrade pip wheel || error "خطا در بروزرسانی pip و wheel"
     
-    # تغییر 2: نصب نیازمندی‌های پایتون با نسخه‌های ثابت
+    # نصب نیازمندی‌های اصلی با پشتیبانی از پاندانتیک v2
     pip install \
         fastapi==0.95.0 \
         uvicorn==0.21.0 \
@@ -331,13 +335,8 @@ setup_python() {
         python-jose==3.3.0 \
         passlib==1.7.4 \
         email-validator==1.3.1 \
-        "pydantic[email]"==1.10.7 \
+        "pydantic>=2.0.0" \
         alembic==1.10.0 \
-        aiofiles==23.1.0 \
-        python-multipart==0.0.6 \
-        anyio==3.6.2 \
-        async-timeout==4.0.2 \
-        cryptography==38.0.4 \
         || error "خطا در نصب نیازمندی‌های پایتون"
     
     deactivate
@@ -484,6 +483,7 @@ server {
     listen 80;
     server_name $PANEL_DOMAIN;
     
+    # فرانت‌اند
     root $INSTALL_DIR/frontend;
     index index.html;
     
@@ -491,6 +491,7 @@ server {
         try_files \$uri /index.html;
     }
     
+    # بک‌اند API
     location /api {
         proxy_pass http://127.0.0.1:$PANEL_PORT;
         proxy_set_header Host \$host;
@@ -498,6 +499,7 @@ server {
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     }
     
+    # WebSocket
     location /ws {
         proxy_pass http://127.0.0.1:$PANEL_PORT;
         proxy_http_version 1.1;
@@ -506,6 +508,7 @@ server {
         proxy_set_header Host \$host;
     }
     
+    # Xray
     location $XRAY_PATH {
         proxy_pass http://127.0.0.1:$XRAY_HTTP_PORT;
         proxy_http_version 1.1;
@@ -514,6 +517,7 @@ server {
         proxy_set_header Host \$host;
     }
     
+    # Let's Encrypt
     location /.well-known/acme-challenge/ {
         root /var/www/html;
     }
