@@ -407,27 +407,34 @@ EOF
 install_xray() {
     info "نصب و پیکربندی Xray..."
     
+    # متوقف کردن سرویس قبلی (اگر وجود دارد)
     systemctl stop xray 2>/dev/null || true
     
+    # دانلود Xray
     if ! wget "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" -O /tmp/xray.zip; then
         error "خطا در دانلود Xray"
     fi
     
+    # استخراج فایل‌ها
     if ! unzip -o /tmp/xray.zip -d "$XRAY_DIR"; then
         error "خطا در استخراج Xray"
     fi
     
+    # تنظیم مجوز اجرا
     chmod +x "$XRAY_EXECUTABLE"
 
+    # تولید کلیدهای Reality
     if ! REALITY_KEYS=$("$XRAY_EXECUTABLE" x25519); then
         error "خطا در تولید کلیدهای Reality"
     fi
     
+    # استخراج کلیدها
     REALITY_PRIVATE_KEY=$(echo "$REALITY_KEYS" | awk '/Private key:/ {print $3}')
     REALITY_PUBLIC_KEY=$(echo "$REALITY_KEYS" | awk '/Public key:/ {print $3}')
     REALITY_SHORT_ID=$(openssl rand -hex 4)
     XRAY_UUID=$(uuidgen)
 
+    # ایجاد فایل پیکربندی اصلی
     cat > "$XRAY_CONFIG" <<EOF
 {
     "log": {
@@ -488,6 +495,12 @@ install_xray() {
 }
 EOF
 
+    # ایجاد فایل پشتیبان (همین بخش جدید)
+    cp "$XRAY_CONFIG" "/etc/xray/config.json.bak"
+    chmod 600 "/etc/xray/config.json.bak"
+    success "فایل پشتیبان Xray در /etc/xray/config.json.bak ایجاد شد"
+
+    # ایجاد سرویس systemd
     cat > /etc/systemd/system/xray.service <<EOF
 [Unit]
 Description=Xray Service
@@ -505,9 +518,11 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 EOF
 
+    # راه‌اندازی سرویس
     systemctl daemon-reload
     systemctl enable --now xray || error "خطا در راه‌اندازی Xray"
     
+    # بررسی وضعیت سرویس
     sleep 2
     if ! systemctl is-active --quiet xray; then
         journalctl -u xray -n 20 --no-pager
