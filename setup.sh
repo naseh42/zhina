@@ -315,41 +315,49 @@ EOF
 
 # ------------------- تنظیم محیط پایتون -------------------
 setup_python() {
-setup_python() {
-    # 1. حذف محیط قبلی (اگر وجود دارد)
-    rm -rf "/opt/zhina/venv" 2>/dev/null
+    info "تنظیم محیط پایتون..."
     
-    # 2. ایجاد محیط مجازی جدید
-    if ! python3 -m venv "/opt/zhina/venv"; then
-        echo "! خطا در ایجاد محیط مجازی" >&2
+    # حذف محیط مجازی قبلی اگر وجود دارد
+    rm -rf "$INSTALL_DIR/venv" 2>/dev/null
+    
+    # ایجاد محیط مجازی جدید
+    if ! python3 -m venv "$INSTALL_DIR/venv"; then
+        error "خطا در ایجاد محیط مجازی پایتون"
         return 1
     fi
 
-    # 3. تنظیم دسترسی‌های حیاتی
-    chown -R zhina:zhina "/opt/zhina/venv"
-    find "/opt/zhina/venv" -type d -exec chmod 750 {} \;
-    find "/opt/zhina/venv" -type f -exec chmod 750 {} \;
+    # تنظیم دسترسی‌ها
+    chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/venv"
+    find "$INSTALL_DIR/venv" -type d -exec chmod 750 {} \;
+    find "$INSTALL_DIR/venv" -type f -exec chmod 750 {} \;
 
-    # 4. نصب پایه‌ای
-    if ! sudo -u zhina "/opt/zhina/venv/bin/python" -m pip install --upgrade pip wheel; then
-        echo "! خطا در نصب pip/wheel" >&2
+    # نصب نیازمندی‌ها با نسخه‌های دقیق
+    if ! sudo -u "$SERVICE_USER" "$INSTALL_DIR/venv/bin/pip" install \
+        fastapi==0.103.0 \
+        pydantic==2.0.3 \
+        pydantic-settings \
+        email-validator==2.2.0 \
+        dnspython==2.7.0 \
+        idna==3.10 \
+        "qrcode[pil]==7.3" \
+        jinja2 \
+        python-multipart \
+        uvicorn==0.23.2 \
+        psycopg2-binary==2.9.7 \
+        python-jose==3.3.0 \
+        sqlalchemy==2.0.28 \
+        python-dotenv==1.0.0 \
+        passlib==1.7.4 \
+        cryptography==41.0.7 \
+        psutil==5.9.5 \
+        httpx==0.25.2 \
+        python-dateutil==2.8.2 \
+        pyotp==2.9.0; then
+        error "خطا در نصب نیازمندی‌های پایتون"
         return 1
     fi
 
-    # 5. نصب نیازمندی‌ها از فایل پروژه
-    if [[ -f "/opt/zhina/backend/requirements.txt" ]]; then
-        if ! sudo -u zhina "/opt/zhina/venv/bin/python" -m pip install -r "/opt/zhina/backend/requirements.txt"; then
-            echo "! خطا در نصب نیازمندی‌ها" >&2
-            echo "! لاگ کامل خطا در /var/log/zhina-pip-errors.log" >&2
-            sudo -u zhina "/opt/zhina/venv/bin/python" -m pip install -r "/opt/zhina/backend/requirements.txt" 2>&1 | tee "/var/log/zhina-pip-errors.log"
-            return 1
-        fi
-    else
-        echo "! فایل requirements.txt یافت نشد" >&2
-        return 1
-    fi
-
-    echo "* محیط پایتون با موفقیت تنظیم شد"
+    success "محیط پایتون با نیازمندی‌های جدید تنظیم شد"
     return 0
 }
 # ------------------- نصب Xray -------------------
