@@ -314,7 +314,6 @@ EOF
 }
 
 # ------------------- تنظیم محیط پایتون -------------------
-# ------------------- تنظیم محیط پایتون -------------------
 setup_python() {
     info "تنظیم محیط پایتون..."
     
@@ -323,17 +322,28 @@ setup_python() {
     
     pip install --upgrade pip wheel || error "خطا در بروزرسانی pip و wheel"
     
+    # نصب نیازمندی‌های پایتون
     pip install \
-        fastapi==0.95.0 \
-        uvicorn==0.21.0 \
-        psycopg2-binary==2.9.5 \
-        sqlalchemy==2.0.0 \
-        python-dotenv==1.0.0 \
+        fastapi==0.103.0 \
+        pydantic==2.0.3 \
+        pydantic-settings \
+        email-validator==2.2.0 \
+        dnspython==2.7.0 \
+        idna==3.10 \
+        qrcode[pil]==7.3 \
+        jinja2 \
+        python-multipart \
+        uvicorn==0.23.2 \
+        psycopg2-binary==2.9.7 \
         python-jose==3.3.0 \
+        sqlalchemy==2.0.28 \
+        python-dotenv==1.0.0 \
         passlib==1.7.4 \
-        email-validator==1.3.1 \
-        pydantic>=2.0.0 \
-        alembic==1.10.0 \
+        cryptography==41.0.7 \
+        psutil==5.9.5 \
+        httpx==0.25.2 \
+        python-dateutil==2.8.2 \
+        pyotp==2.9.0 \
         || error "خطا در نصب نیازمندی‌های پایتون"
     
     deactivate
@@ -481,19 +491,30 @@ server {
     server_name $PANEL_DOMAIN;
     
     root $INSTALL_DIR/frontend;
-    index index.html;
-    
-    location / {
-        try_files \$uri /index.html;
+
+    # ------ مسیرهای عمومی فایل‌های HTML ------
+    location ~ ^/template/(.+)\.html$ {
+        try_files /template/\$1.html =404;
     }
-    
+
+    # ------ مسیر فایل CSS ------
+    location /style/css {
+        alias $INSTALL_DIR/frontend/style/css;
+        expires 365d;
+        access_log off;
+        add_header Cache-Control "public, no-transform";
+    }
+
+    # ------ API پنل ------
     location /api {
         proxy_pass http://127.0.0.1:$PANEL_PORT;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
     }
     
+    # ------ WebSocket ------
     location /ws {
         proxy_pass http://127.0.0.1:$PANEL_PORT;
         proxy_http_version 1.1;
@@ -502,6 +523,7 @@ server {
         proxy_set_header Host \$host;
     }
     
+    # ------ مسیر Xray ------
     location $XRAY_PATH {
         proxy_pass http://127.0.0.1:$XRAY_HTTP_PORT;
         proxy_http_version 1.1;
@@ -510,9 +532,14 @@ server {
         proxy_set_header Host \$host;
     }
     
+    # ------ SSL (برای Certbot) ------
     location /.well-known/acme-challenge/ {
         root /var/www/html;
     }
+
+    # ------ خطاهای سفارشی ------
+    error_page 404 /template/404.html;
+    error_page 500 502 503 504 /template/50x.html;
 }
 EOF
 
@@ -523,7 +550,6 @@ EOF
     
     success "Nginx با موفقیت پیکربندی شد"
 }
-
 # ------------------- تنظیم SSL -------------------
 setup_ssl() {
     info "تنظیم گواهی SSL..."
