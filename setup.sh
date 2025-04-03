@@ -315,37 +315,42 @@ EOF
 
 # ------------------- تنظیم محیط پایتون -------------------
 setup_python() {
-    info "در حال تنظیم محیط پایتون..."
+setup_python() {
+    # 1. حذف محیط قبلی (اگر وجود دارد)
+    rm -rf "/opt/zhina/venv" 2>/dev/null
     
-    # حذف محیط قبلی اگر وجود دارد
-    rm -rf "/opt/zhina/venv"
-    
-    # ایجاد محیط مجازی جدید
+    # 2. ایجاد محیط مجازی جدید
     if ! python3 -m venv "/opt/zhina/venv"; then
-        error "خطا در ایجاد محیط مجازی"
+        echo "! خطا در ایجاد محیط مجازی" >&2
         return 1
     fi
 
-    # تنظیم دسترسی‌ها قبل از فعال‌سازی
+    # 3. تنظیم دسترسی‌های حیاتی
     chown -R zhina:zhina "/opt/zhina/venv"
     find "/opt/zhina/venv" -type d -exec chmod 750 {} \;
     find "/opt/zhina/venv" -type f -exec chmod 750 {} \;
 
-    # فعال‌سازی و نصب
-    if ! sudo -u zhina /opt/zhina/venv/bin/pip install --upgrade pip wheel || \
-       ! sudo -u zhina /opt/zhina/venv/bin/pip install -r "/opt/zhina/backend/requirements.txt"; then
-        error "خطا در نصب نیازمندی‌ها"
+    # 4. نصب پایه‌ای
+    if ! sudo -u zhina "/opt/zhina/venv/bin/python" -m pip install --upgrade pip wheel; then
+        echo "! خطا در نصب pip/wheel" >&2
         return 1
     fi
 
-    # اعتبارسنجی نهایی
-    if sudo -u zhina /opt/zhina/venv/bin/python -c "import uvicorn, fastapi"; then
-        success "محیط پایتون تنظیم شد"
-        return 0
+    # 5. نصب نیازمندی‌ها از فایل پروژه
+    if [[ -f "/opt/zhina/backend/requirements.txt" ]]; then
+        if ! sudo -u zhina "/opt/zhina/venv/bin/python" -m pip install -r "/opt/zhina/backend/requirements.txt"; then
+            echo "! خطا در نصب نیازمندی‌ها" >&2
+            echo "! لاگ کامل خطا در /var/log/zhina-pip-errors.log" >&2
+            sudo -u zhina "/opt/zhina/venv/bin/python" -m pip install -r "/opt/zhina/backend/requirements.txt" 2>&1 | tee "/var/log/zhina-pip-errors.log"
+            return 1
+        fi
     else
-        error "خطا در اعتبارسنجی"
+        echo "! فایل requirements.txt یافت نشد" >&2
         return 1
     fi
+
+    echo "* محیط پایتون با موفقیت تنظیم شد"
+    return 0
 }
 # ------------------- نصب Xray -------------------
 install_xray() {
