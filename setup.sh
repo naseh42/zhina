@@ -667,15 +667,7 @@ Group=$SERVICE_USER
 WorkingDirectory=$BACKEND_DIR
 Environment="PATH=$INSTALL_DIR/venv/bin"
 Environment="PYTHONPATH=$BACKEND_DIR"
-ExecStart=$INSTALL_DIR/venv/bin/uvicorn \
-    app:app \
-    --host 0.0.0.0 \
-    --port $PANEL_PORT \
-    --workers $UVICORN_WORKERS \
-    --log-level info \
-    --access-log \
-    --no-server-header
-
+ExecStart=$INSTALL_DIR/venv/bin/uvicorn app:app --host 0.0.0.0 --port $PANEL_PORT --workers $UVICORN_WORKERS --log-level info --access-log --no-server-header
 Restart=always
 RestartSec=3
 StandardOutput=append:$LOG_DIR/panel/access.log
@@ -685,12 +677,16 @@ StandardError=append:$LOG_DIR/panel/error.log
 WantedBy=multi-user.target
 EOF
 
+    mkdir -p $LOG_DIR/panel
+    chown -R $SERVICE_USER:$SERVICE_USER $LOG_DIR/panel
+    chmod -R 755 $LOG_DIR/panel
+
     systemctl daemon-reload
     systemctl enable --now zhina-panel || error "خطا در راه‌اندازی سرویس پنل"
     
     sleep 3
     if ! systemctl is-active --quiet zhina-panel; then
-        journalctl -u zhina-panel -n 30 --no-pager
+        cat $LOG_DIR/panel/error.log
         error "سرویس پنل فعال نشد. لطفاً خطاهای بالا را بررسی کنید."
     fi
     
