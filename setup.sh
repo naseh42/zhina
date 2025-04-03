@@ -326,14 +326,18 @@ EOF
 }
 
 # ------------------- تنظیم محیط پایتون -------------------
+# ------------------- تنظیم محیط پایتون -------------------
 setup_python() {
     info "تنظیم محیط پایتون..."
     
-    python3 -m venv "$INSTALL_DIR/venv" || error "خطا در ایجاد محیط مجازی"
+    # ایجاد محیط مجازی (venv)
+    python3 -m venv "$INSTALL_DIR/venv" || error "خطا در ایجاد محیط مجازی پایتون"
     source "$INSTALL_DIR/venv/bin/activate"
     
+    # بروزرسانی pip و wheel
     pip install --upgrade pip wheel || error "خطا در بروزرسانی pip و wheel"
-    
+
+    # نصب نیازمندی‌های پایتون
     pip install \
         fastapi==0.103.0 \
         pydantic==2.0.3 \
@@ -356,13 +360,16 @@ setup_python() {
         python-dateutil==2.8.2 \
         pyotp==2.9.0 \
         || error "خطا در نصب نیازمندی‌های پایتون"
-    
+
+    # غیرفعال کردن محیط مجازی
     deactivate
     
+    # تنظیم مالکیت و دسترسی‌ها برای محیط مجازی
     chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/venv"
-    chmod 750 "$INSTALL_DIR/venv/bin/uvicorn" 2>/dev/null || true
-    
-    success "محیط پایتون تنظیم شد"
+    chmod -R 755 "$INSTALL_DIR/venv"
+    chmod 755 "$INSTALL_DIR/venv/bin/uvicorn" || error "خطا در تنظیم دسترسی‌های فایل uvicorn"
+
+    success "محیط پایتون با موفقیت تنظیم شد"
 }
 # ------------------- نصب Xray -------------------
 install_xray() {
