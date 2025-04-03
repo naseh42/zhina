@@ -481,19 +481,31 @@ server {
     server_name $PANEL_DOMAIN;
     
     root $INSTALL_DIR/frontend;
-    index index.html;
+    index template/dashboard.html;
     
-    location / {
-        try_files \$uri /index.html;
+    # ------ مسیرهای تمپلیت با الگوی هوشمند ------
+    location ~ ^/(dashboard|domains|login|settings|users|base)(/)?$ {
+        try_files /template/\$1.html =404;
     }
-    
+
+    # ------ فایل‌های استاتیک ------
+    location ~ ^/static/(css|js|img)/(.+)$ {
+        alias $INSTALL_DIR/frontend/static/\$1/\$2;
+        expires 365d;
+        access_log off;
+        add_header Cache-Control "public, no-transform";
+    }
+
+    # ------ API بک‌اند ------
     location /api {
         proxy_pass http://127.0.0.1:$PANEL_PORT;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
     }
     
+    # ------ WebSocket ------
     location /ws {
         proxy_pass http://127.0.0.1:$PANEL_PORT;
         proxy_http_version 1.1;
@@ -502,6 +514,7 @@ server {
         proxy_set_header Host \$host;
     }
     
+    # ------ مسیر Xray ------
     location $XRAY_PATH {
         proxy_pass http://127.0.0.1:$XRAY_HTTP_PORT;
         proxy_http_version 1.1;
@@ -510,18 +523,27 @@ server {
         proxy_set_header Host \$host;
     }
     
+    # ------ SSL (برای Certbot) ------
     location /.well-known/acme-challenge/ {
         root /var/www/html;
     }
+    
+    # ------ خطاهای سفارشی ------
+    error_page 404 /template/404.html;
+    error_page 500 502 503 504 /template/50x.html;
 }
 EOF
 
+    # اعمال permissions
+    chown -R $SERVICE_USER:$SERVICE_USER $INSTALL_DIR/frontend
+    chmod -R 755 $INSTALL_DIR/frontend/static
+
+    # تست و راه‌اندازی مجدد
     rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
-    
     nginx -t || error "خطا در پیکربندی Nginx"
     systemctl restart nginx || error "خطا در راه‌اندازی Nginx"
     
-    success "Nginx با موفقیت پیکربندی شد"
+    success "Nginx با موفقیت پیکربندی شد (مسیر تمپلیت: template/، استاتیک: static/)"
 }
 
 # ------------------- تنظیم SSL -------------------
