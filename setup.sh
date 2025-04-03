@@ -326,17 +326,16 @@ EOF
 }
 
 # ------------------- تنظیم محیط پایتون -------------------
-# ------------------- تنظیم محیط پایتون -------------------
 setup_python() {
     info "تنظیم محیط پایتون..."
     
     # ایجاد محیط مجازی (venv)
-    python3 -m venv "$INSTALL_DIR/venv" || error "خطا در ایجاد محیط مجازی پایتون"
+    python3 -m venv "$INSTALL_DIR/venv" || error "خطا در ایجاد محیط مجازی"
     source "$INSTALL_DIR/venv/bin/activate"
     
     # بروزرسانی pip و wheel
     pip install --upgrade pip wheel || error "خطا در بروزرسانی pip و wheel"
-
+    
     # نصب نیازمندی‌های پایتون
     pip install \
         fastapi==0.103.0 \
@@ -360,13 +359,12 @@ setup_python() {
         python-dateutil==2.8.2 \
         pyotp==2.9.0 \
         || error "خطا در نصب نیازمندی‌های پایتون"
-
-    # غیرفعال کردن محیط مجازی
+    
     deactivate
     
-    # تنظیم مالکیت و دسترسی‌ها برای محیط مجازی
+    # تنظیم دسترسی‌ها و مالکیت محیط مجازی
     chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/venv"
-    chmod -R 755 "$INSTALL_DIR/venv"
+    chmod -R 755 "$INSTALL_DIR/venv"  # دسترسی مناسب برای کل دایرکتوری مجازی
     chmod 755 "$INSTALL_DIR/venv/bin/uvicorn" || error "خطا در تنظیم دسترسی‌های فایل uvicorn"
 
     success "محیط پایتون با موفقیت تنظیم شد"
@@ -389,6 +387,69 @@ install_xray() {
     fi
     
     # تنظیم مجوز اجرا
+    chmod +x "$XRAY_EXECUTABLE"
+
+    # تولید کلیدهای Reality
+    if ! REALITY_KEYS=$("$XRAY_EXECUTABLE" x25519); then
+        error "خطا در تولید کلیدهای Reality"
+    fi
+    
+    # استخراج کلیدها
+    REALITY_PRIVATE_KEY=$(echo "$REALITY_KEYS" | awk '/Private key:/ {print $3}')
+    REALITY_PUBLIC_KEY=$(echo "$REALITY_KEYS" | awk '/Public key:/ {print $3}')
+    REALITY_SHORT_ID=$(openssl rand -hex 4)
+    XRAY_UUID=$(uuidgen)
+
+    # ایجاد فایل پیکربندی اصلی
+    cat > "$XRAY_CONFIG" <<EOF
+{
+    "log": {
+        "loglevel": "warning",
+        "access": "$LOG_DIR/xray-access.log",
+        "error": "$LOG_DIR/xray-error.log"
+    },
+    "inbounds": [
+        {
+            "port": 8443,
+            "protocol": "vless",
+            "settings": {
+                "clients": [{"id": "$XRAY_UUID", "flow": "xtls-rprx-vision"}],
+                "decryption": "none"
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                    "show": false,
+                    "dest": "www.datadoghq.com:443",
+                    "xver": 0,
+                    "serverNames": ["www.datadoghq.com"],
+                    "privateKey": "$REALITY_PRIVATE_KEY",
+                    "shortIds": ["$REALITY_SHORT_ID"],
+                    "fingerprint": "chrome"
+                }
+            },
+            "sniffing": {
+                "enabled": true,
+                "destOverride": ["http","tls"]
+            }
+install_xray() {
+    info "نصب و پیکربندی Xray..."
+    
+    # متوقف کردن سرویس قبلی (اگر وجود دارد)
+    systemctl stop xray 2>/dev/null || true
+    
+    # دانلود Xray
+    if ! wget "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" -O /tmp/xray.zip; then
+        error "خطا در دانلود Xray"
+    fi
+    
+    # استخراج فایل‌ها
+    if ! unzip -o /tmp/xray.zip -d "$XRAY_DIR"; then
+        error "خطا در استخراج Xray"
+    fi
+    
+    # تنظیم مجوز اجرا برای فایل اجرایی
     chmod +x "$XRAY_EXECUTABLE"
 
     # تولید کلیدهای Reality
@@ -463,12 +524,12 @@ install_xray() {
 }
 EOF
 
-    # ایجاد فایل پشتیبان (همین بخش جدید)
+    # ایجاد فایل پشتیبان برای پیکربندی Xray
     cp "$XRAY_CONFIG" "/etc/xray/config.json.bak"
-    chmod 600 "/etc/xray/config.json.bak"
-    success "فایل پشتیبان Xray در /etc/xray/config.json.bak ایجاد شد"
+    chmod 600 "/etc/xray/config.json.bak"  # دسترسی تنها برای مالک فایل
+    chown root:root "/etc/xray/config.json.bak"  # تنظیم مالکیت برای کاربر root
 
-    # ایجاد سرویس systemd
+    # ایجاد سرویس systemd برای Xray
     cat > /etc/systemd/system/xray.service <<EOF
 [Unit]
 Description=Xray Service
@@ -485,6 +546,10 @@ LimitNOFILE=65535
 [Install]
 WantedBy=multi-user.target
 EOF
+
+    # تنظیم دسترسی برای فایل سرویس
+    chmod 644 /etc/systemd/system/xray.service
+    chown root:root /etc/systemd/system/xray.service
 
     # راه‌اندازی سرویس
     systemctl daemon-reload
@@ -504,8 +569,10 @@ EOF
 setup_nginx() {
     info "تنظیم Nginx..."
     
+    # توقف سرویس Nginx در صورت اجرای قبلی
     systemctl stop nginx 2>/dev/null || true
     
+    # درخواست اطلاعات دامنه
     read -p "آیا از دامنه اختصاصی استفاده می‌کنید؟ (y/n) " use_domain
     if [[ "$use_domain" =~ ^[Yy]$ ]]; then
         while [[ -z "$PANEL_DOMAIN" ]]; do
@@ -517,20 +584,21 @@ setup_nginx() {
         echo -e "${YELLOW}از آدرس IP عمومی استفاده می‌شود: ${PANEL_DOMAIN}${NC}"
     fi
 
+    # ایجاد فایل تنظیمات Nginx
     cat > /etc/nginx/conf.d/zhina.conf <<EOF
 server {
     listen 80;
     server_name $PANEL_DOMAIN;
-    
+
     root $INSTALL_DIR/frontend;
     index template/dashboard.html;
     
-    # ------ مسیرهای تمپلیت با الگوی هوشمند ------
+    # مسیرهای تمپلیت
     location ~ ^/(dashboard|domains|login|settings|users|base)(/)?$ {
         try_files /template/\$1.html =404;
     }
 
-    # ------ فایل‌های استاتیک ------
+    # مسیرهای استاتیک
     location ~ ^/static/(css|js|img)/(.+)$ {
         alias $INSTALL_DIR/frontend/static/\$1/\$2;
         expires 365d;
@@ -538,7 +606,7 @@ server {
         add_header Cache-Control "public, no-transform";
     }
 
-    # ------ API بک‌اند ------
+    # API پنل
     location /api {
         proxy_pass http://127.0.0.1:$PANEL_PORT;
         proxy_set_header Host \$host;
@@ -547,7 +615,7 @@ server {
         proxy_set_header X-Forwarded-Proto \$scheme;
     }
     
-    # ------ WebSocket ------
+    # مسیر WebSocket
     location /ws {
         proxy_pass http://127.0.0.1:$PANEL_PORT;
         proxy_http_version 1.1;
@@ -556,7 +624,7 @@ server {
         proxy_set_header Host \$host;
     }
     
-    # ------ مسیر Xray ------
+    # مسیر Xray
     location $XRAY_PATH {
         proxy_pass http://127.0.0.1:$XRAY_HTTP_PORT;
         proxy_http_version 1.1;
@@ -565,29 +633,32 @@ server {
         proxy_set_header Host \$host;
     }
     
-    # ------ SSL (برای Certbot) ------
+    # مسیر SSL (برای Certbot)
     location /.well-known/acme-challenge/ {
         root /var/www/html;
     }
     
-    # ------ خطاهای سفارشی ------
+    # صفحات خطای سفارشی
     error_page 404 /template/404.html;
     error_page 500 502 503 504 /template/50x.html;
 }
 EOF
 
-    # اعمال permissions
+    # اعمال دسترسی‌ها
     chown -R $SERVICE_USER:$SERVICE_USER $INSTALL_DIR/frontend
     chmod -R 755 $INSTALL_DIR/frontend/static
 
-    # تست و راه‌اندازی مجدد
+    # حذف فایل پیش‌فرض Nginx (در صورت وجود)
     rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+
+    # تست تنظیمات Nginx
     nginx -t || error "خطا در پیکربندی Nginx"
+
+    # راه‌اندازی مجدد سرویس Nginx
     systemctl restart nginx || error "خطا در راه‌اندازی Nginx"
     
-    success "Nginx با موفقیت پیکربندی شد (مسیر تمپلیت: template/، استاتیک: static/)"
+    success "Nginx با موفقیت پیکربندی شد"
 }
-
 # ------------------- تنظیم SSL -------------------
 setup_ssl() {
     info "تنظیم گواهی SSL..."
