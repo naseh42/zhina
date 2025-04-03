@@ -661,6 +661,7 @@ EOF
 setup_panel_service() {
     info "تنظیم سرویس پنل..."
     
+    # ایجاد فایل app.py اگر وجود نداشت (همانند نسخه شما)
     APP_FILE="$BACKEND_DIR/app.py"
     if [[ ! -f "$APP_FILE" ]]; then
         warning "فایل app.py در مسیر $BACKEND_DIR یافت نشد! یک فایل نمونه ایجاد می‌کنیم..."
@@ -674,26 +675,27 @@ def read_root():
     return {"message": "خوش آمدید به پنل مدیریت Zhina"}
 EOF
     fi
-    
+
+    # ایجاد فایل سرویس با اصلاحات ضروری
     cat > /etc/systemd/system/zhina-panel.service <<EOF
 [Unit]
 Description=Zhina Panel Service
 After=network.target postgresql.service
+Requires=postgresql.service
 
 [Service]
+Type=simple
 User=$SERVICE_USER
 Group=$SERVICE_USER
 WorkingDirectory=$BACKEND_DIR
 Environment="PATH=$INSTALL_DIR/venv/bin"
 Environment="PYTHONPATH=$BACKEND_DIR"
-ExecStart=$INSTALL_DIR/venv/bin/uvicorn \
+ExecStart=$INSTALL_DIR/venv/bin/python -m uvicorn \
     app:app \
     --host 0.0.0.0 \
     --port $PANEL_PORT \
     --workers $UVICORN_WORKERS \
-    --log-level info \
-    --access-log \
-    --no-server-header
+    --log-level info
 
 Restart=always
 RestartSec=3
@@ -704,16 +706,27 @@ StandardError=append:$LOG_DIR/panel/error.log
 WantedBy=multi-user.target
 EOF
 
+    # تنظیم مجوزها
+    chmod 644 /etc/systemd/system/zhina-panel.service
+    chown root:root /etc/systemd/system/zhina-panel.service
+
+    # راه‌اندازی سرویس (همانند نسخه شما)
     systemctl daemon-reload
-    systemctl enable --now zhina-panel || error "خطا در راه‌اندازی سرویس پنل"
-    
+    systemctl enable --now zhina-panel || {
+        journalctl -u zhina-panel -n 30 --no-pager
+        error "خطا در راه‌اندازی سرویس پنل"
+        return 1
+    }
+
     sleep 3
     if ! systemctl is-active --quiet zhina-panel; then
-        journalctl -u zhina-panel -n 30 --no-pager
-        error "سرویس پنل فعال نشد. لطفاً خطاهای بالا را بررسی کنید."
+        journalctl -u zhina-panel -n 50 --no-pager
+        error "سرویس پنل فعال نشد"
+        return 1
     fi
-    
-    success "سرویس پنل تنظیم شد"
+
+    success "سرویس پنل با موفقیت تنظیم و راه‌اندازی شد"
+    return 0
 }
 
 # ------------------- نمایش اطلاعات نصب -------------------
