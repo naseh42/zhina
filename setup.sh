@@ -100,14 +100,17 @@ install_prerequisites() {
 }
 
 # ------------------- تنظیم کاربر و دایرکتوری‌ها -------------------
+# ------------------- تنظیم کاربر و دایرکتوری‌ها -------------------
 setup_environment() {
     info "تنظیم محیط سیستم..."
     
+    # ایجاد کاربر سرویس در صورت نیاز
     if ! id "$SERVICE_USER" &>/dev/null; then
         useradd -r -s /bin/false -d "$INSTALL_DIR" "$SERVICE_USER" || 
             error "خطا در ایجاد کاربر $SERVICE_USER"
     fi
     
+    # ایجاد دایرکتوری‌های مورد نیاز
     mkdir -p \
         "$BACKEND_DIR" \
         "$FRONTEND_DIR" \
@@ -117,29 +120,38 @@ setup_environment() {
         "$SECRETS_DIR" \
         "/etc/xray" || error "خطا در ایجاد دایرکتوری‌ها"
     
+    # تنظیم مالکیت دایرکتوری‌ها
     chown -R "$SERVICE_USER":"$SERVICE_USER" \
         "$INSTALL_DIR" \
         "$LOG_DIR" \
         "$SECRETS_DIR" \
         "$CONFIG_DIR"
     
+    # ایجاد فایل‌های لاگ
     touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
     chown "$SERVICE_USER":"$SERVICE_USER" "$LOG_DIR/panel"/*.log
     
+    # انتقال فایل‌های بک‌اند
     if [ -d "./backend" ]; then
         cp -r "./backend"/* "$BACKEND_DIR"/ || error "خطا در انتقال بک‌اند"
     else
         error "پوشه backend در مسیر جاری یافت نشد!"
     fi
     
+    # انتقال فایل‌های فرانت‌اند
     if [ -d "./frontend" ]; then
         cp -r "./frontend"/* "$FRONTEND_DIR"/ || error "خطا در انتقال فرانت‌اند"
     else
         error "پوشه frontend در مسیر جاری یافت نشد!"
     fi
     
-    find "$BACKEND_DIR" -type d -exec chmod 750 {} \;
-    find "$BACKEND_DIR" -type f -exec chmod 640 {} \;
+    # تنظیم دسترسی‌ها برای بک‌اند
+    find "$BACKEND_DIR" -type d -exec chmod 755 {} \;  # پوشه‌ها قابل اجرا و خواندن برای همه
+    find "$BACKEND_DIR" -type f -exec chmod 644 {} \;  # فایل‌ها قابل خواندن برای همه
+    chmod 600 "$BACKEND_DIR/.env"  # فایل `.env` فقط توسط مالک قابل خواندن باشد
+    chown -R "$SERVICE_USER":"$SERVICE_USER" "$BACKEND_DIR"  # مالکیت کامل برای `$SERVICE_USER`
+    
+    # تنظیم دسترسی‌ها برای فرانت‌اند
     find "$FRONTEND_DIR" -type d -exec chmod 755 {} \;
     find "$FRONTEND_DIR" -type f -exec chmod 644 {} \;
     
