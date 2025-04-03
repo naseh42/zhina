@@ -315,24 +315,26 @@ EOF
 
 # ------------------- تنظیم محیط پایتون -------------------
 setup_python() {
-    info "تنظیم محیط پایتون..."
+    info "تنظیم خودکار محیط پایتون..."
     
-    # حذف محیط مجازی قبلی اگر وجود دارد
-    rm -rf "$INSTALL_DIR/venv" 2>/dev/null
-    
-    # ایجاد محیط مجازی جدید
+    # حذف و بازسازی محیط مجازی با دسترسی‌های صحیح
+    rm -rf "$INSTALL_DIR/venv"
     if ! python3 -m venv "$INSTALL_DIR/venv"; then
-        error "خطا در ایجاد محیط مجازی پایتون"
+        error "خطا در ایجاد محیط مجازی"
         return 1
     fi
 
-    # تنظیم دسترسی‌ها
+    # تنظیم مالکیت و دسترسی‌ها قبل از هر عملیاتی
     chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/venv"
     find "$INSTALL_DIR/venv" -type d -exec chmod 750 {} \;
-    find "$INSTALL_DIR/venv" -type f -exec chmod 750 {} \;
+    find "$INSTALL_DIR/venv" -type f -iname "python*" -exec chmod 750 {} \;
+    find "$INSTALL_DIR/venv/bin" -type f -exec chmod 750 {} \;
 
-    # نصب نیازمندی‌ها با نسخه‌های دقیق
-    if ! sudo -u "$SERVICE_USER" "$INSTALL_DIR/venv/bin/pip" install \
+    # نصب با روش تضمینی (استفاده از ماژول pip)
+    if ! sudo -u "$SERVICE_USER" "$INSTALL_DIR/venv/bin/python" -m pip install \
+        --disable-pip-version-check \
+        --no-cache-dir \
+        --no-warn-script-location \
         fastapi==0.103.0 \
         pydantic==2.0.3 \
         pydantic-settings \
@@ -353,11 +355,14 @@ setup_python() {
         httpx==0.25.2 \
         python-dateutil==2.8.2 \
         pyotp==2.9.0; then
-        error "خطا در نصب نیازمندی‌های پایتون"
+        
+        # ذخیره لاگ خطا
+        sudo -u "$SERVICE_USER" "$INSTALL_DIR/venv/bin/python" -m pip install 2>&1 | tee "/var/log/zhina-pip-errors.log"
+        error "خطا در نصب خودکار نیازمندی‌ها. لاگ: /var/log/zhina-pip-errors.log"
         return 1
     fi
 
-    success "محیط پایتون با نیازمندی‌های جدید تنظیم شد"
+    success "نصب خودکار نیازمندی‌ها با موفقیت انجام شد"
     return 0
 }
 # ------------------- نصب Xray -------------------
