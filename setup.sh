@@ -100,17 +100,14 @@ install_prerequisites() {
 }
 
 # ------------------- تنظیم کاربر و دایرکتوری‌ها -------------------
-# ------------------- تنظیم کاربر و دایرکتوری‌ها -------------------
 setup_environment() {
     info "تنظیم محیط سیستم..."
     
-    # ایجاد کاربر سرویس در صورت نیاز
     if ! id "$SERVICE_USER" &>/dev/null; then
         useradd -r -s /bin/false -d "$INSTALL_DIR" "$SERVICE_USER" || 
             error "خطا در ایجاد کاربر $SERVICE_USER"
     fi
     
-    # ایجاد دایرکتوری‌های مورد نیاز
     mkdir -p \
         "$BACKEND_DIR" \
         "$FRONTEND_DIR" \
@@ -120,38 +117,29 @@ setup_environment() {
         "$SECRETS_DIR" \
         "/etc/xray" || error "خطا در ایجاد دایرکتوری‌ها"
     
-    # تنظیم مالکیت دایرکتوری‌ها
     chown -R "$SERVICE_USER":"$SERVICE_USER" \
         "$INSTALL_DIR" \
         "$LOG_DIR" \
         "$SECRETS_DIR" \
         "$CONFIG_DIR"
     
-    # ایجاد فایل‌های لاگ
     touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
     chown "$SERVICE_USER":"$SERVICE_USER" "$LOG_DIR/panel"/*.log
     
-    # انتقال فایل‌های بک‌اند
     if [ -d "./backend" ]; then
         cp -r "./backend"/* "$BACKEND_DIR"/ || error "خطا در انتقال بک‌اند"
     else
         error "پوشه backend در مسیر جاری یافت نشد!"
     fi
     
-    # انتقال فایل‌های فرانت‌اند
     if [ -d "./frontend" ]; then
         cp -r "./frontend"/* "$FRONTEND_DIR"/ || error "خطا در انتقال فرانت‌اند"
     else
         error "پوشه frontend در مسیر جاری یافت نشد!"
     fi
     
-    # تنظیم دسترسی‌ها برای بک‌اند
-    find "$BACKEND_DIR" -type d -exec chmod 755 {} \;  # پوشه‌ها قابل اجرا و خواندن برای همه
-    find "$BACKEND_DIR" -type f -exec chmod 644 {} \;  # فایل‌ها قابل خواندن برای همه
-    chmod 600 "$BACKEND_DIR/.env"  # فایل `.env` فقط توسط مالک قابل خواندن باشد
-    chown -R "$SERVICE_USER":"$SERVICE_USER" "$BACKEND_DIR"  # مالکیت کامل برای `$SERVICE_USER`
-    
-    # تنظیم دسترسی‌ها برای فرانت‌اند
+    find "$BACKEND_DIR" -type d -exec chmod 750 {} \;
+    find "$BACKEND_DIR" -type f -exec chmod 640 {} \;
     find "$FRONTEND_DIR" -type d -exec chmod 755 {} \;
     find "$FRONTEND_DIR" -type f -exec chmod 644 {} \;
     
@@ -326,144 +314,61 @@ EOF
 }
 
 # ------------------- تنظیم محیط پایتون -------------------
+# ------------------- تنظیم محیط پایتون -------------------
 setup_python() {
     info "تنظیم محیط پایتون..."
     
-    # ایجاد محیط مجازی (venv)
     python3 -m venv "$INSTALL_DIR/venv" || error "خطا در ایجاد محیط مجازی"
     source "$INSTALL_DIR/venv/bin/activate"
     
-    # بروزرسانی pip و wheel
     pip install --upgrade pip wheel || error "خطا در بروزرسانی pip و wheel"
     
-    # نصب نیازمندی‌های پایتون
     pip install \
-        fastapi==0.103.0 \
-        pydantic==2.0.3 \
-        pydantic-settings \
-        email-validator==2.2.0 \
-        dnspython==2.7.0 \
-        idna==3.10 \
-        qrcode[pil]==7.3 \
-        jinja2 \
-        python-multipart \
-        uvicorn==0.23.2 \
-        psycopg2-binary==2.9.7 \
-        python-jose==3.3.0 \
-        sqlalchemy==2.0.28 \
+        fastapi==0.95.0 \
+        uvicorn==0.21.0 \
+        psycopg2-binary==2.9.5 \
+        sqlalchemy==2.0.0 \
         python-dotenv==1.0.0 \
+        python-jose==3.3.0 \
         passlib==1.7.4 \
-        cryptography==41.0.7 \
-        psutil==5.9.5 \
-        httpx==0.25.2 \
-        python-dateutil==2.8.2 \
-        pyotp==2.9.0 \
+        email-validator==1.3.1 \
+        pydantic>=2.0.0 \
+        alembic==1.10.0 \
         || error "خطا در نصب نیازمندی‌های پایتون"
     
     deactivate
     
-    # تنظیم دسترسی‌ها و مالکیت محیط مجازی
     chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/venv"
-    chmod -R 755 "$INSTALL_DIR/venv"  # دسترسی مناسب برای کل دایرکتوری مجازی
-    chmod 755 "$INSTALL_DIR/venv/bin/uvicorn" || error "خطا در تنظیم دسترسی‌های فایل uvicorn"
-
-    success "محیط پایتون با موفقیت تنظیم شد"
+    chmod 750 "$INSTALL_DIR/venv/bin/uvicorn" 2>/dev/null || true
+    
+    success "محیط پایتون تنظیم شد"
 }
+
 # ------------------- نصب Xray -------------------
 install_xray() {
     info "نصب و پیکربندی Xray..."
     
-    # متوقف کردن سرویس قبلی (اگر وجود دارد)
     systemctl stop xray 2>/dev/null || true
     
-    # دانلود Xray
     if ! wget "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" -O /tmp/xray.zip; then
         error "خطا در دانلود Xray"
     fi
     
-    # استخراج فایل‌ها
     if ! unzip -o /tmp/xray.zip -d "$XRAY_DIR"; then
         error "خطا در استخراج Xray"
     fi
     
-    # تنظیم مجوز اجرا
     chmod +x "$XRAY_EXECUTABLE"
 
-    # تولید کلیدهای Reality
     if ! REALITY_KEYS=$("$XRAY_EXECUTABLE" x25519); then
         error "خطا در تولید کلیدهای Reality"
     fi
     
-    # استخراج کلیدها
     REALITY_PRIVATE_KEY=$(echo "$REALITY_KEYS" | awk '/Private key:/ {print $3}')
     REALITY_PUBLIC_KEY=$(echo "$REALITY_KEYS" | awk '/Public key:/ {print $3}')
     REALITY_SHORT_ID=$(openssl rand -hex 4)
     XRAY_UUID=$(uuidgen)
 
-    # ایجاد فایل پیکربندی اصلی
-    cat > "$XRAY_CONFIG" <<EOF
-{
-    "log": {
-        "loglevel": "warning",
-        "access": "$LOG_DIR/xray-access.log",
-        "error": "$LOG_DIR/xray-error.log"
-    },
-    "inbounds": [
-        {
-            "port": 8443,
-            "protocol": "vless",
-            "settings": {
-                "clients": [{"id": "$XRAY_UUID", "flow": "xtls-rprx-vision"}],
-                "decryption": "none"
-            },
-            "streamSettings": {
-                "network": "tcp",
-                "security": "reality",
-                "realitySettings": {
-                    "show": false,
-                    "dest": "www.datadoghq.com:443",
-                    "xver": 0,
-                    "serverNames": ["www.datadoghq.com"],
-                    "privateKey": "$REALITY_PRIVATE_KEY",
-                    "shortIds": ["$REALITY_SHORT_ID"],
-                    "fingerprint": "chrome"
-                }
-            },
-            "sniffing": {
-                "enabled": true,
-                "destOverride": ["http","tls"]
-            }
-install_xray() {
-    info "نصب و پیکربندی Xray..."
-    
-    # متوقف کردن سرویس قبلی (اگر وجود دارد)
-    systemctl stop xray 2>/dev/null || true
-    
-    # دانلود Xray
-    if ! wget "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" -O /tmp/xray.zip; then
-        error "خطا در دانلود Xray"
-    fi
-    
-    # استخراج فایل‌ها
-    if ! unzip -o /tmp/xray.zip -d "$XRAY_DIR"; then
-        error "خطا در استخراج Xray"
-    fi
-    
-    # تنظیم مجوز اجرا برای فایل اجرایی
-    chmod +x "$XRAY_EXECUTABLE"
-
-    # تولید کلیدهای Reality
-    if ! REALITY_KEYS=$("$XRAY_EXECUTABLE" x25519); then
-        error "خطا در تولید کلیدهای Reality"
-    fi
-    
-    # استخراج کلیدها
-    REALITY_PRIVATE_KEY=$(echo "$REALITY_KEYS" | awk '/Private key:/ {print $3}')
-    REALITY_PUBLIC_KEY=$(echo "$REALITY_KEYS" | awk '/Public key:/ {print $3}')
-    REALITY_SHORT_ID=$(openssl rand -hex 4)
-    XRAY_UUID=$(uuidgen)
-
-    # ایجاد فایل پیکربندی اصلی
     cat > "$XRAY_CONFIG" <<EOF
 {
     "log": {
@@ -524,12 +429,6 @@ install_xray() {
 }
 EOF
 
-    # ایجاد فایل پشتیبان برای پیکربندی Xray
-    cp "$XRAY_CONFIG" "/etc/xray/config.json.bak"
-    chmod 600 "/etc/xray/config.json.bak"  # دسترسی تنها برای مالک فایل
-    chown root:root "/etc/xray/config.json.bak"  # تنظیم مالکیت برای کاربر root
-
-    # ایجاد سرویس systemd برای Xray
     cat > /etc/systemd/system/xray.service <<EOF
 [Unit]
 Description=Xray Service
@@ -547,15 +446,9 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 EOF
 
-    # تنظیم دسترسی برای فایل سرویس
-    chmod 644 /etc/systemd/system/xray.service
-    chown root:root /etc/systemd/system/xray.service
-
-    # راه‌اندازی سرویس
     systemctl daemon-reload
     systemctl enable --now xray || error "خطا در راه‌اندازی Xray"
     
-    # بررسی وضعیت سرویس
     sleep 2
     if ! systemctl is-active --quiet xray; then
         journalctl -u xray -n 20 --no-pager
@@ -569,10 +462,8 @@ EOF
 setup_nginx() {
     info "تنظیم Nginx..."
     
-    # توقف سرویس Nginx در صورت اجرای قبلی
     systemctl stop nginx 2>/dev/null || true
     
-    # درخواست اطلاعات دامنه
     read -p "آیا از دامنه اختصاصی استفاده می‌کنید؟ (y/n) " use_domain
     if [[ "$use_domain" =~ ^[Yy]$ ]]; then
         while [[ -z "$PANEL_DOMAIN" ]]; do
@@ -584,38 +475,25 @@ setup_nginx() {
         echo -e "${YELLOW}از آدرس IP عمومی استفاده می‌شود: ${PANEL_DOMAIN}${NC}"
     fi
 
-    # ایجاد فایل تنظیمات Nginx
     cat > /etc/nginx/conf.d/zhina.conf <<EOF
 server {
     listen 80;
     server_name $PANEL_DOMAIN;
-
-    root $INSTALL_DIR/frontend;
-    index template/dashboard.html;
     
-    # مسیرهای تمپلیت
-    location ~ ^/(dashboard|domains|login|settings|users|base)(/)?$ {
-        try_files /template/\$1.html =404;
+    root $INSTALL_DIR/frontend;
+    index index.html;
+    
+    location / {
+        try_files \$uri /index.html;
     }
-
-    # مسیرهای استاتیک
-    location ~ ^/static/(css|js|img)/(.+)$ {
-        alias $INSTALL_DIR/frontend/static/\$1/\$2;
-        expires 365d;
-        access_log off;
-        add_header Cache-Control "public, no-transform";
-    }
-
-    # API پنل
+    
     location /api {
         proxy_pass http://127.0.0.1:$PANEL_PORT;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
     }
     
-    # مسیر WebSocket
     location /ws {
         proxy_pass http://127.0.0.1:$PANEL_PORT;
         proxy_http_version 1.1;
@@ -624,7 +502,6 @@ server {
         proxy_set_header Host \$host;
     }
     
-    # مسیر Xray
     location $XRAY_PATH {
         proxy_pass http://127.0.0.1:$XRAY_HTTP_PORT;
         proxy_http_version 1.1;
@@ -633,32 +510,20 @@ server {
         proxy_set_header Host \$host;
     }
     
-    # مسیر SSL (برای Certbot)
     location /.well-known/acme-challenge/ {
         root /var/www/html;
     }
-    
-    # صفحات خطای سفارشی
-    error_page 404 /template/404.html;
-    error_page 500 502 503 504 /template/50x.html;
 }
 EOF
 
-    # اعمال دسترسی‌ها
-    chown -R $SERVICE_USER:$SERVICE_USER $INSTALL_DIR/frontend
-    chmod -R 755 $INSTALL_DIR/frontend/static
-
-    # حذف فایل پیش‌فرض Nginx (در صورت وجود)
     rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
-
-    # تست تنظیمات Nginx
+    
     nginx -t || error "خطا در پیکربندی Nginx"
-
-    # راه‌اندازی مجدد سرویس Nginx
     systemctl restart nginx || error "خطا در راه‌اندازی Nginx"
     
     success "Nginx با موفقیت پیکربندی شد"
 }
+
 # ------------------- تنظیم SSL -------------------
 setup_ssl() {
     info "تنظیم گواهی SSL..."
@@ -751,7 +616,6 @@ EOF
 setup_panel_service() {
     info "تنظیم سرویس پنل..."
     
-    # ایجاد فایل app.py اگر وجود نداشت (همانند نسخه شما)
     APP_FILE="$BACKEND_DIR/app.py"
     if [[ ! -f "$APP_FILE" ]]; then
         warning "فایل app.py در مسیر $BACKEND_DIR یافت نشد! یک فایل نمونه ایجاد می‌کنیم..."
@@ -765,27 +629,26 @@ def read_root():
     return {"message": "خوش آمدید به پنل مدیریت Zhina"}
 EOF
     fi
-
-    # ایجاد فایل سرویس با اصلاحات ضروری
+    
     cat > /etc/systemd/system/zhina-panel.service <<EOF
 [Unit]
 Description=Zhina Panel Service
 After=network.target postgresql.service
-Requires=postgresql.service
 
 [Service]
-Type=simple
 User=$SERVICE_USER
 Group=$SERVICE_USER
 WorkingDirectory=$BACKEND_DIR
 Environment="PATH=$INSTALL_DIR/venv/bin"
 Environment="PYTHONPATH=$BACKEND_DIR"
-ExecStart=$INSTALL_DIR/venv/bin/python -m uvicorn \
+ExecStart=$INSTALL_DIR/venv/bin/uvicorn \
     app:app \
     --host 0.0.0.0 \
     --port $PANEL_PORT \
     --workers $UVICORN_WORKERS \
-    --log-level info
+    --log-level info \
+    --access-log \
+    --no-server-header
 
 Restart=always
 RestartSec=3
@@ -796,27 +659,16 @@ StandardError=append:$LOG_DIR/panel/error.log
 WantedBy=multi-user.target
 EOF
 
-    # تنظیم مجوزها
-    chmod 644 /etc/systemd/system/zhina-panel.service
-    chown root:root /etc/systemd/system/zhina-panel.service
-
-    # راه‌اندازی سرویس (همانند نسخه شما)
     systemctl daemon-reload
-    systemctl enable --now zhina-panel || {
-        journalctl -u zhina-panel -n 30 --no-pager
-        error "خطا در راه‌اندازی سرویس پنل"
-        return 1
-    }
-
+    systemctl enable --now zhina-panel || error "خطا در راه‌اندازی سرویس پنل"
+    
     sleep 3
     if ! systemctl is-active --quiet zhina-panel; then
-        journalctl -u zhina-panel -n 50 --no-pager
-        error "سرویس پنل فعال نشد"
-        return 1
+        journalctl -u zhina-panel -n 30 --no-pager
+        error "سرویس پنل فعال نشد. لطفاً خطاهای بالا را بررسی کنید."
     fi
-
-    success "سرویس پنل با موفقیت تنظیم و راه‌اندازی شد"
-    return 0
+    
+    success "سرویس پنل تنظیم شد"
 }
 
 # ------------------- نمایش اطلاعات نصب -------------------
