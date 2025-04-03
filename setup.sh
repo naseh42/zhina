@@ -315,28 +315,21 @@ EOF
 
 # ------------------- تنظیم محیط پایتون -------------------
 setup_python() {
-    info "تنظیم خودکار محیط پایتون..."
+    info "تنظیم محیط پایتون..."
     
-    # 1. حذف محیط قبلی با دسترسی root
-    rm -rf "$INSTALL_DIR/venv" 2>/dev/null
+    python3 -m venv "$INSTALL_DIR/venv" || error "خطا در ایجاد محیط مجازی"
+    source "$INSTALL_DIR/venv/bin/activate"
     
-    # 2. ایجاد محیط مجازی جدید با دسترسی کاربر zhina
-    if ! sudo -u "$SERVICE_USER" python3 -m venv "$INSTALL_DIR/venv"; then
-        error "خطا در ایجاد محیط مجازی"
-        return 1
-    fi
-
-    # 3. نصب نیازمندی‌ها با روش تضمینی
-    if ! sudo -u "$SERVICE_USER" "$INSTALL_DIR/venv/bin/python" -m pip install \
-        --disable-pip-version-check \
-        --no-cache-dir \
+    pip install --upgrade pip wheel || error "خطا در بروزرسانی pip و wheel"
+    
+    pip install \
         fastapi==0.103.0 \
         pydantic==2.0.3 \
         pydantic-settings \
         email-validator==2.2.0 \
         dnspython==2.7.0 \
         idna==3.10 \
-        "qrcode[pil]==7.3" \
+        qrcode[pil]==7.3 \
         jinja2 \
         python-multipart \
         uvicorn==0.23.2 \
@@ -349,14 +342,15 @@ setup_python() {
         psutil==5.9.5 \
         httpx==0.25.2 \
         python-dateutil==2.8.2 \
-        pyotp==2.9.0; then
-        
-        error "خطا در نصب خودکار نیازمندی‌ها"
-        return 1
-    fi
-
-    success "محیط پایتون با موفقیت تنظیم شد"
-    return 0
+        pyotp==2.9.0 \
+        || error "خطا در نصب نیازمندی‌های پایتون"
+    
+    deactivate
+    
+    chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/venv"
+    chmod 750 "$INSTALL_DIR/venv/bin/uvicorn" 2>/dev/null || true
+    
+    success "محیط پایتون تنظیم شد"
 }
 # ------------------- نصب Xray -------------------
 install_xray() {
