@@ -317,89 +317,33 @@ EOF
 setup_python() {
     info "در حال تنظیم محیط پایتون..."
     
-    # ایجاد محیط مجازی
-    python3 -m venv "/opt/zhina/venv" || {
-        error "خطا در ایجاد محیط مجازی پایتون"
-        return 1
-    }
+    # حذف محیط قبلی اگر وجود دارد
+    rm -rf "/opt/zhina/venv"
     
-    # فعال سازی محیط مجازی
-    source "/opt/zhina/venv/bin/activate" || {
-        error "خطا در فعال سازی محیط مجازی"
-        return 1
-    }
-
-    # نصب pip و wheel به روز شده
-    if ! pip install --upgrade pip wheel --no-cache-dir; then
-        error "خطا در بروزرسانی pip و wheel"
+    # ایجاد محیط مجازی جدید
+    if ! python3 -m venv "/opt/zhina/venv"; then
+        error "خطا در ایجاد محیط مجازی"
         return 1
     fi
 
-    # مسیر فایل requirements.txt
-    local REQ_FILE="/opt/zhina/backend/requirements.txt"
-    local BACKUP_REQ_FILE="/opt/zhina/backend/requirements.txt.bak"
-    
-    # بررسی وجود فایل requirements
-    if [[ ! -f "$REQ_FILE" ]]; then
-        warning "فایل requirements.txt یافت نشد، در حال ایجاد نسخه پشتیبان و استفاده از پیش‌فرض"
-        
-        # ایجاد نسخه پشتیبان از فایل موجود (اگر وجود دارد)
-        [[ -f "$REQ_FILE" ]] && cp "$REQ_FILE" "$BACKUP_REQ_FILE"
-        
-        # ایجاد فایل requirements پیش‌فرض
-        cat > "$REQ_FILE" <<'EOF'
-fastapi==0.103.0
-uvicorn==0.23.2
-sqlalchemy==2.0.28
-psycopg2-binary==2.9.9
-python-dotenv==1.0.0
-pydantic==2.0.3
-pydantic-settings==2.0.3
-passlib==1.7.4
-python-jose==3.3.0
-python-multipart==0.0.6
-cryptography==41.0.7
-qrcode[pil]==7.4.2
-psutil==5.9.5
-httpx==0.25.2
-jinja2==3.1.2
-python-dateutil==2.8.2
-pyotp==2.9.0
-EOF
-    fi
+    # تنظیم دسترسی‌ها قبل از فعال‌سازی
+    chown -R zhina:zhina "/opt/zhina/venv"
+    find "/opt/zhina/venv" -type d -exec chmod 750 {} \;
+    find "/opt/zhina/venv" -type f -exec chmod 750 {} \;
 
-    # نصب نیازمندی‌ها با زمان‌بندی
-    info "در حال نصب نیازمندی‌ها (این مرحله ممکن است چند دقیقه طول بکشد)..."
-    if ! pip install -r "$REQ_FILE" --no-cache-dir; then
-        error "خطا در نصب نیازمندی‌های پایتون"
-        
-        # بازیابی از نسخه پشتیبان در صورت خطا
-        if [[ -f "$BACKUP_REQ_FILE" ]]; then
-            warning "در حال بازگردانی نسخه پشتیبان requirements.txt"
-            mv "$BACKUP_REQ_FILE" "$REQ_FILE"
-        fi
-        
+    # فعال‌سازی و نصب
+    if ! sudo -u zhina /opt/zhina/venv/bin/pip install --upgrade pip wheel || \
+       ! sudo -u zhina /opt/zhina/venv/bin/pip install -r "/opt/zhina/backend/requirements.txt"; then
+        error "خطا در نصب نیازمندی‌ها"
         return 1
     fi
 
-    # غیرفعال سازی محیط مجازی
-    deactivate
-
-    # تنظیم مجوزهای امنیتی
-    if ! chown -R "$SERVICE_USER":"$SERVICE_USER" "/opt/zhina/venv" || \
-       ! chmod 750 "/opt/zhina/venv/bin"/*; then
-        error "خطا در تنظیم مجوزهای محیط پایتون"
-        return 1
-    fi
-
-    # اعتبارسنجی نصب
-    if "/opt/zhina/venv/bin/python" -c "import fastapi, sqlalchemy"; then
-        success "محیط پایتون با موفقیت تنظیم شد"
-        info "مسیر محیط مجازی: /opt/zhina/venv"
-        info "مسیر requirements.txt: $REQ_FILE"
+    # اعتبارسنجی نهایی
+    if sudo -u zhina /opt/zhina/venv/bin/python -c "import uvicorn, fastapi"; then
+        success "محیط پایتون تنظیم شد"
         return 0
     else
-        error "خطا در اعتبارسنجی محیط پایتون"
+        error "خطا در اعتبارسنجی"
         return 1
     fi
 }
