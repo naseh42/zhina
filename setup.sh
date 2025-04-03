@@ -317,24 +317,19 @@ EOF
 setup_python() {
     info "تنظیم خودکار محیط پایتون..."
     
-    # حذف و بازسازی محیط مجازی با دسترسی‌های صحیح
-    rm -rf "$INSTALL_DIR/venv"
-    if ! python3 -m venv "$INSTALL_DIR/venv"; then
+    # 1. حذف محیط قبلی با دسترسی root
+    rm -rf "$INSTALL_DIR/venv" 2>/dev/null
+    
+    # 2. ایجاد محیط مجازی جدید با دسترسی کاربر zhina
+    if ! sudo -u "$SERVICE_USER" python3 -m venv "$INSTALL_DIR/venv"; then
         error "خطا در ایجاد محیط مجازی"
         return 1
     fi
 
-    # تنظیم مالکیت و دسترسی‌ها قبل از هر عملیاتی
-    chown -R "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/venv"
-    find "$INSTALL_DIR/venv" -type d -exec chmod 750 {} \;
-    find "$INSTALL_DIR/venv" -type f -iname "python*" -exec chmod 750 {} \;
-    find "$INSTALL_DIR/venv/bin" -type f -exec chmod 750 {} \;
-
-    # نصب با روش تضمینی (استفاده از ماژول pip)
+    # 3. نصب نیازمندی‌ها با روش تضمینی
     if ! sudo -u "$SERVICE_USER" "$INSTALL_DIR/venv/bin/python" -m pip install \
         --disable-pip-version-check \
         --no-cache-dir \
-        --no-warn-script-location \
         fastapi==0.103.0 \
         pydantic==2.0.3 \
         pydantic-settings \
@@ -356,13 +351,11 @@ setup_python() {
         python-dateutil==2.8.2 \
         pyotp==2.9.0; then
         
-        # ذخیره لاگ خطا
-        sudo -u "$SERVICE_USER" "$INSTALL_DIR/venv/bin/python" -m pip install 2>&1 | tee "/var/log/zhina-pip-errors.log"
-        error "خطا در نصب خودکار نیازمندی‌ها. لاگ: /var/log/zhina-pip-errors.log"
+        error "خطا در نصب خودکار نیازمندی‌ها"
         return 1
     fi
 
-    success "نصب خودکار نیازمندی‌ها با موفقیت انجام شد"
+    success "محیط پایتون با موفقیت تنظیم شد"
     return 0
 }
 # ------------------- نصب Xray -------------------
