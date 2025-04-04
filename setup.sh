@@ -103,13 +103,11 @@ install_prerequisites() {
 setup_environment() {
     info "تنظیم محیط سیستم..."
     
-    # بررسی و ایجاد کاربر سرویس
     if ! id "$SERVICE_USER" &>/dev/null; then
         useradd -r -s /bin/false -d "$INSTALL_DIR" "$SERVICE_USER" || 
             error "خطا در ایجاد کاربر $SERVICE_USER"
     fi
     
-    # ایجاد دایرکتوری‌های موردنیاز
     mkdir -p \
         "$BACKEND_DIR" \
         "$FRONTEND_DIR" \
@@ -119,46 +117,36 @@ setup_environment() {
         "$SECRETS_DIR" \
         "/etc/xray" || error "خطا در ایجاد دایرکتوری‌ها"
     
-    # تنظیم مالکیت دایرکتوری‌ها
     chown -R "$SERVICE_USER":"$SERVICE_USER" \
         "$INSTALL_DIR" \
         "$LOG_DIR" \
         "$SECRETS_DIR" \
         "$CONFIG_DIR"
-    chmod -R 755 "$INSTALL_DIR"  # اطمینان از دسترسی به فایل‌های پنل
-    chmod -R 755 "$LOG_DIR"
-
-    # ایجاد و تنظیم فایل‌های لاگ
+    
     touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
     chown "$SERVICE_USER":"$SERVICE_USER" "$LOG_DIR/panel"/*.log
-    chmod 644 "$LOG_DIR/panel"/*.log
-
-    # انتقال فایل‌های بک‌اند (Backend)
+    
+    # اضافه کردن دستورات مورد نظر شما
+    chown -R zhina:zhina /opt/zhina
+    chmod -R 755 /opt/zhina
+    
     if [ -d "./backend" ]; then
         cp -r "./backend"/* "$BACKEND_DIR"/ || error "خطا در انتقال بک‌اند"
     else
         error "پوشه backend در مسیر جاری یافت نشد!"
     fi
-
-    # انتقال فایل‌های فرانت‌اند (Frontend)
+    
     if [ -d "./frontend" ]; then
         cp -r "./frontend"/* "$FRONTEND_DIR"/ || error "خطا در انتقال فرانت‌اند"
     else
         error "پوشه frontend در مسیر جاری یافت نشد!"
     fi
-
-    # تنظیم مجوزهای دایرکتوری‌ها و فایل‌ها
+    
     find "$BACKEND_DIR" -type d -exec chmod 750 {} \;
     find "$BACKEND_DIR" -type f -exec chmod 640 {} \;
     find "$FRONTEND_DIR" -type d -exec chmod 755 {} \;
     find "$FRONTEND_DIR" -type f -exec chmod 644 {} \;
-
-    # اطمینان از تنظیمات مسیر XRAY
-    if [ -n "$XRAY_CONFIG" ]; then
-        chown "$SERVICE_USER":"$SERVICE_USER" "$XRAY_CONFIG"
-        chmod 640 "$XRAY_CONFIG"
-    fi
-
+    
     success "محیط سیستم با موفقیت تنظیم شد"
 }
 
