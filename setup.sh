@@ -102,6 +102,9 @@ install_prerequisites() {
 # ------------------- تنظیم کاربر و دایرکتوری‌ها -------------------
 setup_environment() {
     info "تنظیم محیط سیستم..."
+در این بخش یعنی ؟
+setup_environment() {
+    info "تنظیم محیط سیستم..."
     
     if ! id "$SERVICE_USER" &>/dev/null; then
         useradd -r -s /bin/false -d "$INSTALL_DIR" "$SERVICE_USER" || 
@@ -125,10 +128,6 @@ setup_environment() {
     
     touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
     chown "$SERVICE_USER":"$SERVICE_USER" "$LOG_DIR/panel"/*.log
-    
-    # اضافه کردن دستورات مورد نظر شما
-    chown -R zhina:zhina /opt/zhina
-    chmod -R 755 /opt/zhina
     
     if [ -d "./backend" ]; then
         cp -r "./backend"/* "$BACKEND_DIR"/ || error "خطا در انتقال بک‌اند"
