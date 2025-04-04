@@ -492,20 +492,24 @@ server {
     
     root $INSTALL_DIR/frontend;
 
-location / {
-    # تلاش برای یافتن فایل‌های مشخص‌شده یا هدایت به فایل پیش‌فرض
-    try_files /template/login.html /template/dashboard.html /template/settings.html /template/users.html /template/base.html =404;
-}
+    location /template/ {
+        alias $INSTALL_DIR/frontend/template/;
+        try_files $uri /login.html /dashboard.html /settings.html /users.html /base.html =404;
+    }
     
+    location /style/css/ {
+        alias $INSTALL_DIR/frontend/style/css/;
+    }
+
     location /api {
-        proxy_pass http://127.0.0.1:$PANEL_PORT;
+        proxy_pass http://127.0.0.1:8001;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     }
     
     location /ws {
-        proxy_pass http://127.0.0.1:$PANEL_PORT;
+        proxy_pass http://127.0.0.1:8001;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
