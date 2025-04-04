@@ -355,7 +355,7 @@ setup_python() {
 }
 
 # ------------------- نصب Xray -------------------
-install_xray() {
+setup_xray() {
     info "نصب و پیکربندی Xray..."
     
     systemctl stop xray 2>/dev/null || true
@@ -438,6 +438,14 @@ install_xray() {
     ]
 }
 EOF
+
+    # ایجاد فایل بکاپ اگر وجود ندارد
+    if [ ! -f /etc/xray/config.json.bak ]; then
+        cp "$XRAY_CONFIG" /etc/xray/config.json.bak
+        chown root:root /etc/xray/config.json.bak
+        chmod 644 /etc/xray/config.json.bak
+        info "فایل بکاپ Xray ایجاد شد"
+    fi
 
     cat > /etc/systemd/system/xray.service <<EOF
 [Unit]
