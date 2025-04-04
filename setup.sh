@@ -491,11 +491,11 @@ server {
     server_name $PANEL_DOMAIN;
     
     root $INSTALL_DIR/frontend;
-    index index.html;
-    
-    location / {
-        try_files \$uri /index.html;
-    }
+
+location / {
+    # تلاش برای یافتن فایل‌های مشخص‌شده یا هدایت به فایل پیش‌فرض
+    try_files /template/login.html /template/dashboard.html /template/settings.html /template/users.html /template/base.html =404;
+}
     
     location /api {
         proxy_pass http://127.0.0.1:$PANEL_PORT;
