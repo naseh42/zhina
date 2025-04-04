@@ -105,11 +105,13 @@ install_prerequisites() {
 setup_environment() {
     info "تنظیم محیط سیستم..."
     
+    # ایجاد کاربر سرویس
     if ! id "$SERVICE_USER" &>/dev/null; then
         useradd -r -s /bin/false -d "$INSTALL_DIR" "$SERVICE_USER" || 
             error "خطا در ایجاد کاربر $SERVICE_USER"
     fi
     
+    # ایجاد دایرکتوری‌ها
     sudo mkdir -p \
         "$BACKEND_DIR" \
         "$FRONTEND_DIR" \
@@ -119,32 +121,42 @@ setup_environment() {
         "$SECRETS_DIR" \
         "/etc/xray" || error "خطا در ایجاد دایرکتوری‌ها"
     
+    # تنظیم مالکیت دایرکتوری‌ها
     sudo chown -R "$SERVICE_USER":"$SERVICE_USER" \
         "$INSTALL_DIR" \
         "$LOG_DIR" \
         "$SECRETS_DIR" \
         "$CONFIG_DIR"
-    
+
+    # تنظیم فایل‌های لاگ
     sudo touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
     sudo chown "$SERVICE_USER":"$SERVICE_USER" "$LOG_DIR/panel"/*.log
     
+    # انتقال فایل‌های backend
     if [ -d "./backend" ]; then
         sudo cp -r "./backend"/* "$BACKEND_DIR"/ || error "خطا در انتقال بک‌اند"
     else
         error "پوشه backend در مسیر جاری یافت نشد!"
     fi
     
+    # انتقال فایل‌های frontend
     if [ -d "./frontend" ]; then
         sudo cp -r "./frontend"/* "$FRONTEND_DIR"/ || error "خطا در انتقال فرانت‌اند"
     else
         error "پوشه frontend در مسیر جاری یافت نشد!"
     fi
     
+    # تنظیم دسترسی‌های backend
     sudo find "$BACKEND_DIR" -type d -exec chmod 750 {} \;
     sudo find "$BACKEND_DIR" -type f -exec chmod 640 {} \;
+
+    # تنظیم مالکیت و دسترسی backend
+    sudo chown -R "$SERVICE_USER":"$SERVICE_USER" "$BACKEND_DIR"
+
+    # تنظیم دسترسی‌های frontend
     sudo find "$FRONTEND_DIR" -type d -exec chmod 755 {} \;
     sudo find "$FRONTEND_DIR" -type f -exec chmod 644 {} \;
-    
+
     success "محیط سیستم با موفقیت تنظیم شد"
 }
 
