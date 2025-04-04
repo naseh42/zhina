@@ -103,11 +103,13 @@ install_prerequisites() {
 setup_environment() {
     info "تنظیم محیط سیستم..."
     
+    # بررسی و ایجاد کاربر سرویس
     if ! id "$SERVICE_USER" &>/dev/null; then
         useradd -r -s /bin/false -d "$INSTALL_DIR" "$SERVICE_USER" || 
             error "خطا در ایجاد کاربر $SERVICE_USER"
     fi
     
+    # ایجاد دایرکتوری‌های موردنیاز
     mkdir -p \
         "$BACKEND_DIR" \
         "$FRONTEND_DIR" \
@@ -117,32 +119,46 @@ setup_environment() {
         "$SECRETS_DIR" \
         "/etc/xray" || error "خطا در ایجاد دایرکتوری‌ها"
     
+    # تنظیم مالکیت دایرکتوری‌ها
     chown -R "$SERVICE_USER":"$SERVICE_USER" \
         "$INSTALL_DIR" \
         "$LOG_DIR" \
         "$SECRETS_DIR" \
         "$CONFIG_DIR"
-    
+    chmod -R 755 "$INSTALL_DIR"  # اطمینان از دسترسی به فایل‌های پنل
+    chmod -R 755 "$LOG_DIR"
+
+    # ایجاد و تنظیم فایل‌های لاگ
     touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
     chown "$SERVICE_USER":"$SERVICE_USER" "$LOG_DIR/panel"/*.log
-    
+    chmod 644 "$LOG_DIR/panel"/*.log
+
+    # انتقال فایل‌های بک‌اند (Backend)
     if [ -d "./backend" ]; then
         cp -r "./backend"/* "$BACKEND_DIR"/ || error "خطا در انتقال بک‌اند"
     else
         error "پوشه backend در مسیر جاری یافت نشد!"
     fi
-    
+
+    # انتقال فایل‌های فرانت‌اند (Frontend)
     if [ -d "./frontend" ]; then
         cp -r "./frontend"/* "$FRONTEND_DIR"/ || error "خطا در انتقال فرانت‌اند"
     else
         error "پوشه frontend در مسیر جاری یافت نشد!"
     fi
-    
+
+    # تنظیم مجوزهای دایرکتوری‌ها و فایل‌ها
     find "$BACKEND_DIR" -type d -exec chmod 750 {} \;
     find "$BACKEND_DIR" -type f -exec chmod 640 {} \;
     find "$FRONTEND_DIR" -type d -exec chmod 755 {} \;
     find "$FRONTEND_DIR" -type f -exec chmod 644 {} \;
-    
+
+    # اطمینان از تنظیمات مسیر XRAY
+    if [ -n "$XRAY_CONFIG" ]; then
+        chown "$SERVICE_USER":"$SERVICE_USER" "$XRAY_CONFIG"
+        chmod 640 "$XRAY_CONFIG"
+    fi
+
     success "محیط سیستم با موفقیت تنظیم شد"
 }
 
@@ -490,6 +506,67 @@ server {
     listen 80;
     server_name $PANEL_DOMAIN;
     
+    root $INSTALL_DIR/frontend;
+
+    # ------ مسیرهای عمومی فایل‌های HTML ------
+    location ~ ^/template/(.+)\.html$ {
+        try_files /template/\$1.html =404;
+    }
+
+    # ------ مسیر فایل CSS ------
+    location /style/css {
+        alias $INSTALL_DIR/frontend/style/css;
+        expires 365d;
+        access_log off;
+        add_header Cache-Control "public, no-transform";
+    }
+
+    # ------ API پنل ------
+    location /api {
+        proxy_pass http://127.0.0.1:$PANEL_PORT;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    
+    # ------ WebSocket ------
+    location /ws {
+        proxy_pass http://127.0.0.1:$PANEL_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+    }
+    
+    # ------ مسیر Xray ------
+    location $XRAY_PATH {
+        proxy_pass http://127.0.0.1:$XRAY_HTTP_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+setup_nginx() {
+    info "تنظیم Nginx..."
+    
+    systemctl stop nginx 2>/dev/null || true
+    
+    read -p "آیا از دامنه اختصاصی استفاده می‌کنید؟ (y/n) " use_domain
+    if [[ "$use_domain" =~ ^[Yy]$ ]]; then
+        while [[ -z "$PANEL_DOMAIN" ]]; do
+            read -p "نام دامنه خود را وارد کنید (مثال: example.com): " PANEL_DOMAIN
+            [[ -z "$PANEL_DOMAIN" ]] && echo -e "${RED}نام دامنه نمی‌تواند خالی باشد!${NC}"
+        done
+    else
+        PANEL_DOMAIN="$(curl -s ifconfig.me)"
+        echo -e "${YELLOW}از آدرس IP عمومی استفاده می‌شود: ${PANEL_DOMAIN}${NC}"
+    fi
+
+    cat > /etc/nginx/conf.d/zhina.conf <<EOF
+server {
+    listen 80;
+    server_name $PANEL_DOMAIN;
+
     root $INSTALL_DIR/frontend;
 
     # ------ مسیرهای عمومی فایل‌های HTML ------
