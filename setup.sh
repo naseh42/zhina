@@ -20,7 +20,8 @@ ADMIN_EMAIL=""
 ADMIN_PASS=""
 XRAY_VERSION="1.8.11"
 UVICORN_WORKERS=4
-XRAY_HTTP_PORT=2083  # تغییر پورت به 2083
+XRAY_HTTP_PORT=2083  # تغییر 1: پورت Xray از 8080 به 2083
+DB_PASSWORD=$(openssl rand -hex 16)
 XRAY_PATH="/$(openssl rand -hex 8)"
 SECRETS_DIR="/etc/zhina/secrets"
 DEFAULT_THEME="dark"
@@ -94,13 +95,13 @@ install_prerequisites() {
         git python3 python3-venv python3-pip \
         postgresql postgresql-contrib nginx \
         curl wget openssl unzip uuid-runtime \
-        certbot python3-certbot-nginx || error "خطا در نصب پکیج‌ها"
+        certbot python3-certbot-nginx \
+        build-essential python3-dev libpq-dev || error "خطا در نصب پکیج‌ها"
     
     success "پیش‌نیازها با موفقیت نصب شدند"
 }
 
 # ------------------- تنظیم کاربر و دایرکتوری‌ها -------------------
-
 setup_environment() {
     info "تنظیم محیط سیستم..."
     
@@ -109,7 +110,7 @@ setup_environment() {
             error "خطا در ایجاد کاربر $SERVICE_USER"
     fi
     
-    mkdir -p \
+    sudo mkdir -p \
         "$BACKEND_DIR" \
         "$FRONTEND_DIR" \
         "$CONFIG_DIR" \
@@ -118,31 +119,31 @@ setup_environment() {
         "$SECRETS_DIR" \
         "/etc/xray" || error "خطا در ایجاد دایرکتوری‌ها"
     
-    chown -R "$SERVICE_USER":"$SERVICE_USER" \
+    sudo chown -R "$SERVICE_USER":"$SERVICE_USER" \
         "$INSTALL_DIR" \
         "$LOG_DIR" \
         "$SECRETS_DIR" \
         "$CONFIG_DIR"
     
-    touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
-    chown "$SERVICE_USER":"$SERVICE_USER" "$LOG_DIR/panel"/*.log
+    sudo touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
+    sudo chown "$SERVICE_USER":"$SERVICE_USER" "$LOG_DIR/panel"/*.log
     
     if [ -d "./backend" ]; then
-        cp -r "./backend"/* "$BACKEND_DIR"/ || error "خطا در انتقال بک‌اند"
+        sudo cp -r "./backend"/* "$BACKEND_DIR"/ || error "خطا در انتقال بک‌اند"
     else
         error "پوشه backend در مسیر جاری یافت نشد!"
     fi
     
     if [ -d "./frontend" ]; then
-        cp -r "./frontend"/* "$FRONTEND_DIR"/ || error "خطا در انتقال فرانت‌اند"
+        sudo cp -r "./frontend"/* "$FRONTEND_DIR"/ || error "خطا در انتقال فرانت‌اند"
     else
         error "پوشه frontend در مسیر جاری یافت نشد!"
     fi
     
-    find "$BACKEND_DIR" -type d -exec chmod 750 {} \;
-    find "$BACKEND_DIR" -type f -exec chmod 640 {} \;
-    find "$FRONTEND_DIR" -type d -exec chmod 755 {} \;
-    find "$FRONTEND_DIR" -type f -exec chmod 644 {} \;
+    sudo find "$BACKEND_DIR" -type d -exec chmod 750 {} \;
+    sudo find "$BACKEND_DIR" -type f -exec chmod 640 {} \;
+    sudo find "$FRONTEND_DIR" -type d -exec chmod 755 {} \;
+    sudo find "$FRONTEND_DIR" -type f -exec chmod 644 {} \;
     
     success "محیط سیستم با موفقیت تنظیم شد"
 }
@@ -150,8 +151,6 @@ setup_environment() {
 # ------------------- تنظیم دیتابیس -------------------
 setup_database() {
     info "تنظیم پایگاه داده PostgreSQL..."
-    
-    export DB_PASSWORD="your_password"
     
     systemctl start postgresql || error "خطا در راه‌اندازی PostgreSQL"
     
@@ -164,7 +163,6 @@ setup_database() {
     CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
     CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 EOF
-
 
     sudo -u postgres psql -c "
     ALTER USER $DB_USER WITH SUPERUSER;
@@ -320,6 +318,7 @@ setup_python() {
     
     python3 -m venv "$INSTALL_DIR/venv" || error "خطا در ایجاد محیط مجازی"
     source "$INSTALL_DIR/venv/bin/activate"
+    
     
     pip install --upgrade pip wheel || error "خطا در بروزرسانی pip و wheel"
     
@@ -492,30 +491,19 @@ server {
     server_name $PANEL_DOMAIN;
     
     root $INSTALL_DIR/frontend;
-
-    # ------ مسیرهای عمومی فایل‌های HTML ------
-    location ~ ^/template/(.+)\.html$ {
-        try_files /template/\$1.html =404;
+    index index.html;
+    
+    location / {
+        try_files \$uri /index.html;
     }
-
-    # ------ مسیر فایل CSS ------
-    location /style/css {
-        alias $INSTALL_DIR/frontend/style/css;
-        expires 365d;
-        access_log off;
-        add_header Cache-Control "public, no-transform";
-    }
-
-    # ------ API پنل ------
+    
     location /api {
         proxy_pass http://127.0.0.1:$PANEL_PORT;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
     }
     
-    # ------ WebSocket ------
     location /ws {
         proxy_pass http://127.0.0.1:$PANEL_PORT;
         proxy_http_version 1.1;
@@ -524,68 +512,6 @@ server {
         proxy_set_header Host \$host;
     }
     
-    # ------ مسیر Xray ------
-    location $XRAY_PATH {
-        proxy_pass http://127.0.0.1:$XRAY_HTTP_PORT;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
-setup_nginx() {
-    info "تنظیم Nginx..."
-    
-    systemctl stop nginx 2>/dev/null || true
-    
-    read -p "آیا از دامنه اختصاصی استفاده می‌کنید؟ (y/n) " use_domain
-    if [[ "$use_domain" =~ ^[Yy]$ ]]; then
-        while [[ -z "$PANEL_DOMAIN" ]]; do
-            read -p "نام دامنه خود را وارد کنید (مثال: example.com): " PANEL_DOMAIN
-            [[ -z "$PANEL_DOMAIN" ]] && echo -e "${RED}نام دامنه نمی‌تواند خالی باشد!${NC}"
-        done
-    else
-        PANEL_DOMAIN="$(curl -s ifconfig.me)"
-        echo -e "${YELLOW}از آدرس IP عمومی استفاده می‌شود: ${PANEL_DOMAIN}${NC}"
-    fi
-
-    cat > /etc/nginx/conf.d/zhina.conf <<EOF
-server {
-    listen 80;
-    server_name $PANEL_DOMAIN;
-
-    root $INSTALL_DIR/frontend;
-
-    # ------ مسیرهای عمومی فایل‌های HTML ------
-    location ~ ^/template/(.+)\.html$ {
-        try_files /template/\$1.html =404;
-    }
-
-    # ------ مسیر فایل CSS ------
-    location /style/css {
-        alias $INSTALL_DIR/frontend/style/css;
-        expires 365d;
-        access_log off;
-        add_header Cache-Control "public, no-transform";
-    }
-
-    # ------ API پنل ------
-    location /api {
-        proxy_pass http://127.0.0.1:$PANEL_PORT;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-    
-    # ------ WebSocket ------
-    location /ws {
-        proxy_pass http://127.0.0.1:$PANEL_PORT;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
-    }
-    
-    # ------ مسیر Xray ------
     location $XRAY_PATH {
         proxy_pass http://127.0.0.1:$XRAY_HTTP_PORT;
         proxy_http_version 1.1;
@@ -594,14 +520,9 @@ server {
         proxy_set_header Host \$host;
     }
     
-    # ------ SSL (برای Certbot) ------
     location /.well-known/acme-challenge/ {
         root /var/www/html;
     }
-
-    # ------ خطاهای سفارشی ------
-    error_page 404 /template/404.html;
-    error_page 500 502 503 504 /template/50x.html;
 }
 EOF
 
@@ -612,6 +533,7 @@ EOF
     
     success "Nginx با موفقیت پیکربندی شد"
 }
+
 # ------------------- تنظیم SSL -------------------
 setup_ssl() {
     info "تنظیم گواهی SSL..."
@@ -729,7 +651,15 @@ Group=$SERVICE_USER
 WorkingDirectory=$BACKEND_DIR
 Environment="PATH=$INSTALL_DIR/venv/bin"
 Environment="PYTHONPATH=$BACKEND_DIR"
-ExecStart=$INSTALL_DIR/venv/bin/uvicorn app:app --host 0.0.0.0 --port $PANEL_PORT --workers $UVICORN_WORKERS --log-level info --access-log --no-server-header
+ExecStart=$INSTALL_DIR/venv/bin/uvicorn \
+    app:app \
+    --host 0.0.0.0 \
+    --port $PANEL_PORT \
+    --workers $UVICORN_WORKERS \
+    --log-level info \
+    --access-log \
+    --no-server-header
+
 Restart=always
 RestartSec=3
 StandardOutput=append:$LOG_DIR/panel/access.log
@@ -739,16 +669,12 @@ StandardError=append:$LOG_DIR/panel/error.log
 WantedBy=multi-user.target
 EOF
 
-    mkdir -p $LOG_DIR/panel
-    chown -R $SERVICE_USER:$SERVICE_USER $LOG_DIR/panel
-    chmod -R 755 $LOG_DIR/panel
-
     systemctl daemon-reload
     systemctl enable --now zhina-panel || error "خطا در راه‌اندازی سرویس پنل"
     
     sleep 3
     if ! systemctl is-active --quiet zhina-panel; then
-        cat $LOG_DIR/panel/error.log
+        journalctl -u zhina-panel -n 30 --no-pager
         error "سرویس پنل فعال نشد. لطفاً خطاهای بالا را بررسی کنید."
     fi
     
