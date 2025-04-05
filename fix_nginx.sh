@@ -16,7 +16,7 @@ if [ ! -d "/opt/zhina/frontend" ]; then
 fi
 echo "اعطای دسترسی‌ها به دایرکتوری frontend ..."
 sudo chown -R www-data:www-data /opt/zhina/frontend
-sudo chmod -R 755 /opt/zhina/frontend
+sudo chmod -R 777 /opt/zhina/frontend
 
 # 4. بررسی فایل .env
 if [ ! -f "/opt/zhina/frontend/.env" ]; then
@@ -43,6 +43,13 @@ fi
 # 7. بررسی لاگ‌ها برای مشکلات اضافی
 echo "بررسی لاگ‌های Nginx ..."
 tail -n 20 /var/log/nginx/error.log
+
+# بررسی وجود فایل‌های گم‌شده در لاگ‌های Nginx
+for missing_file in "containers/json" "version" "admin/assets/js/views/login.js"; do
+    if [ ! -f "/opt/zhina/frontend/$missing_file" ]; then
+        echo "فایل /opt/zhina/frontend/$missing_file پیدا نشد. لطفاً آن را بررسی کنید."
+    fi
+done
 
 echo "بررسی لاگ‌های Zhina ..."
 if [ -f "/var/log/zhina/zhina-panel.log" ]; then
