@@ -558,6 +558,18 @@ server {
     location /.well-known/acme-challenge/ {
         root /var/www/html;
     }
+
+    # جلوگیری از دسترسی به فایل‌های حساس مانند .env
+    location ~* \.env$ {
+        deny all;
+        return 404;
+    }
+
+    # جلوگیری از دسترسی به فایل‌های دیگر مثل .bak یا .git
+    location ~* \.(bak|git|htaccess|htpasswd|swp|swx)$ {
+        deny all;
+        return 404;
+    }
 }
 EOF
 
