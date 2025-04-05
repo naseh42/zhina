@@ -786,7 +786,7 @@ main() {
     setup_environment
     setup_database
     setup_python
-    install_xray
+    setup_xray
     setup_nginx
     setup_ssl
     setup_env
