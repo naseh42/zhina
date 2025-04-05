@@ -157,6 +157,9 @@ setup_environment() {
     sudo find "$FRONTEND_DIR" -type d -exec chmod 755 {} \;
     sudo find "$FRONTEND_DIR" -type f -exec chmod 644 {} \;
 
+    # فراخوانی نصب و تنظیم Xray
+    setup_xray
+
     success "محیط سیستم با موفقیت تنظیم شد"
 }
 
