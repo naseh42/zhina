@@ -497,6 +497,7 @@ setup_nginx() {
     
     systemctl stop nginx 2>/dev/null || true
     
+    # سوال از کاربر برای دامنه
     read -p "آیا از دامنه اختصاصی استفاده می‌کنید؟ (y/n) " use_domain
     if [[ "$use_domain" =~ ^[Yy]$ ]]; then
         while [[ -z "$PANEL_DOMAIN" ]]; do
@@ -504,26 +505,30 @@ setup_nginx() {
             [[ -z "$PANEL_DOMAIN" ]] && echo -e "${RED}نام دامنه نمی‌تواند خالی باشد!${NC}"
         done
     else
-        PANEL_DOMAIN="$(curl -s ifconfig.me)"
+        PANEL_DOMAIN="$(curl -s ifconfig.me)"  # اگر دامنه نبود، از آی‌پی استفاده می‌شود
         echo -e "${YELLOW}از آدرس IP عمومی استفاده می‌شود: ${PANEL_DOMAIN}${NC}"
     fi
 
+    # پیکربندی Nginx
     cat > /etc/nginx/conf.d/zhina.conf <<EOF
 server {
     listen 80;
-    server_name $PANEL_DOMAIN;
+    server_name $PANEL_DOMAIN;  # دامنه یا IP عمومی که در بالا تعیین شد
     
-    root $INSTALL_DIR/frontend;
-
+    root $INSTALL_DIR/frontend;  # دایرکتوری فرانت‌اند
+    
+    # تنظیمات مسیر template
     location /template/ {
         alias $INSTALL_DIR/frontend/template/;
-        try_files $uri /login.html /dashboard.html /settings.html /users.html /base.html =404;
+        try_files \$uri /login.html /dashboard.html /settings.html /users.html /base.html =404;
     }
     
+    # تنظیمات مسیر CSS
     location /style/css/ {
         alias $INSTALL_DIR/frontend/style/css/;
     }
 
+    # پروکسی برای API
     location /api {
         proxy_pass http://127.0.0.1:8001;
         proxy_set_header Host \$host;
@@ -531,6 +536,7 @@ server {
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     }
     
+    # پروکسی برای WebSocket
     location /ws {
         proxy_pass http://127.0.0.1:8001;
         proxy_http_version 1.1;
@@ -539,6 +545,7 @@ server {
         proxy_set_header Host \$host;
     }
     
+    # تنظیمات Xray
     location $XRAY_PATH {
         proxy_pass http://127.0.0.1:$XRAY_HTTP_PORT;
         proxy_http_version 1.1;
@@ -547,20 +554,24 @@ server {
         proxy_set_header Host \$host;
     }
     
+    # تنظیمات SSL و Let's Encrypt
     location /.well-known/acme-challenge/ {
         root /var/www/html;
     }
 }
 EOF
 
+    # حذف پیکربندی پیش‌فرض Nginx
     rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
     
+    # تست پیکربندی Nginx
     nginx -t || error "خطا در پیکربندی Nginx"
+    
+    # راه‌اندازی دوباره Nginx
     systemctl restart nginx || error "خطا در راه‌اندازی Nginx"
     
     success "Nginx با موفقیت پیکربندی شد"
 }
-
 # ------------------- تنظیم SSL -------------------
 setup_ssl() {
     info "تنظیم گواهی SSL..."
