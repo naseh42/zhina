@@ -102,6 +102,7 @@ PANEL_PORT=$(grep "PANEL_PORT" $INSTALL_DIR/backend/.env | cut -d= -f2)
 PANEL_DOMAIN=$(grep "PANEL_DOMAIN" $INSTALL_DIR/backend/.env | cut -d= -f2)
 ADMIN_USER=$(grep "ADMIN_USERNAME" $INSTALL_DIR/backend/.env | cut -d= -f2)
 ADMIN_EMAIL=$(grep "ADMIN_EMAIL" $INSTALL_DIR/backend/.env | cut -d= -f2)
+ADMIN_PASS=$(grep "ADMIN_PASSWORD" $INSTALL_DIR/backend/.env | cut -d= -f2)
 XRAY_PATH=$(grep "XRAY_PATH" $INSTALL_DIR/backend/.env | cut -d= -f2)
 XRAY_HTTP_PORT=$(grep "XRAY_HTTP_PORT" $INSTALL_DIR/backend/.env | cut -d= -f2)
 
@@ -109,16 +110,35 @@ show_credentials() {
     echo -e "${GREEN}=== اطلاعات دسترسی پنل ===${NC}"
     echo -e "آدرس پنل: ${YELLOW}https://${PANEL_DOMAIN}${NC}"
     echo -e "نام کاربری ادمین: ${YELLOW}${ADMIN_USER}${NC}"
+    echo -e "رمز عبور ادمین: ${YELLOW}${ADMIN_PASS}${NC}"
     echo -e "ایمیل ادمین: ${YELLOW}${ADMIN_EMAIL}${NC}"
     echo -e "مسیر WS: ${YELLOW}${XRAY_PATH}${NC}"
     echo -e "پورت WS: ${YELLOW}${XRAY_HTTP_PORT}${NC}"
-    echo -e "\n${GREEN}برای مشاهده رمز عبور: ${YELLOW}cat ${INSTALL_DIR}/installation-info.txt${NC}"
 }
 
 restart_services() {
     echo -e "${BLUE}راه‌اندازی مجدد سرویس‌ها...${NC}"
     systemctl restart xray nginx zhina-panel postgresql
     echo -e "${GREEN}سرویس‌ها با موفقیت راه‌اندازی مجدد شدند.${NC}"
+}
+
+check_services() {
+    echo -e "${BLUE}=== بررسی وضعیت سرویس‌ها ===${NC}"
+    
+    # بررسی وضعیت Xray و دیتابیس
+    DB_CHECK=$(sudo -u postgres psql -d zhina_db -tAc "SELECT COUNT(*) FROM inbounds" 2>/dev/null || echo "0")
+    XRAY_CHECK=$(curl -s http://localhost:${PANEL_PORT}/api/v1/xray/config | jq -r '.status' 2>/dev/null || echo "error")
+    
+    echo -e "• وضعیت Xray: $(systemctl is-active xray)"
+    echo -e "• وضعیت دیتابیس: $(systemctl is-active postgresql)"
+    echo -e "• تعداد تنظیمات در دیتابیس: ${DB_CHECK}"
+    
+    if [[ "$XRAY_CHECK" == "success" && "$DB_CHECK" -gt 0 ]]; then
+        echo -e "${GREEN}✓ ارتباط Xray و دیتابیس به درستی کار می‌کند${NC}"
+    else
+        echo -e "${RED}✗ مشکل در ارتباط بین Xray و دیتابیس${NC}"
+        journalctl -u xray -n 20 --no-pager | grep -i database
+    fi
 }
 
 update_panel() {
@@ -149,6 +169,7 @@ show_logs() {
     echo "2. لاگ پنل (دسترسی)"
     echo "3. لاگ Xray"
     echo "4. لاگ Nginx"
+    echo "5. لاگ دیتابیس"
     echo "0. بازگشت"
     
     read -p "انتخاب کنید: " log_choice
@@ -157,6 +178,7 @@ show_logs() {
         2) tail -f $LOG_DIR/panel/access.log ;;
         3) journalctl -u xray -f ;;
         4) tail -f /var/log/nginx/access.log ;;
+        5) tail -f /var/log/postgresql/postgresql-*.log ;;
         0) return ;;
         *) echo -e "${RED}انتخاب نامعتبر!${NC}" ;;
     esac
@@ -167,18 +189,20 @@ while true; do
     echo -e "${GREEN}=== منوی مدیریت Zhina ===${NC}"
     echo "1. نمایش اطلاعات دسترسی"
     echo "2. راه‌اندازی مجدد سرویس‌ها"
-    echo "3. آپدیت پنل به آخرین نسخه"
-    echo "4. نصب مجدد پنل"
-    echo "5. مشاهده لاگ‌ها"
+    echo "3. بررسی وضعیت سرویس‌ها"
+    echo "4. آپدیت پنل به آخرین نسخه"
+    echo "5. نصب مجدد پنل"
+    echo "6. مشاهده لاگ‌ها"
     echo "0. خروج"
     
     read -p "لطفاً عدد مورد نظر را انتخاب کنید: " choice
     case $choice in
         1) show_credentials ;;
         2) restart_services ;;
-        3) update_panel ;;
-        4) reinstall_panel ;;
-        5) show_logs ;;
+        3) check_services ;;
+        4) update_panel ;;
+        5) reinstall_panel ;;
+        6) show_logs ;;
         0) exit 0 ;;
         *) echo -e "${RED}انتخاب نامعتبر!${NC}" ;;
     esac
@@ -250,7 +274,7 @@ check_system() {
 install_prerequisites() {
     info "نصب بسته‌های ضروری..."
     
-    # رفع مشکل ��حتمالی lock فایل apt
+    # رفع مشکل احتمالی lock فایل apt
     rm -f /var/lib/apt/lists/lock
     rm -f /var/cache/apt/archives/lock
     rm -f /var/lib/dpkg/lock
@@ -258,7 +282,7 @@ install_prerequisites() {
     apt-get update -y || error "خطا در بروزرسانی لیست پکیج‌ها"
     
     # نصب بسته‌های اصلی بدون Nginx
-    for pkg in git python3 python3-venv python3-pip postgresql postgresql-contrib curl wget openssl unzip uuid-runtime build-essential python3-dev libpq-dev; do
+    for pkg in git python3 python3-venv python3-pip postgresql postgresql-contrib curl wget openssl unzip uuid-runtime build-essential python3-dev libpq-dev jq; do
         apt-get install -y $pkg || warning "خطا در نصب $pkg - ادامه فرآیند نصب..."
     done
     
@@ -356,11 +380,13 @@ setup_database() {
     CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 EOF
 
-    # اعطای دسترسی‌های محدود به جای SUPERUSER
+    # اعطای دسترسی‌های کامل
     sudo -u postgres psql -c "
     GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;
     GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO $DB_USER;
     GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO $DB_USER;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO $DB_USER;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO $DB_USER;
     " || error "خطا در اعطای دسترسی‌های دیتابیس"
     
     local pg_conf="/etc/postgresql/$(ls /etc/postgresql | head -1)/main/postgresql.conf"
@@ -373,64 +399,8 @@ EOF
     
     systemctl restart postgresql || error "خطا در راه‌اندازی مجدد PostgreSQL"
     
-    # ایجاد جداول
+    # ایجاد جداول و داده‌های اولیه
     sudo -u postgres psql -d "$DB_NAME" <<EOF || error "خطا در ایجاد جداول دیتابیس"
-    CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        username VARCHAR(50) UNIQUE NOT NULL,
-        email VARCHAR(100) UNIQUE,
-        hashed_password VARCHAR(255) NOT NULL,
-        uuid UUID DEFAULT uuid_generate_v4(),
-        traffic_limit BIGINT DEFAULT 0,
-        usage_duration INTEGER DEFAULT 0,
-        simultaneous_connections INTEGER DEFAULT 1,
-        is_active BOOLEAN DEFAULT TRUE,
-        is_admin BOOLEAN DEFAULT FALSE,
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS domains (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(255) UNIQUE NOT NULL,
-        description TEXT,
-        owner_id INTEGER REFERENCES users(id),
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS subscriptions (
-        id SERIAL PRIMARY KEY,
-        uuid UUID DEFAULT uuid_generate_v4(),
-        data_limit BIGINT,
-        expiry_date TIMESTAMP,
-        max_connections INTEGER,
-        user_id INTEGER REFERENCES users(id),
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS settings (
-        id SERIAL PRIMARY KEY,
-        language VARCHAR(10) DEFAULT '$DEFAULT_LANGUAGE',
-        theme VARCHAR(20) DEFAULT '$DEFAULT_THEME',
-        enable_notifications BOOLEAN DEFAULT TRUE,
-        preferences JSONB,
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS nodes (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
-        ip_address VARCHAR(45) NOT NULL,
-        port INTEGER NOT NULL,
-        protocol VARCHAR(20) NOT NULL,
-        is_active BOOLEAN DEFAULT TRUE,
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-    );
-
     CREATE TABLE IF NOT EXISTS inbounds (
         id SERIAL PRIMARY KEY,
         name VARCHAR(100) NOT NULL,
@@ -439,67 +409,25 @@ EOF
         updated_at TIMESTAMP DEFAULT NOW()
     );
 
-    CREATE TABLE IF NOT EXISTS xray_configs (
+    INSERT INTO inbounds (name, settings) VALUES 
+    ('default_vless', '{"port": 443, "protocol": "vless"}'),
+    ('default_vmess', '{"port": $XRAY_HTTP_PORT, "protocol": "vmess", "path": "$XRAY_PATH"}')
+    ON CONFLICT DO NOTHING;
+
+    CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
-        config_name VARCHAR(100) NOT NULL,
-        protocol VARCHAR(20) NOT NULL,
-        port INTEGER NOT NULL,
-        settings JSONB NOT NULL,
+        username VARCHAR(50) UNIQUE NOT NULL,
+        email VARCHAR(100) UNIQUE,
+        hashed_password VARCHAR(255) NOT NULL,
         is_active BOOLEAN DEFAULT TRUE,
+        is_admin BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
     );
 
-    CREATE TABLE IF NOT EXISTS xray_users (
-        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        username VARCHAR(100),
-        email VARCHAR(100),
-        password VARCHAR(100),
-        limit_ip INTEGER,
-        limit_device INTEGER,
-        expire_date TIMESTAMP,
-        data_limit BIGINT,
-        enabled BOOLEAN DEFAULT TRUE,
-        config_id INTEGER REFERENCES xray_configs(id),
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS user_traffic (
-        id SERIAL PRIMARY KEY,
-        user_id UUID REFERENCES xray_users(id),
-        download BIGINT DEFAULT 0,
-        upload BIGINT DEFAULT 0,
-        total BIGINT GENERATED ALWAYS AS (download + upload) STORED,
-        date DATE NOT NULL DEFAULT CURRENT_DATE,
-        UNIQUE(user_id, date)
-    );
-
-    CREATE TABLE IF NOT EXISTS connection_logs (
-        id SERIAL PRIMARY KEY,
-        user_id UUID REFERENCES xray_users(id),
-        ip VARCHAR(45) NOT NULL,
-        user_agent TEXT,
-        connected_at TIMESTAMP DEFAULT NOW(),
-        disconnected_at TIMESTAMP,
-        duration INTERVAL GENERATED ALWAYS AS (
-            CASE WHEN disconnected_at IS NULL THEN NULL
-            ELSE disconnected_at - connected_at END
-        ) STORED
-    );
-
-    INSERT INTO users (username, email, hashed_password, uuid, traffic_limit, usage_duration, simultaneous_connections, is_active, is_admin, created_at, updated_at)
-    VALUES ('$ADMIN_USER', '$ADMIN_EMAIL', crypt('$ADMIN_PASS', gen_salt('bf')), uuid_generate_v4(), 0, 0, 1, TRUE, TRUE, NOW(), NOW())
+    INSERT INTO users (username, email, hashed_password, is_active, is_admin)
+    VALUES ('$ADMIN_USER', '$ADMIN_EMAIL', crypt('$ADMIN_PASS', gen_salt('bf')), TRUE, TRUE)
     ON CONFLICT (username) DO NOTHING;
-
-    INSERT INTO settings (language, theme, enable_notifications)
-    VALUES ('$DEFAULT_LANGUAGE', '$DEFAULT_THEME', TRUE)
-    ON CONFLICT (id) DO NOTHING;
-
-    INSERT INTO xray_configs (config_name, protocol, port, settings)
-    VALUES ('default_vless', 'vless', 8443, '{"flow": "xtls-rprx-vision", "security": "reality"}'),
-           ('default_vmess', 'vmess', $XRAY_HTTP_PORT, '{"network": "ws", "path": "$XRAY_PATH"}')
-    ON CONFLICT (id) DO NOTHING;
 EOF
     
     success "پایگاه داده با موفقیت تنظیم شد"
@@ -539,6 +467,7 @@ setup_python() {
             httpx==0.25.2 \
             python-dateutil==2.8.2 \
             pyotp==2.9.0 \
+            jq \
             || error "خطا در نصب نیازمندی‌های پایتون"
     fi
     
@@ -645,17 +574,18 @@ EOF
 
     # ایجاد فایل بکاپ
     cp "$XRAY_CONFIG" /etc/xray/config.json.bak
-    chown root:root /etc/xray/config.json.bak
-    chmod 644 /etc/xray/config.json.bak
+    chown "$SERVICE_USER":"$SERVICE_USER" /etc/xray/config.json.bak
+    chmod 640 /etc/xray/config.json.bak
 
     cat > /etc/systemd/system/xray.service <<EOF
 [Unit]
 Description=Xray Service
-After=network.target
+After=network.target postgresql.service
 
 [Service]
 Type=simple
-User=root
+User=$SERVICE_USER
+Group=$SERVICE_USER
 ExecStart=$XRAY_EXECUTABLE run -config $XRAY_CONFIG
 Restart=on-failure
 RestartSec=3
@@ -903,12 +833,37 @@ setup_panel_service() {
     if [[ ! -f "$APP_FILE" ]]; then
         warning "فایل app.py در مسیر $BACKEND_DIR یافت نشد! یک فایل نمونه ایجاد می‌کنیم..."
         cat > "$APP_FILE" <<EOF
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+import psycopg2
+import json
 
 app = FastAPI()
 
+# تنظیمات CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/api/v1/xray/config")
+async def get_xray_config():
+    try:
+        conn = psycopg2.connect("dbname=zhina_db user=zhina_user")
+        cursor = conn.cursor()
+        cursor.execute("SELECT settings FROM inbounds")
+        results = cursor.fetchall()
+        configs = [json.loads(row[0]) for row in results]
+        return JSONResponse(status_code=200, content={"status": "success", "data": configs})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
+
 @app.get("/")
-def read_root():
+async def root():
     return {"message": "خوش آمدید به پنل مدیریت Zhina"}
 EOF
     fi
@@ -965,8 +920,8 @@ show_installation_info() {
     echo -e "\n${YELLOW}مشخصات دسترسی:${NC}"
     echo -e "• پنل مدیریت: ${GREEN}${panel_url}${NC}"
     echo -e "• کاربر ادمین: ${YELLOW}${ADMIN_USER}${NC}"
+    echo -e "• رمز عبور ادمین: ${YELLOW}${ADMIN_PASS}${NC}"
     echo -e "• ایمیل ادمین: ${YELLOW}${ADMIN_EMAIL}${NC}"
-    echo -e "• رمز عبور: ${YELLOW}${ADMIN_PASS}${NC}"
     
     echo -e "\n${YELLOW}تنظیمات Xray:${NC}"
     echo -e "• UUID: ${YELLOW}${XRAY_UUID}${NC}"
