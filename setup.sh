@@ -20,13 +20,14 @@ ADMIN_EMAIL=""
 ADMIN_PASS=""
 XRAY_VERSION="1.8.11"
 UVICORN_WORKERS=4
-XRAY_HTTP_PORT=2083  # تغییر 1: پورت Xray از 8080 به 2083
+XRAY_HTTP_PORT=2083
 DB_PASSWORD=$(openssl rand -hex 16)
 XRAY_PATH="/$(openssl rand -hex 8)"
 SECRETS_DIR="/etc/zhina/secrets"
 DEFAULT_THEME="dark"
 DEFAULT_LANGUAGE="fa"
 PANEL_DOMAIN=""
+GITHUB_REPO="your-repo/zhina"  # تغییر به ریپوی واقعی شما
 
 # ------------------- رنگ‌ها و توابع -------------------
 RED='\033[0;31m'
@@ -44,12 +45,127 @@ success() { echo -e "${GREEN}[✓] $1${NC}"; }
 info() { echo -e "${BLUE}[i] $1${NC}"; }
 warning() { echo -e "${YELLOW}[!] $1${NC}"; }
 
+# ------------------- تابع ایجاد منو -------------------
+create_management_menu() {
+    local menu_file="/usr/local/bin/zhina-manager"
+    
+    cat > "$menu_file" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+# رنگ‌ها
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# تنظیمات اصلی
+INSTALL_DIR="/opt/zhina"
+CONFIG_DIR="/etc/zhina"
+LOG_DIR="/var/log/zhina"
+PANEL_PORT=$(grep "PANEL_PORT" $INSTALL_DIR/backend/.env | cut -d= -f2)
+PANEL_DOMAIN=$(grep "PANEL_DOMAIN" $INSTALL_DIR/backend/.env | cut -d= -f2)
+ADMIN_USER=$(grep "ADMIN_USERNAME" $INSTALL_DIR/backend/.env | cut -d= -f2)
+ADMIN_EMAIL=$(grep "ADMIN_EMAIL" $INSTALL_DIR/backend/.env | cut -d= -f2)
+XRAY_PATH=$(grep "XRAY_PATH" $INSTALL_DIR/backend/.env | cut -d= -f2)
+XRAY_HTTP_PORT=$(grep "XRAY_HTTP_PORT" $INSTALL_DIR/backend/.env | cut -d= -f2)
+
+show_credentials() {
+    echo -e "${GREEN}=== اطلاعات دسترسی پنل ===${NC}"
+    echo -e "آدرس پنل: ${YELLOW}https://${PANEL_DOMAIN}${NC}"
+    echo -e "نام کاربری ادمین: ${YELLOW}${ADMIN_USER}${NC}"
+    echo -e "ایمیل ادمین: ${YELLOW}${ADMIN_EMAIL}${NC}"
+    echo -e "مسیر WS: ${YELLOW}${XRAY_PATH}${NC}"
+    echo -e "پورت WS: ${YELLOW}${XRAY_HTTP_PORT}${NC}"
+    echo -e "\n${GREEN}برای مشاهده رمز عبور: ${YELLOW}cat ${INSTALL_DIR}/installation-info.txt${NC}"
+}
+
+restart_services() {
+    echo -e "${BLUE}راه‌اندازی مجدد سرویس‌ها...${NC}"
+    systemctl restart xray nginx zhina-panel postgresql
+    echo -e "${GREEN}سرویس‌ها با موفقیت راه‌اندازی مجدد شدند.${NC}"
+}
+
+update_panel() {
+    echo -e "${BLUE}دریافت آخرین نسخه پنل...${NC}"
+    cd $INSTALL_DIR
+    git pull origin main || { echo -e "${RED}خطا در دریافت آپدیت‌ها${NC}"; return 1; }
+    
+    source $INSTALL_DIR/venv/bin/activate
+    pip install -r $INSTALL_DIR/backend/requirements.txt || { echo -e "${RED}خطا در نصب نیازمندی‌ها${NC}"; return 1; }
+    deactivate
+    
+    systemctl restart zhina-panel
+    echo -e "${GREEN}پنل با موفقیت به آخرین نسخه آپدیت شد.${NC}"
+}
+
+reinstall_panel() {
+    read -p "آیا مطمئنید می‌خواهید پنل را مجدداً نصب کنید؟ (y/n) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        echo -e "${BLUE}شروع نصب مجدد...${NC}"
+        bash <(curl -sL https://raw.githubusercontent.com/$GITHUB_REPO/main/install.sh)
+    fi
+}
+
+show_logs() {
+    echo -e "${GREEN}=== لاگ‌های سیستم ===${NC}"
+    echo "1. لاگ پنل (خطاها)"
+    echo "2. لاگ پنل (دسترسی)"
+    echo "3. لاگ Xray"
+    echo "4. لاگ Nginx"
+    echo "0. بازگشت"
+    
+    read -p "انتخاب کنید: " log_choice
+    case $log_choice in
+        1) tail -f $LOG_DIR/panel/error.log ;;
+        2) tail -f $LOG_DIR/panel/access.log ;;
+        3) journalctl -u xray -f ;;
+        4) tail -f /var/log/nginx/access.log ;;
+        0) return ;;
+        *) echo -e "${RED}انتخاب نامعتبر!${NC}" ;;
+    esac
+}
+
+while true; do
+    clear
+    echo -e "${GREEN}=== منوی مدیریت Zhina ===${NC}"
+    echo "1. نمایش اطلاعات دسترسی"
+    echo "2. راه‌اندازی مجدد سرویس‌ها"
+    echo "3. آپدیت پنل به آخرین نسخه"
+    echo "4. نصب مجدد پنل"
+    echo "5. مشاهده لاگ‌ها"
+    echo "0. خروج"
+    
+    read -p "لطفاً عدد مورد نظر را انتخاب کنید: " choice
+    case $choice in
+        1) show_credentials ;;
+        2) restart_services ;;
+        3) update_panel ;;
+        4) reinstall_panel ;;
+        5) show_logs ;;
+        0) exit 0 ;;
+        *) echo -e "${RED}انتخاب نامعتبر!${NC}" ;;
+    esac
+    
+    read -p "برای ادامه Enter بزنید..." -n 1 -r
+done
+EOF
+
+    chmod +x "$menu_file"
+    success "منوی مدیریت ایجاد شد. با دستور ${YELLOW}zhina-manager${NC} می‌توانید آن را اجرا کنید."
+}
+
 # ------------------- دریافت اطلاعات ادمین -------------------
 get_admin_credentials() {
     while [[ -z "$ADMIN_EMAIL" ]]; do
         read -p "لطفا ایمیل ادمین را وارد کنید: " ADMIN_EMAIL
         if [[ -z "$ADMIN_EMAIL" ]]; then
             echo -e "${RED}ایمیل ادمین نمی‌تواند خالی باشد!${NC}"
+        elif [[ ! "$ADMIN_EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+            echo -e "${RED}فرمت ایمیل نامعتبر است!${NC}"
+            ADMIN_EMAIL=""
         fi
     done
 
@@ -75,6 +191,17 @@ check_system() {
     source /etc/os-release
     [[ "$ID" != "ubuntu" && "$ID" != "debian" ]] && 
         warning "این اسکریپت فقط بر روی Ubuntu/Debian تست شده است"
+    
+    # بررسی نسخه پایتون
+    if ! python3 -c "import sys; exit(1) if sys.version_info < (3, 8) else exit(0)"; then
+        error "نیاز به پایتون نسخه 3.8 یا بالاتر دارید"
+    fi
+    
+    # بررسی فضای دیسک
+    local free_space=$(df --output=avail -B 1G / | tail -n 1 | tr -d ' ')
+    if [[ $free_space -lt 5 ]]; then
+        warning "فضای دیسک کم است (کمتر از 5GB فضای آزاد)"
+    fi
     
     for cmd in curl wget git python3; do
         if ! command -v $cmd &> /dev/null; then
@@ -112,7 +239,7 @@ setup_environment() {
     fi
     
     # ایجاد دایرکتوری‌ها
-    sudo mkdir -p \
+    mkdir -p \
         "$BACKEND_DIR" \
         "$FRONTEND_DIR" \
         "$CONFIG_DIR" \
@@ -122,44 +249,43 @@ setup_environment() {
         "/etc/xray" || error "خطا در ایجاد دایرکتوری‌ها"
     
     # تنظیم مالکیت دایرکتوری‌ها
-    sudo chown -R "$SERVICE_USER":"$SERVICE_USER" \
+    chown -R "$SERVICE_USER":"$SERVICE_USER" \
         "$INSTALL_DIR" \
+        "$BACKEND_DIR" \
         "$LOG_DIR" \
         "$SECRETS_DIR" \
         "$CONFIG_DIR"
 
     # تنظیم فایل‌های لاگ
-    sudo touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
-    sudo chown "$SERVICE_USER":"$SERVICE_USER" "$LOG_DIR/panel"/*.log
+    touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
+    chown "$SERVICE_USER":"$SERVICE_USER" "$LOG_DIR/panel"/*.log
     
     # انتقال فایل‌های backend
     if [ -d "./backend" ]; then
-        sudo cp -r "./backend"/* "$BACKEND_DIR"/ || error "خطا در انتقال بک‌اند"
+        cp -r "./backend"/* "$BACKEND_DIR"/ || error "خطا در انتقال بک‌اند"
     else
         error "پوشه backend در مسیر جاری یافت نشد!"
     fi
     
     # انتقال فایل‌های frontend
     if [ -d "./frontend" ]; then
-        sudo cp -r "./frontend"/* "$FRONTEND_DIR"/ || error "خطا در انتقال فرانت‌اند"
+        cp -r "./frontend"/* "$FRONTEND_DIR"/ || error "خطا در انتقال فرانت‌اند"
     else
         error "پوشه frontend در مسیر جاری یافت نشد!"
     fi
     
     # تنظیم دسترسی‌های backend
-    sudo find "$BACKEND_DIR" -type d -exec chmod 750 {} \;
-    sudo find "$BACKEND_DIR" -type f -exec chmod 640 {} \;
+    find "$BACKEND_DIR" -type d -exec chmod 750 {} \;
+    find "$BACKEND_DIR" -type f -exec chmod 640 {} \;
 
     # تنظیم مالکیت و دسترسی backend
-    sudo chown -R "$SERVICE_USER":"$SERVICE_USER" "$BACKEND_DIR"
+    chown -R "$SERVICE_USER":"$SERVICE_USER" "$BACKEND_DIR"
 
     # تنظیم دسترسی‌های frontend
-    sudo find "$FRONTEND_DIR" -type d -exec chmod 755 {} \;
-    sudo find "$FRONTEND_DIR" -type f -exec chmod 644 {} \;
+    find "$FRONTEND_DIR" -type d -exec chmod 755 {} \;
+    find "$FRONTEND_DIR" -type f -exec chmod 644 {} \;
 
-    # فراخوانی نصب و تنظیم Xray
     setup_xray
-
     success "محیط سیستم با موفقیت تنظیم شد"
 }
 
@@ -179,12 +305,12 @@ setup_database() {
     CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 EOF
 
+    # اعطای دسترسی‌های محدود به جای SUPERUSER
     sudo -u postgres psql -c "
-    ALTER USER $DB_USER WITH SUPERUSER;
     GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;
     GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO $DB_USER;
     GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO $DB_USER;
-    " || error "خطا در اعطای دسترسی‌های بیشتر به کاربر دیتابیس"
+    " || error "خطا در اعطای دسترسی‌های دیتابیس"
     
     local pg_conf="/etc/postgresql/$(ls /etc/postgresql | head -1)/main/postgresql.conf"
     if [ -f "$pg_conf" ]; then
@@ -196,7 +322,8 @@ EOF
     
     systemctl restart postgresql || error "خطا در راه‌اندازی مجدد PostgreSQL"
     
-    sudo -u postgres psql -d "$DB_NAME" <<EOF
+    # ایجاد جداول
+    sudo -u postgres psql -d "$DB_NAME" <<EOF || error "خطا در ایجاد جداول دیتابیس"
     CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
         username VARCHAR(50) UNIQUE NOT NULL,
@@ -324,7 +451,7 @@ EOF
     ON CONFLICT (id) DO NOTHING;
 EOF
     
-    success "پایگاه داده و جداول با موفقیت ایجاد شدند"
+    success "پایگاه داده با موفقیت تنظیم شد"
 }
 
 # ------------------- تنظیم محیط پایتون -------------------
@@ -334,32 +461,35 @@ setup_python() {
     python3 -m venv "$INSTALL_DIR/venv" || error "خطا در ایجاد محیط مجازی"
     source "$INSTALL_DIR/venv/bin/activate"
     
-    
     pip install --upgrade pip wheel || error "خطا در بروزرسانی pip و wheel"
     
     # نصب نیازمندی‌های پایتون
-    pip install \
-        fastapi==0.103.0 \
-        pydantic==2.0.3 \
-        pydantic-settings \
-        email-validator==2.2.0 \
-        dnspython==2.7.0 \
-        idna==3.10 \
-        qrcode[pil]==7.3 \
-        jinja2 \
-        python-multipart \
-        uvicorn==0.23.2 \
-        psycopg2-binary==2.9.7 \
-        python-jose==3.3.0 \
-        sqlalchemy==2.0.28 \
-        python-dotenv==1.0.0 \
-        passlib==1.7.4 \
-        cryptography==41.0.7 \
-        psutil==5.9.5 \
-        httpx==0.25.2 \
-        python-dateutil==2.8.2 \
-        pyotp==2.9.0 \
-        || error "خطا در نصب نیازمندی‌های پایتون"
+    if [ -f "$BACKEND_DIR/requirements.txt" ]; then
+        pip install -r "$BACKEND_DIR/requirements.txt" || error "خطا در نصب نیازمندی‌های پایتون"
+    else
+        pip install \
+            fastapi==0.103.0 \
+            pydantic==2.0.3 \
+            pydantic-settings \
+            email-validator==2.2.0 \
+            dnspython==2.7.0 \
+            idna==3.10 \
+            qrcode[pil]==7.3 \
+            jinja2 \
+            python-multipart \
+            uvicorn==0.23.2 \
+            psycopg2-binary==2.9.7 \
+            python-jose==3.3.0 \
+            sqlalchemy==2.0.28 \
+            python-dotenv==1.0.0 \
+            passlib==1.7.4 \
+            cryptography==41.0.7 \
+            psutil==5.9.5 \
+            httpx==0.25.2 \
+            python-dateutil==2.8.2 \
+            pyotp==2.9.0 \
+            || error "خطا در نصب نیازمندی‌های پایتون"
+    fi
     
     deactivate
     
@@ -374,6 +504,13 @@ setup_xray() {
     info "نصب و پیکربندی Xray..."
     
     systemctl stop xray 2>/dev/null || true
+    
+    # بررسی پورت‌های مورد استفاده
+    for port in 8443 $XRAY_HTTP_PORT; do
+        if ss -tuln | grep -q ":$port "; then
+            error "پورت $port در حال استفاده است!"
+        fi
+    done
     
     if ! wget "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" -O /tmp/xray.zip; then
         error "خطا در دانلود Xray"
@@ -454,13 +591,10 @@ setup_xray() {
 }
 EOF
 
-    # ایجاد فایل بکاپ اگر وجود ندارد
-    if [ ! -f /etc/xray/config.json.bak ]; then
-        cp "$XRAY_CONFIG" /etc/xray/config.json.bak
-        chown root:root /etc/xray/config.json.bak
-        chmod 644 /etc/xray/config.json.bak
-        info "فایل بکاپ Xray ایجاد شد"
-    fi
+    # ایجاد فایل بکاپ
+    cp "$XRAY_CONFIG" /etc/xray/config.json.bak
+    chown root:root /etc/xray/config.json.bak
+    chmod 644 /etc/xray/config.json.bak
 
     cat > /etc/systemd/system/xray.service <<EOF
 [Unit]
@@ -505,7 +639,7 @@ setup_nginx() {
             [[ -z "$PANEL_DOMAIN" ]] && echo -e "${RED}نام دامنه نمی‌تواند خالی باشد!${NC}"
         done
     else
-        PANEL_DOMAIN="$(curl -s ifconfig.me)"  # اگر دامنه نبود، از آی‌پی استفاده می‌شود
+        PANEL_DOMAIN="$(curl -s ifconfig.me)"
         echo -e "${YELLOW}از آدرس IP عمومی استفاده می‌شود: ${PANEL_DOMAIN}${NC}"
     fi
 
@@ -513,38 +647,60 @@ setup_nginx() {
     cat > /etc/nginx/conf.d/zhina.conf <<EOF
 server {
     listen 80;
-    server_name $PANEL_DOMAIN;  # دامنه یا IP عمومی که در بالا تعیین شد
+    server_name $PANEL_DOMAIN;
     
-    root $INSTALL_DIR/frontend;  # دایرکتوری فرانت‌اند
+    root $FRONTEND_DIR;
     
-    # تنظیمات مسیر template
-    location /template/ {
-        alias $INSTALL_DIR/frontend/template/;
-        try_files \$uri /login.html /dashboard.html /settings.html /users.html /base.html =404;
-    }
-    
-    # تنظیمات مسیر CSS
-    location /style/css/ {
-        alias $INSTALL_DIR/frontend/style/css/;
-    }
-
-    # پروکسی برای API
+    # مسیر API
     location /api {
         proxy_pass http://127.0.0.1:8001;
+        proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Connection "";
+        
+        # تنظیمات CORS
+        add_header 'Access-Control-Allow-Origin' '\$http_origin' always;
+        add_header 'Access-Control-Allow-Credentials' 'true' always;
+        add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, DELETE, OPTIONS' always;
+        add_header 'Access-Control-Allow-Headers' 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization' always;
+        
+        # تنظیمات buffer و timeout
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
     }
     
-    # پروکسی برای WebSocket
+    # مسیر WebSocket
     location /ws {
         proxy_pass http://127.0.0.1:8001;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        
+        # تنظیمات خاص WebSocket
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+        proxy_connect_timeout 5s;
     }
     
+    # تنظیمات مسیر template
+    location /template/ {
+        alias $FRONTEND_DIR/template/;
+        try_files \$uri /login.html /dashboard.html /settings.html /users.html /base.html =404;
+    }
+    
+    # تنظیمات مسیر CSS
+    location /style/css/ {
+        alias $FRONTEND_DIR/style/css/;
+    }
+
     # تنظیمات Xray
     location $XRAY_PATH {
         proxy_pass http://127.0.0.1:$XRAY_HTTP_PORT;
@@ -559,13 +715,13 @@ server {
         root /var/www/html;
     }
 
-    # جلوگیری از دسترسی به فایل‌های حساس مانند .env
+    # جلوگیری از دستر��ی به فایل‌های حساس
     location ~* \.env$ {
         deny all;
         return 404;
     }
 
-    # جلوگیری از دسترسی به فایل‌های دیگر مثل .bak یا .git
+    # جلوگیری از دسترسی به فایل‌های دیگر
     location ~* \.(bak|git|htaccess|htpasswd|swp|swx)$ {
         deny all;
         return 404;
@@ -573,17 +729,15 @@ server {
 }
 EOF
 
-    # حذف پیکربندی پیش‌فرض Nginx
     rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
     
-    # تست پیکربندی Nginx
     nginx -t || error "خطا در پیکربندی Nginx"
     
-    # راه‌اندازی دوباره Nginx
     systemctl restart nginx || error "خطا در راه‌اندازی Nginx"
     
     success "Nginx با موفقیت پیکربندی شد"
 }
+
 # ------------------- تنظیم SSL -------------------
 setup_ssl() {
     info "تنظیم گواهی SSL..."
@@ -791,6 +945,7 @@ Log Files:
 EOF
 
     chmod 600 "$INSTALL_DIR/installation-info.txt"
+    chown "$SERVICE_USER":"$SERVICE_USER" "$INSTALL_DIR/installation-info.txt"
 }
 
 # ------------------- تابع اصلی -------------------
@@ -815,9 +970,12 @@ main() {
     setup_env
     setup_panel_service
     show_installation_info
+    create_management_menu
     
     echo -e "\n${GREEN}برای مشاهده جزئیات کامل، فایل لاگ را بررسی کنید:${NC}"
     echo -e "${YELLOW}tail -f /var/log/zhina-install.log${NC}"
+    echo -e "\n${GREEN}برای مدیریت پنل از دستور زیر استفاده کنید:${NC}"
+    echo -e "${YELLOW}zhina-manager${NC}"
 }
 
 main
