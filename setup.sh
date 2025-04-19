@@ -223,10 +223,32 @@ install_prerequisites() {
     
     apt-get update -y || error "خطا در بروزرسانی لیست پکیج‌ها"
     
-    # نصب با قابلیت ادامه در صورت بروز خطا در برخی پکیج‌ها
-    for pkg in git python3 python3-venv python3-pip postgresql postgresql-contrib nginx curl wget openssl unzip uuid-runtime certbot python3-certbot-nginx build-essential python3-dev libpq-dev; do
+    # نصب بسته‌های اصلی بدون توقف در صورت خطا
+    apt-get install -y git python3 python3-venv python3-pip postgresql postgresql-contrib curl wget openssl unzip uuid-runtime || 
+        warning "خطا در نصب برخی بسته‌های اصلی - ادامه فرآیند نصب..."
+    
+    # نصب Nginx با مدیریت خطاهای بهتر
+    if ! apt-get install -y nginx; then
+        warning "خطا در نصب Nginx، تلاش برای رفع وابستگی‌ها..."
+        apt-get install -y -f || error "خطا در رفع وابستگی‌ها"
+        apt-get install -y nginx || error "خطا در نصب Nginx پس از رفع وابستگی‌ها"
+    fi
+    
+    # نصب سایر بسته‌ها
+    for pkg in certbot python3-certbot-nginx build-essential python3-dev libpq-dev; do
         apt-get install -y $pkg || warning "خطا در نصب $pkg - ادامه فرآیند نصب..."
     done
+    
+    # رفع مشکل احتمالی IPv6 در Nginx
+    if grep -q 'nginx: \[emerg\] socket() \[::\]:80 failed' /var/log/nginx/error.log 2>/dev/null; then
+        info "غیرفعال کردن IPv6 در Nginx به دلیل مشکل در اتصال"
+        sed -i 's/listen \[::\]:80/# listen [::]:80/g' /etc/nginx/sites-enabled/*
+        sed -i 's/listen \[::\]:443/# listen [::]:443/g' /etc/nginx/sites-enabled/*
+        sysctl -w net.ipv6.conf.all.disable_ipv6=1 >/dev/null
+    fi
+    
+    # رفع هرگونه مشکل باقیمانده از بسته‌ها
+    apt-get install -y -f || warning "خطا در رفع مشکلات باقیمانده بسته‌ها"
     
     success "پیش‌نیازها با موفقیت نصب شدند"
 }
@@ -645,6 +667,7 @@ setup_nginx() {
     
     # غیرفعال کردن IPv6 اگر مشکل ساز باشد
     if grep -q 'nginx: \[emerg\] socket() \[::\]:80 failed' /var/log/nginx/error.log 2>/dev/null; then
+        info "غیرفعال کردن IPv6 در Nginx به دلیل مشکل در اتصال"
         sed -i 's/listen \[::\]:80/# listen [::]:80/g' /etc/nginx/sites-enabled/*
         sed -i 's/listen \[::\]:443/# listen [::]:443/g' /etc/nginx/sites-enabled/*
         sysctl -w net.ipv6.conf.all.disable_ipv6=1 >/dev/null
@@ -655,7 +678,7 @@ setup_nginx() {
     if [[ "$use_domain" =~ ^[Yy]$ ]]; then
         while [[ -z "$PANEL_DOMAIN" ]]; do
             read -p "نام دامنه خود را وارد کنید (مثال: example.com): " PANEL_DOMAIN
-            [[ -z "$PANEL_DOMAIN" ]] && echo -e "${RED}نام دامنه نمی‌تواند خالی باشد!${NC}"
+            [[ -z "$PANEL_DOMAIN" ]] && echo -e "${RED}نام ��امنه نمی‌تواند خالی باشد!${NC}"
         done
     else
         PANEL_DOMAIN="$(curl -s ifconfig.me)"
@@ -666,7 +689,7 @@ setup_nginx() {
     cat > /etc/nginx/conf.d/zhina.conf <<EOF
 server {
     listen 80;
-    listen [::]:80;
+    # listen [::]:80;
     server_name $PANEL_DOMAIN;
     
     root $FRONTEND_DIR;
@@ -774,7 +797,7 @@ setup_ssl() {
 
 server {
     listen 443 ssl;
-    listen [::]:443 ssl;
+    # listen [::]:443 ssl;
     server_name $PANEL_DOMAIN;
     
     ssl_certificate /etc/nginx/ssl/fullchain.pem;
