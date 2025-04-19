@@ -27,7 +27,7 @@ SECRETS_DIR="/etc/zhina/secrets"
 DEFAULT_THEME="dark"
 DEFAULT_LANGUAGE="fa"
 PANEL_DOMAIN=""
-GITHUB_REPO="your-repo/zhina"  # تغییر به ریپوی واقعی شما
+GITHUB_REPO="naseh42/zhina"
 
 # ------------------- رنگ‌ها و توابع -------------------
 RED='\033[0;31m'
@@ -216,14 +216,17 @@ check_system() {
 install_prerequisites() {
     info "نصب بسته‌های ضروری..."
     
+    # رفع مشکل احتمالی lock فایل apt
+    rm -f /var/lib/apt/lists/lock
+    rm -f /var/cache/apt/archives/lock
+    rm -f /var/lib/dpkg/lock
+    
     apt-get update -y || error "خطا در بروزرسانی لیست پکیج‌ها"
     
-    apt-get install -y \
-        git python3 python3-venv python3-pip \
-        postgresql postgresql-contrib nginx \
-        curl wget openssl unzip uuid-runtime \
-        certbot python3-certbot-nginx \
-        build-essential python3-dev libpq-dev || error "خطا در نصب پکیج‌ها"
+    # نصب با قابلیت ادامه در صورت بروز خطا در برخی پکیج‌ها
+    for pkg in git python3 python3-venv python3-pip postgresql postgresql-contrib nginx curl wget openssl unzip uuid-runtime certbot python3-certbot-nginx build-essential python3-dev libpq-dev; do
+        apt-get install -y $pkg || warning "خطا در نصب $pkg - ادامه فرآیند نصب..."
+    done
     
     success "پیش‌نیازها با موفقیت نصب شدند"
 }
@@ -508,7 +511,8 @@ setup_xray() {
     # بررسی پورت‌های مورد استفاده
     for port in 8443 $XRAY_HTTP_PORT; do
         if ss -tuln | grep -q ":$port "; then
-            error "پورت $port در حال استفاده است!"
+            pid=$(ss -tulnp | grep ":$port " | awk '{print $7}' | cut -d= -f2 | cut -d, -f1)
+            kill -9 $pid 2>/dev/null || warning "نمی‌توان پورت $port را آزاد کرد"
         fi
     done
     
@@ -631,6 +635,21 @@ setup_nginx() {
     
     systemctl stop nginx 2>/dev/null || true
     
+    # آزادسازی پورت‌های 80 و 443
+    for port in 80 443; do
+        if ss -tuln | grep -q ":$port "; then
+            pid=$(ss -tulnp | grep ":$port " | awk '{print $7}' | cut -d= -f2 | cut -d, -f1)
+            kill -9 $pid 2>/dev/null || warning "نمی‌توان پورت $port را آزاد کرد"
+        fi
+    done
+    
+    # غیرفعال کردن IPv6 اگر مشکل ساز باشد
+    if grep -q 'nginx: \[emerg\] socket() \[::\]:80 failed' /var/log/nginx/error.log 2>/dev/null; then
+        sed -i 's/listen \[::\]:80/# listen [::]:80/g' /etc/nginx/sites-enabled/*
+        sed -i 's/listen \[::\]:443/# listen [::]:443/g' /etc/nginx/sites-enabled/*
+        sysctl -w net.ipv6.conf.all.disable_ipv6=1 >/dev/null
+    fi
+    
     # سوال از کاربر برای دامنه
     read -p "آیا از دامنه اختصاصی استفاده می‌کنید؟ (y/n) " use_domain
     if [[ "$use_domain" =~ ^[Yy]$ ]]; then
@@ -647,6 +666,7 @@ setup_nginx() {
     cat > /etc/nginx/conf.d/zhina.conf <<EOF
 server {
     listen 80;
+    listen [::]:80;
     server_name $PANEL_DOMAIN;
     
     root $FRONTEND_DIR;
@@ -715,7 +735,7 @@ server {
         root /var/www/html;
     }
 
-    # جلوگیری از دستر��ی به فایل‌های حساس
+    # جلوگیری از دسترسی به فایل‌های حساس
     location ~* \.env$ {
         deny all;
         return 404;
@@ -754,6 +774,7 @@ setup_ssl() {
 
 server {
     listen 443 ssl;
+    listen [::]:443 ssl;
     server_name $PANEL_DOMAIN;
     
     ssl_certificate /etc/nginx/ssl/fullchain.pem;
