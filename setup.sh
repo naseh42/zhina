@@ -45,6 +45,40 @@ success() { echo -e "${GREEN}[✓] $1${NC}"; }
 info() { echo -e "${BLUE}[i] $1${NC}"; }
 warning() { echo -e "${YELLOW}[!] $1${NC}"; }
 
+# ------------------- توابع کمکی -------------------
+disable_ipv6() {
+    info "غیرفعال کردن موقت IPv6..."
+    sysctl -w net.ipv6.conf.all.disable_ipv6=1 >/dev/null
+    sysctl -w net.ipv6.conf.default.disable_ipv6=1 >/dev/null
+}
+
+fix_nginx() {
+    info "رفع مشکلات Nginx..."
+    # توقف سرویس‌های مرتبط
+    systemctl stop nginx 2>/dev/null || true
+    
+    # آزادسازی پورت‌ها
+    for port in 80 443 $XRAY_HTTP_PORT 8443; do
+        if ss -tuln | grep -q ":$port "; then
+            pid=$(ss -tulnp | grep ":$port " | awk '{print $7}' | cut -d= -f2 | cut -d, -f1)
+            kill -9 $pid 2>/dev/null || warning "نمی‌توان پورت $port را آزاد کرد"
+        fi
+    done
+    
+    # غیرفعال کردن IPv6 در تنظیمات Nginx
+    sed -i 's/listen \[::\]:80/# listen [::]:80/g' /etc/nginx/sites-enabled/*
+    sed -i 's/listen \[::\]:443/# listen [::]:443/g' /etc/nginx/sites-enabled/*
+    
+    # حذف فایل‌های قفل
+    rm -f /var/lib/apt/lists/lock
+    rm -f /var/cache/apt/archives/lock
+    rm -f /var/lib/dpkg/lock
+    
+    # تعمیر بسته‌ها
+    apt-get install -y -f || error "خطا در رفع وابستگی‌ها"
+    dpkg --configure -a || error "خطا در پیکربندی بسته‌ها"
+}
+
 # ------------------- تابع ایجاد منو -------------------
 create_management_menu() {
     local menu_file="/usr/local/bin/zhina-manager"
@@ -216,38 +250,31 @@ check_system() {
 install_prerequisites() {
     info "نصب بسته‌های ضروری..."
     
-    # رفع مشکل احتمالی lock فایل apt
+    # رفع مشکل ��حتمالی lock فایل apt
     rm -f /var/lib/apt/lists/lock
     rm -f /var/cache/apt/archives/lock
     rm -f /var/lib/dpkg/lock
     
     apt-get update -y || error "خطا در بروزرسانی لیست پکیج‌ها"
     
-    # نصب بسته‌های اصلی بدون توقف در صورت خطا
-    apt-get install -y git python3 python3-venv python3-pip postgresql postgresql-contrib curl wget openssl unzip uuid-runtime || 
-        warning "خطا در نصب برخی بسته‌های اصلی - ادامه فرآیند نصب..."
-    
-    # نصب Nginx با مدیریت خطاهای بهتر
-    if ! apt-get install -y nginx; then
-        warning "خطا در نصب Nginx، تلاش برای رفع وابستگی‌ها..."
-        apt-get install -y -f || error "خطا در رفع وابستگی‌ها"
-        apt-get install -y nginx || error "خطا در نصب Nginx پس از رفع وابستگی‌ها"
-    fi
-    
-    # نصب سایر بسته‌ها
-    for pkg in certbot python3-certbot-nginx build-essential python3-dev libpq-dev; do
+    # نصب بسته‌های اصلی بدون Nginx
+    for pkg in git python3 python3-venv python3-pip postgresql postgresql-contrib curl wget openssl unzip uuid-runtime build-essential python3-dev libpq-dev; do
         apt-get install -y $pkg || warning "خطا در نصب $pkg - ادامه فرآیند نصب..."
     done
     
-    # رفع مشکل احتمالی IPv6 در Nginx
-    if grep -q 'nginx: \[emerg\] socket() \[::\]:80 failed' /var/log/nginx/error.log 2>/dev/null; then
-        info "غیرفعال کردن IPv6 در Nginx به دلیل مشکل در اتصال"
-        sed -i 's/listen \[::\]:80/# listen [::]:80/g' /etc/nginx/sites-enabled/*
-        sed -i 's/listen \[::\]:443/# listen [::]:443/g' /etc/nginx/sites-enabled/*
-        sysctl -w net.ipv6.conf.all.disable_ipv6=1 >/dev/null
+    # نصب certbot بدون وابستگی به nginx
+    apt-get install -y certbot python3-certbot || warning "خطا در نصب certbot"
+    
+    # نصب Nginx در آخرین مرحله
+    info "نصب Nginx..."
+    disable_ipv6
+    if ! apt-get install -y nginx; then
+        warning "خطا در نصب Nginx، تلاش برای رفع..."
+        fix_nginx
+        apt-get install -y nginx || error "خطا در نصب Nginx پس از رفع مشکل"
     fi
     
-    # رفع هرگونه مشکل باقیمانده از بسته‌ها
+    # رفع هرگونه مشکل باقیمانده
     apt-get install -y -f || warning "خطا در رفع مشکلات باقیمانده بسته‌ها"
     
     success "پیش‌نیازها با موفقیت نصب شدند"
@@ -310,7 +337,6 @@ setup_environment() {
     find "$FRONTEND_DIR" -type d -exec chmod 755 {} \;
     find "$FRONTEND_DIR" -type f -exec chmod 644 {} \;
 
-    setup_xray
     success "محیط سیستم با موفقیت تنظیم شد"
 }
 
@@ -667,10 +693,9 @@ setup_nginx() {
     
     # غیرفعال کردن IPv6 اگر مشکل ساز باشد
     if grep -q 'nginx: \[emerg\] socket() \[::\]:80 failed' /var/log/nginx/error.log 2>/dev/null; then
-        info "غیرفعال کردن IPv6 در Nginx به دلیل مشکل در اتصال"
+        disable_ipv6
         sed -i 's/listen \[::\]:80/# listen [::]:80/g' /etc/nginx/sites-enabled/*
         sed -i 's/listen \[::\]:443/# listen [::]:443/g' /etc/nginx/sites-enabled/*
-        sysctl -w net.ipv6.conf.all.disable_ipv6=1 >/dev/null
     fi
     
     # سوال از کاربر برای دامنه
@@ -678,7 +703,7 @@ setup_nginx() {
     if [[ "$use_domain" =~ ^[Yy]$ ]]; then
         while [[ -z "$PANEL_DOMAIN" ]]; do
             read -p "نام دامنه خود را وارد کنید (مثال: example.com): " PANEL_DOMAIN
-            [[ -z "$PANEL_DOMAIN" ]] && echo -e "${RED}نام ��امنه نمی‌تواند خالی باشد!${NC}"
+            [[ -z "$PANEL_DOMAIN" ]] && echo -e "${RED}نام دامنه نمی‌تواند خالی باشد!${NC}"
         done
     else
         PANEL_DOMAIN="$(curl -s ifconfig.me)"
