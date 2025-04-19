@@ -58,7 +58,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://example.com", "http://localhost:3000"],  # تنظیمات CORS به‌روزرسانی شد
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -78,25 +78,33 @@ class XrayConfigResponse(BaseModel):
 
 @app.on_event("startup")
 async def startup():
+    """اجرای عملیات‌های اولیه هنگام راه‌اندازی برنامه"""
     Base.metadata.create_all(bind=engine)
     try:
-        XrayManager(next(get_db())).update_xray_config()
-        logger.info("Xray configuration initialized")
+        with next(get_db()) as db:
+            XrayManager(db).update_xray_config()
+            logger.info("Xray configuration initialized")
     except Exception as e:
         logger.error(f"Xray init error: {str(e)}")
+    
+    # شروع وظایف دوره‌ای
+    asyncio.create_task(periodic_xray_sync())
     logger.info("Application started successfully")
 
 @app.websocket("/ws/status")
 async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket برای ارسال وضعیت سرور به صورت بلادرنگ"""
     await websocket.accept()
     while True:
         try:
             xray_status = subprocess.run(
                 ["systemctl", "is-active", "xray"],
                 capture_output=True,
-                text=True
+                text=True,
+                check=True  # مدیریت خطاهای دستور systemctl
             )
-            db_status = "online" if validate_db_connection(next(get_db())) else "offline"
+            with next(get_db()) as db:
+                db_status = "online" if validate_db_connection(db) else "offline"
             await websocket.send_json({
                 "xray": xray_status.stdout.strip(),
                 "database": db_status,
@@ -104,28 +112,37 @@ async def websocket_endpoint(websocket: WebSocket):
                 "users_online": get_online_users_count()
             })
             await asyncio.sleep(5)
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Systemctl command failed: {e}")
+            xray_status = "inactive"
         except Exception as e:
             logger.error(f"WebSocket error: {str(e)}")
             break
 
 def authenticate_user(username: str, password: str, db: Session):
-    user = db.query(models.User).filter(models.User.username == username).first()
-    if not user or not utils.verify_password(password, user.hashed_password):
-        return False
-    return user
+    """اعتبارسنجی کاربر"""
+    try:
+        user = db.query(models.User).filter(models.User.username == username).first()
+        if not user or not utils.verify_password(password, user.hashed_password):
+            return False
+        return user
+    except Exception as e:
+        logger.error(f"Database query error in authenticate_user: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 def validate_db_connection(db: Session):
+    """بررسی اتصال به پایگاه داده"""
     try:
-        db.execute(text("SELECT 1"))
-        db.commit()
+        with db.begin():  # مدیریت تراکنش‌ها
+            db.execute(text("SELECT 1"))
         return True
     except Exception as e:
-        db.rollback()
         logger.error(f"Database connection error: {str(e)}")
         return False
 
 @app.get("/login", response_class=HTMLResponse)
 async def show_login(request: Request):
+    """نمایش صفحه ورود"""
     return templates.TemplateResponse("login.html", {"request": request})
 
 @app.post("/login", response_class=HTMLResponse)
@@ -135,6 +152,7 @@ async def process_login(
     password: str = Form(...),
     db: Session = Depends(get_db)
 ):
+    """پردازش ورود کاربر"""
     user = authenticate_user(username, password, db)
     if not user:
         return templates.TemplateResponse("login.html", {
@@ -148,6 +166,7 @@ async def process_login(
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request, db: Session = Depends(get_db)):
+    """صفحه داشبورد"""
     stats = {
         "users": db.query(models.User).count(),
         "domains": db.query(models.Domain).count(),
@@ -161,6 +180,7 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/api/v1/server-stats", response_model=ServerStatsResponse)
 async def server_stats(db: Session = Depends(get_db)):
+    """دریافت آمار سرور"""
     stats = {
         "cpu": psutil.cpu_percent(interval=1),
         "memory": dict(psutil.virtual_memory()._asdict()),
@@ -174,42 +194,59 @@ async def create_user(
     user_data: schemas.UserCreate,
     db: Session = Depends(get_db)
 ):
-    manager = UserManager(db)
-    return manager.create(user_data)
+    """ایجاد کاربر جدید"""
+    try:
+        manager = UserManager(db)
+        return manager.create(user_data)
+    except Exception as e:
+        logger.error(f"Error creating user: {str(e)}")
+        raise HTTPException(status_code=400, detail="Failed to create user")
 
 @app.post("/api/v1/domains", response_model=schemas.DomainResponse)
 async def add_domain(
     domain_data: schemas.DomainCreate,
     db: Session = Depends(get_db)
-):  # پرانتز بسته اضافه شد
-    manager = DomainManager(db)
-    return manager.create(domain_data)
-    
+):
+    """افزودن دامنه جدید"""
+    try:
+        manager = DomainManager(db)
+        return manager.create(domain_data)
+    except Exception as e:
+        logger.error(f"Error adding domain: {str(e)}")
+        raise HTTPException(status_code=400, detail="Failed to add domain")
+
 @app.get("/api/v1/xray/config", response_model=XrayConfigResponse)
 async def get_xray_config(db: Session = Depends(get_db)):
+    """دریافت تنظیمات Xray"""
     manager = XrayManager(db)
     return {
         "config": manager.get_config(),
         "status": "active"
     }
 
-@app.on_event("startup")
-@utils.repeat_every(seconds=300)
-async def periodic_xray_sync():  # تغییر به async
-    try:
-        with next(get_db()) as db:
-            manager = XrayManager(db)
-            if asyncio.iscoroutinefunction(manager.update_xray_config):
-                await manager.update_xray_config()
-            else:
-                manager.update_xray_config()
-            logger.info("Periodic Xray sync completed")
-    except Exception as e:
-        logger.error(f"Sync failed: {str(e)}")
+async def periodic_xray_sync():
+    """وظیفه دوره‌ای برای به‌روزرسانی تنظیمات Xray"""
+    while True:
+        try:
+            with next(get_db()) as db:
+                manager = XrayManager(db)
+                if asyncio.iscoroutinefunction(manager.update_xray_config):
+                    await manager.update_xray_config()
+                else:
+                    manager.update_xray_config()
+                logger.info("Periodic Xray sync completed")
+        except Exception as e:
+            logger.error(f"Sync failed: {str(e)}")
+        await asyncio.sleep(300)
 
 def get_online_users_count() -> int:
-    """پیاده‌سازی موقت شمارش کاربران آنلاین"""
-    return 0
+    """محاسبه تعداد کاربران آنلاین"""
+    try:
+        with next(get_db()) as db:
+            return db.query(models.User).filter(models.User.is_online == True).count()
+    except Exception as e:
+        logger.error(f"Error calculating online users: {str(e)}")
+        return 0
 
 if __name__ == "__main__":
     import uvicorn
