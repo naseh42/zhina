@@ -346,7 +346,7 @@ setup_environment() {
     success "محیط سیستم با موفقیت تنظیم شد"
 }
 
-# ------------------- تنظیم دیتابیس -------------------
+# ------------------- تنظیم دیتابیس (با تمام جداول اصلی) -------------------
 setup_database() {
     info "تنظیم پایگاه داده PostgreSQL..."
     
@@ -363,12 +363,11 @@ setup_database() {
 EOF
 
     sudo -u postgres psql -c "
+    ALTER USER $DB_USER WITH SUPERUSER;
     GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;
     GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO $DB_USER;
     GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO $DB_USER;
-    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO $DB_USER;
-    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO $DB_USER;
-    " || error "خطا در اعطای دسترسی‌های دیتابیس"
+    " || error "خطا در اعطای دسترسی‌های بیشتر به کاربر دیتابیس"
     
     local pg_conf="/etc/postgresql/$(ls /etc/postgresql | head -1)/main/postgresql.conf"
     if [ -f "$pg_conf" ]; then
@@ -380,7 +379,64 @@ EOF
     
     systemctl restart postgresql || error "خطا در راه‌اندازی مجدد PostgreSQL"
     
-    sudo -u postgres psql -d "$DB_NAME" <<EOF || error "خطا در ایجاد جداول دیتابیس"
+    # ایجاد تمام جداول اصلی دقیقاً مطابق نسخه شما
+    sudo -u postgres psql -d "$DB_NAME" <<EOF
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(50) UNIQUE NOT NULL,
+        email VARCHAR(100) UNIQUE,
+        hashed_password VARCHAR(255) NOT NULL,
+        uuid UUID DEFAULT uuid_generate_v4(),
+        traffic_limit BIGINT DEFAULT 0,
+        usage_duration INTEGER DEFAULT 0,
+        simultaneous_connections INTEGER DEFAULT 1,
+        is_active BOOLEAN DEFAULT TRUE,
+        is_admin BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS domains (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) UNIQUE NOT NULL,
+        description TEXT,
+        owner_id INTEGER REFERENCES users(id),
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS subscriptions (
+        id SERIAL PRIMARY KEY,
+        uuid UUID DEFAULT uuid_generate_v4(),
+        data_limit BIGINT,
+        expiry_date TIMESTAMP,
+        max_connections INTEGER,
+        user_id INTEGER REFERENCES users(id),
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS settings (
+        id SERIAL PRIMARY KEY,
+        language VARCHAR(10) DEFAULT '$DEFAULT_LANGUAGE',
+        theme VARCHAR(20) DEFAULT '$DEFAULT_THEME',
+        enable_notifications BOOLEAN DEFAULT TRUE,
+        preferences JSONB,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS nodes (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        ip_address VARCHAR(45) NOT NULL,
+        port INTEGER NOT NULL,
+        protocol VARCHAR(20) NOT NULL,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS inbounds (
         id SERIAL PRIMARY KEY,
         name VARCHAR(100) NOT NULL,
@@ -389,30 +445,71 @@ EOF
         updated_at TIMESTAMP DEFAULT NOW()
     );
 
-    INSERT INTO inbounds (name, settings) VALUES 
-    ('default_vless', '{"port": 443, "protocol": "vless"}'),
-    ('default_vmess', '{"port": $XRAY_HTTP_PORT, "protocol": "vmess", "path": "$XRAY_PATH"}')
-    ON CONFLICT DO NOTHING;
-
-    CREATE TABLE IF NOT EXISTS users (
+    CREATE TABLE IF NOT EXISTS xray_configs (
         id SERIAL PRIMARY KEY,
-        username VARCHAR(50) UNIQUE NOT NULL,
-        email VARCHAR(100) UNIQUE,
-        hashed_password VARCHAR(255) NOT NULL,
+        config_name VARCHAR(100) NOT NULL,
+        protocol VARCHAR(20) NOT NULL,
+        port INTEGER NOT NULL,
+        settings JSONB NOT NULL,
         is_active BOOLEAN DEFAULT TRUE,
-        is_admin BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
     );
 
-    INSERT INTO users (username, email, hashed_password, is_active, is_admin)
-    VALUES ('$ADMIN_USER', '$ADMIN_EMAIL', crypt('$ADMIN_PASS', gen_salt('bf')), TRUE, TRUE)
+    CREATE TABLE IF NOT EXISTS xray_users (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        username VARCHAR(100),
+        email VARCHAR(100),
+        password VARCHAR(100),
+        limit_ip INTEGER,
+        limit_device INTEGER,
+        expire_date TIMESTAMP,
+        data_limit BIGINT,
+        enabled BOOLEAN DEFAULT TRUE,
+        config_id INTEGER REFERENCES xray_configs(id),
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS user_traffic (
+        id SERIAL PRIMARY KEY,
+        user_id UUID REFERENCES xray_users(id),
+        download BIGINT DEFAULT 0,
+        upload BIGINT DEFAULT 0,
+        total BIGINT GENERATED ALWAYS AS (download + upload) STORED,
+        date DATE NOT NULL DEFAULT CURRENT_DATE,
+        UNIQUE(user_id, date)
+    );
+
+    CREATE TABLE IF NOT EXISTS connection_logs (
+        id SERIAL PRIMARY KEY,
+        user_id UUID REFERENCES xray_users(id),
+        ip VARCHAR(45) NOT NULL,
+        user_agent TEXT,
+        connected_at TIMESTAMP DEFAULT NOW(),
+        disconnected_at TIMESTAMP,
+        duration INTERVAL GENERATED ALWAYS AS (
+            CASE WHEN disconnected_at IS NULL THEN NULL
+            ELSE disconnected_at - connected_at END
+        ) STORED
+    );
+
+    INSERT INTO users (username, email, hashed_password, uuid, traffic_limit, usage_duration, simultaneous_connections, is_active, is_admin, created_at, updated_at)
+    VALUES ('$ADMIN_USER', '$ADMIN_EMAIL', crypt('$ADMIN_PASS', gen_salt('bf')), uuid_generate_v4(), 0, 0, 1, TRUE, TRUE, NOW(), NOW())
     ON CONFLICT (username) DO NOTHING;
+
+    INSERT INTO settings (language, theme, enable_notifications)
+    VALUES ('$DEFAULT_LANGUAGE', '$DEFAULT_THEME', TRUE)
+    ON CONFLICT (id) DO NOTHING;
+
+    INSERT INTO xray_configs (config_name, protocol, port, settings)
+    VALUES ('default_vless', 'vless', 8443, '{"flow": "xtls-rprx-vision", "security": "reality"}'),
+           ('default_vmess', 'vmess', $XRAY_HTTP_PORT, '{"network": "ws", "path": "$XRAY_PATH"}')
+    ON CONFLICT (id) DO NOTHING;
 EOF
     
-    success "پایگاه داده با موفقیت تنظیم شد"
+    success "تمامی جداول دیتابیس با موفقیت ایجاد شدند"
 }
-
 # ------------------- تنظیم محیط پایتون -------------------
 setup_python() {
     info "تنظیم محیط پایتون..."
