@@ -473,6 +473,9 @@ setup_xray() {
         return 1
     fi
 
+    # اصلاح سطح دسترسی `privkey.pem` برای جلوگیری از خطای Xray
+    chmod 644 "$SSL_KEY"
+
     # تولید کلیدهای Reality
     REALITY_KEYS=$("$XRAY_EXECUTABLE" x25519)
     REALITY_PRIVATE_KEY=$(echo "$REALITY_KEYS" | awk '/Private key:/ {print $3}')
