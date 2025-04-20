@@ -30,6 +30,9 @@ PANEL_DOMAIN=""
 GITHUB_REPO="naseh42/zhina"
 REALITY_DEST=""
 REALITY_SERVER_NAMES=""
+SSL_CERT=""
+SSL_KEY=""
+
 # ------------------- رنگ‌ها و توابع -------------------
 RED='\033[0;31m'
 GREEN='\033[0;32m'
