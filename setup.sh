@@ -568,55 +568,15 @@ setup_python() {
     success "محیط پایتون تنظیم شد"
 }
 
-# ------------------- نصب Xray با تمام پروتکل‌ها -------------------
+# ------------------- نصب Xray با تمام پروتکل‌ها -------------------{
 setup_xray() {
-    info "نصب و پیکربندی Xray با تمام پروتکل‌ها..."
-    systemctl stop xray 2>/dev/null || true
-
-    # تنظیمات خودکار دامنه/آیپی
-    if [[ -z "$PANEL_DOMAIN" ]]; then
-        PANEL_DOMAIN=$(curl -s ifconfig.me)
-        warning "استفاده از آدرس IP عمومی: $PANEL_DOMAIN"
-        mkdir -p /etc/zhina/ssl
-        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-            -keyout /etc/zhina/ssl/privkey.pem \
-            -out /etc/zhina/ssl/fullchain.pem \
-            -subj "/CN=$PANEL_DOMAIN"
-        SSL_CERT="/etc/zhina/ssl/fullchain.pem"
-        SSL_KEY="/etc/zhina/ssl/privkey.pem"
-    else
-        SSL_CERT="/etc/letsencrypt/live/$PANEL_DOMAIN/fullchain.pem"
-        SSL_KEY="/etc/letsencrypt/live/$PANEL_DOMAIN/privkey.pem"
-    fi
-
-    # تولید کلیدهای مورد نیاز
-    REALITY_KEYS=$("$XRAY_EXECUTABLE" x25519)
-    REALITY_PRIVATE_KEY=$(echo "$REALITY_KEYS" | awk '/Private key:/ {print $3}')
-    REALITY_PUBLIC_KEY=$(echo "$REALITY_KEYS" | awk '/Public key:/ {print $3}')
-    REALITY_SHORT_ID=$(openssl rand -hex 4)
-    XRAY_UUID=$(uuidgen)
-    TROJAN_PASSWORD=$(openssl rand -hex 16)
-    SHADOWSOCKS_PASSWORD=$(openssl rand -hex 16)
-    SOCKS_USERNAME="zhina-user"
-    SOCKS_PASSWORD=$(openssl rand -hex 8)
-
-    # تنظیمات هوشمند Reality بر اساس دامنه/آیپی
-    if [[ "$PANEL_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        REALITY_DEST="$PANEL_DOMAIN:443"
-        REALITY_SERVER_NAMES="[\"$PANEL_DOMAIN\"]"
-        warning "تنظیم Reality برای استفاده مستقیم با IP"
-    else
-        REALITY_DEST="www.datadoghq.com:443"
-        REALITY_SERVER_NAMES='["www.datadoghq.com","www.lovelace.com"]'
-    fi
-
-    # تنظیمات Xray (اضافه کردن بخش دیتابیس)
+    info "تنظیم سرویس Xray..."
+    
+    # ایجاد فایل تنظیمات Xray همراه با دیتابیس
     cat > "$XRAY_CONFIG" <<EOF
 {
     "log": {
-        "loglevel": "warning",
-        "access": "$LOG_DIR/xray-access.log",
-        "error": "$LOG_DIR/xray-error.log"
+        "loglevel": "info"
     },
     "database": {
         "host": "localhost",
@@ -624,19 +584,6 @@ setup_xray() {
         "password": "$DB_PASSWORD",
         "name": "$DB_NAME",
         "port": 5432
-    },
-    "api": {
-        "tag": "api",
-        "services": ["StatsService", "HandlerService", "LoggerService"]
-    },
-    "stats": {},
-    "policy": {
-        "levels": {
-            "0": {
-                "statsUserUplink": true,
-                "statsUserDownlink": true
-            }
-        }
     },
     "inbounds": [
         {
@@ -657,38 +604,12 @@ setup_xray() {
                 "security": "reality",
                 "realitySettings": {
                     "show": false,
-                    "dest": "$REALITY_DEST",
+                    "dest": "$PANEL_DOMAIN:443",
                     "xver": 0,
-                    "serverNames": $REALITY_SERVER_NAMES,
+                    "serverNames": ["$PANEL_DOMAIN"],
                     "privateKey": "$REALITY_PRIVATE_KEY",
-                    "shortIds": ["$REALITY_SHORT_ID"],
+                    "shortIds": ["01093dcb"],
                     "fingerprint": "chrome"
-                }
-            },
-            "sniffing": {
-                "enabled": true,
-                "destOverride": ["http", "tls"]
-            }
-        },
-        {
-            "port": 2083,
-            "protocol": "vmess",
-            "settings": {
-                "clients": [
-                    {
-                        "id": "$XRAY_UUID",
-                        "alterId": 0,
-                        "email": "user@vmess"
-                    }
-                ]
-            },
-            "streamSettings": {
-                "network": "ws",
-                "wsSettings": {
-                    "path": "$XRAY_PATH",
-                    "headers": {
-                        "Host": "$PANEL_DOMAIN"
-                    }
                 }
             }
         },
@@ -707,11 +628,10 @@ setup_xray() {
                 "network": "tcp",
                 "security": "tls",
                 "tlsSettings": {
-                    "serverName": "$PANEL_DOMAIN",
                     "certificates": [
                         {
-                            "certificateFile": "$SSL_CERT",
-                            "keyFile": "$SSL_KEY"
+                            "certificateFile": "/etc/nginx/ssl/fullchain.pem",
+                            "keyFile": "/etc/nginx/ssl/privkey.pem"
                         }
                     ]
                 }
@@ -794,7 +714,6 @@ EOF
 [Unit]
 Description=Xray Service
 After=network.target postgresql.service
-
 [Service]
 Type=simple
 User=$SERVICE_USER
@@ -803,20 +722,14 @@ ExecStart=$XRAY_EXECUTABLE run -config $XRAY_CONFIG
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=65535
-
 [Install]
 WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
     systemctl enable --now xray || error "خطا در راه‌اندازی Xray"
-    sleep 2
-    if ! systemctl is-active --quiet xray; then
-        journalctl -u xray -n 30 --no-pager
-        error "سرویس Xray فعال نشد. لطفاً خطاهای بالا را بررسی کنید."
-    fi
-    success "Xray با تمام پروتکل‌ها با موفقیت نصب و پیکربندی شد"
 }
+        
 
 # ------------------- تنظیم Nginx -------------------
 setup_nginx() {
