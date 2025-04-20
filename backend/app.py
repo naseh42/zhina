@@ -281,4 +281,12 @@ async def websocket_endpoint(websocket: WebSocket):
 
 if __name__ == "__main__":
     import uvicorn
+    import threading
+
+    def run_websocket():
+        uvicorn.run(app, host="0.0.0.0", port=2083)
+
+    ws_thread = threading.Thread(target=run_websocket)
+    ws_thread.start()
+
     uvicorn.run(app, host=settings.SERVER_HOST, port=settings.SERVER_PORT)
