@@ -28,7 +28,8 @@ DEFAULT_THEME="dark"
 DEFAULT_LANGUAGE="fa"
 PANEL_DOMAIN=""
 GITHUB_REPO="naseh42/zhina"
-
+REALITY_DEST=""
+REALITY_SERVER_NAMES=""
 # ------------------- رنگ‌ها و توابع -------------------
 RED='\033[0;31m'
 GREEN='\033[0;32m'
