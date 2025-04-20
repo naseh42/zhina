@@ -569,14 +569,40 @@ setup_python() {
 }
 
 # ------------------- نصب Xray با تمام پروتکل‌ها -------------------{
-setup_xray() {
-    info "تنظیم سرویس Xray..."
+
+            setup_xray() {
+    info "نصب و پیکربندی Xray..."
     
-    # ایجاد فایل تنظیمات Xray همراه با دیتابیس
+    systemctl stop xray 2>/dev/null || true
+    
+    # دانلود و نصب Xray
+    if ! wget "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" -O /tmp/xray.zip; then
+        error "خطا در دانلود Xray"
+    fi
+    
+    if ! unzip -o /tmp/xray.zip -d "$XRAY_DIR"; then
+        error "خطا در استخراج Xray"
+    fi
+    
+    chmod +x "$XRAY_EXECUTABLE"
+
+    # مقداردهی کلیدهای Reality
+    if ! REALITY_KEYS=$("$XRAY_EXECUTABLE" x25519); then
+        error "خطا در تولید کلیدهای Reality"
+    fi
+    
+    REALITY_PRIVATE_KEY=$(echo "$REALITY_KEYS" | awk '/Private key:/ {print $3}')
+    REALITY_PUBLIC_KEY=$(echo "$REALITY_KEYS" | awk '/Public key:/ {print $3}')
+    REALITY_SHORT_ID=$(openssl rand -hex 4)
+    XRAY_UUID=$(uuidgen)
+
+    # ایجاد فایل تنظیمات Xray
     cat > "$XRAY_CONFIG" <<EOF
 {
     "log": {
-        "loglevel": "info"
+        "loglevel": "warning",
+        "access": "$LOG_DIR/xray-access.log",
+        "error": "$LOG_DIR/xray-error.log"
     },
     "database": {
         "host": "localhost",
@@ -590,13 +616,7 @@ setup_xray() {
             "port": 8443,
             "protocol": "vless",
             "settings": {
-                "clients": [
-                    {
-                        "id": "$XRAY_UUID",
-                        "flow": "xtls-rprx-vision",
-                        "email": "user@reality"
-                    }
-                ],
+                "clients": [{"id": "$XRAY_UUID", "flow": "xtls-rprx-vision"}],
                 "decryption": "none"
             },
             "streamSettings": {
@@ -604,12 +624,29 @@ setup_xray() {
                 "security": "reality",
                 "realitySettings": {
                     "show": false,
-                    "dest": "$PANEL_DOMAIN:443",
+                    "dest": "www.datadoghq.com:443",
                     "xver": 0,
-                    "serverNames": ["$PANEL_DOMAIN"],
+                    "serverNames": ["www.datadoghq.com"],
                     "privateKey": "$REALITY_PRIVATE_KEY",
-                    "shortIds": ["01093dcb"],
+                    "shortIds": ["$REALITY_SHORT_ID"],
                     "fingerprint": "chrome"
+                }
+            },
+            "sniffing": {
+                "enabled": true,
+                "destOverride": ["http","tls"]
+            }
+        },
+        {
+            "port": $XRAY_HTTP_PORT,
+            "protocol": "vmess",
+            "settings": {
+                "clients": [{"id": "$XRAY_UUID"}]
+            },
+            "streamSettings": {
+                "network": "ws",
+                "wsSettings": {
+                    "path": "$XRAY_PATH"
                 }
             }
         },
@@ -617,12 +654,7 @@ setup_xray() {
             "port": 8444,
             "protocol": "trojan",
             "settings": {
-                "clients": [
-                    {
-                        "password": "$TROJAN_PASSWORD",
-                        "email": "user@trojan"
-                    }
-                ]
+                "clients": [{"password": "$TROJAN_PASSWORD"}]
             },
             "streamSettings": {
                 "network": "tcp",
@@ -634,7 +666,7 @@ setup_xray() {
                             "keyFile": "/etc/nginx/ssl/privkey.pem"
                         }
                     ]
-                }
+                ]
             }
         },
         {
@@ -672,62 +704,48 @@ setup_xray() {
     "outbounds": [
         {
             "protocol": "freedom",
-            "tag": "direct",
-            "settings": {
-                "domainStrategy": "UseIP"
-            }
+            "tag": "direct"
         },
         {
             "protocol": "blackhole",
-            "tag": "blocked",
-            "settings": {}
-        },
-        {
-            "protocol": "dns",
-            "tag": "dns-out"
+            "tag": "blocked"
         }
-    ],
-    "routing": {
-        "domainStrategy": "IPIfNonMatch",
-        "rules": [
-            {
-                "type": "field",
-                "ip": ["geoip:private"],
-                "outboundTag": "blocked"
-            },
-            {
-                "type": "field",
-                "domain": ["geosite:category-ads-all"],
-                "outboundTag": "blocked"
-            }
-        ]
-    }
+    ]
 }
 EOF
 
-    # تنظیم مالکیت و دسترسی
-    chown "$SERVICE_USER":"$SERVICE_USER" "$XRAY_CONFIG"
-    chmod 640 "$XRAY_CONFIG"
+    # تنظیم مالکیت و سطح دسترسی
+    chown root:root "$XRAY_CONFIG"
+    chmod 644 "$XRAY_CONFIG"
 
-    # ایجاد سرویس Xray
+    # ایجاد فایل سرویس Xray
     cat > /etc/systemd/system/xray.service <<EOF
 [Unit]
 Description=Xray Service
-After=network.target postgresql.service
+After=network.target
+
 [Service]
 Type=simple
-User=$SERVICE_USER
-Group=$SERVICE_USER
+User=root
 ExecStart=$XRAY_EXECUTABLE run -config $XRAY_CONFIG
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=65535
+
 [Install]
 WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
     systemctl enable --now xray || error "خطا در راه‌اندازی Xray"
+    
+    sleep 2
+    if ! systemctl is-active --quiet xray; then
+        journalctl -u xray -n 20 --no-pager
+        error "سرویس Xray فعال نشد. لطفاً خطاهای بالا را بررسی کنید."
+    fi
+    
+    success "Xray با موفقیت نصب و پیکربندی شد"
 }
         
 
