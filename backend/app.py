@@ -264,7 +264,7 @@ if __name__ == "__main__":
     import threading
 
     def run_websocket():
-        uvicorn.run(app, host="0.0.0.0", port=2083)
+        uvicorn.run(app, host="0.0.0.0", port=8001)
 
     ws_thread = threading.Thread(target=run_websocket)
     ws_thread.start()
