@@ -1,3 +1,4 @@
+
 from fastapi import FastAPI, Depends, HTTPException, status, Request, Response, Form, WebSocket
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
@@ -247,6 +248,36 @@ def get_online_users_count() -> int:
     except Exception as e:
         logger.error(f"Error calculating online users: {str(e)}")
         return 0
+        
+        @app.websocket("/ws/status")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket برای ارسال وضعیت سرور به صورت بلادرنگ"""
+    await websocket.accept()
+    while True:
+        try:
+            xray_status = subprocess.run(
+                ["systemctl", "is-active", "xray"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            with next(get_db()) as db:
+                db_status = "online" if validate_db_connection(db) else "offline"
+            await websocket.send_json({
+                "xray": xray_status.stdout.strip(),
+                "database": db_status,
+                "timestamp": datetime.now().isoformat(),
+                "users_online": get_online_users_count()
+            })
+            await asyncio.sleep(5)
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Systemctl command failed: {e}")
+            xray_status = "inactive"
+        except Exception as e:
+            logger.error(f"WebSocket error: {str(e)}")
+            break
+
+
 
 if __name__ == "__main__":
     import uvicorn
