@@ -573,20 +573,23 @@ setup_xray() {
     info "نصب و پیکربندی Xray با تمام پروتکل‌ها..."
     systemctl stop xray 2>/dev/null || true
 
-    # تنظیم مسیر صحیح SSL
-    SSL_CERT="/etc/nginx/ssl/fullchain.pem"
-    SSL_KEY="/etc/nginx/ssl/privkey.pem"
-
-    # بررسی وجود فایل‌های SSL
-    if [[ ! -f "$SSL_CERT" || ! -f "$SSL_KEY" ]]; then
-        error "فایل‌های SSL یافت نشدند: $SSL_CERT یا $SSL_KEY"
-        return 1
+    # تنظیمات خودکار دامنه/آیپی
+    if [[ -z "$PANEL_DOMAIN" ]]; then
+        PANEL_DOMAIN=$(curl -s ifconfig.me)
+        warning "استفاده از آدرس IP عمومی: $PANEL_DOMAIN"
+        mkdir -p /etc/zhina/ssl
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+            -keyout /etc/zhina/ssl/privkey.pem \
+            -out /etc/zhina/ssl/fullchain.pem \
+            -subj "/CN=$PANEL_DOMAIN"
+        SSL_CERT="/etc/zhina/ssl/fullchain.pem"
+        SSL_KEY="/etc/zhina/ssl/privkey.pem"
+    else
+        SSL_CERT="/etc/letsencrypt/live/$PANEL_DOMAIN/fullchain.pem"
+        SSL_KEY="/etc/letsencrypt/live/$PANEL_DOMAIN/privkey.pem"
     fi
 
-    # اصلاح سطح دسترسی `privkey.pem` برای جلوگیری از خطای Xray
-    chmod 644 "$SSL_KEY"
-
-    # تولید کلیدهای Reality
+    # تولید کلیدهای مورد نیاز
     REALITY_KEYS=$("$XRAY_EXECUTABLE" x25519)
     REALITY_PRIVATE_KEY=$(echo "$REALITY_KEYS" | awk '/Private key:/ {print $3}')
     REALITY_PUBLIC_KEY=$(echo "$REALITY_KEYS" | awk '/Public key:/ {print $3}')
@@ -607,11 +610,33 @@ setup_xray() {
         REALITY_SERVER_NAMES='["www.datadoghq.com","www.lovelace.com"]'
     fi
 
-    # تنظیمات Xray
+    # تنظیمات Xray (اضافه کردن بخش دیتابیس)
     cat > "$XRAY_CONFIG" <<EOF
 {
     "log": {
-        "loglevel": "info"
+        "loglevel": "warning",
+        "access": "$LOG_DIR/xray-access.log",
+        "error": "$LOG_DIR/xray-error.log"
+    },
+    "database": {
+        "host": "localhost",
+        "user": "$DB_USER",
+        "password": "$DB_PASSWORD",
+        "name": "$DB_NAME",
+        "port": 5432
+    },
+    "api": {
+        "tag": "api",
+        "services": ["StatsService", "HandlerService", "LoggerService"]
+    },
+    "stats": {},
+    "policy": {
+        "levels": {
+            "0": {
+                "statsUserUplink": true,
+                "statsUserDownlink": true
+            }
+        }
     },
     "inbounds": [
         {
@@ -639,6 +664,32 @@ setup_xray() {
                     "shortIds": ["$REALITY_SHORT_ID"],
                     "fingerprint": "chrome"
                 }
+            },
+            "sniffing": {
+                "enabled": true,
+                "destOverride": ["http", "tls"]
+            }
+        },
+        {
+            "port": 2083,
+            "protocol": "vmess",
+            "settings": {
+                "clients": [
+                    {
+                        "id": "$XRAY_UUID",
+                        "alterId": 0,
+                        "email": "user@vmess"
+                    }
+                ]
+            },
+            "streamSettings": {
+                "network": "ws",
+                "wsSettings": {
+                    "path": "$XRAY_PATH",
+                    "headers": {
+                        "Host": "$PANEL_DOMAIN"
+                    }
+                }
             }
         },
         {
@@ -656,6 +707,7 @@ setup_xray() {
                 "network": "tcp",
                 "security": "tls",
                 "tlsSettings": {
+                    "serverName": "$PANEL_DOMAIN",
                     "certificates": [
                         {
                             "certificateFile": "$SSL_CERT",
@@ -742,6 +794,7 @@ EOF
 [Unit]
 Description=Xray Service
 After=network.target postgresql.service
+
 [Service]
 Type=simple
 User=$SERVICE_USER
@@ -750,12 +803,19 @@ ExecStart=$XRAY_EXECUTABLE run -config $XRAY_CONFIG
 Restart=on-failure
 RestartSec=3
 LimitNOFILE=65535
+
 [Install]
 WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
     systemctl enable --now xray || error "خطا در راه‌اندازی Xray"
+    sleep 2
+    if ! systemctl is-active --quiet xray; then
+        journalctl -u xray -n 30 --no-pager
+        error "سرویس Xray فعال نشد. لطفاً خطاهای بالا را بررسی کنید."
+    fi
+    success "Xray با تمام پروتکل‌ها با موفقیت نصب و پیکربندی شد"
 }
 
 # ------------------- تنظیم Nginx -------------------
