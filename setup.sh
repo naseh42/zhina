@@ -574,45 +574,44 @@ setup_python() {
 }
 
 # ------------------- نصب Xray با تمام پروتکل‌ها -------------------{
-
-            setup_xray() {
+setup_xray() {
     info "نصب و پیکربندی Xray..."
-    
+
     systemctl stop xray 2>/dev/null || true
-    
+
     # دانلود و نصب Xray
     if ! wget "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/Xray-linux-64.zip" -O /tmp/xray.zip; then
         error "خطا در دانلود Xray"
     fi
-    
+
     if ! unzip -o /tmp/xray.zip -d "$XRAY_DIR"; then
         error "خطا در استخراج Xray"
     fi
-    
+
     chmod +x "$XRAY_EXECUTABLE"
 
     # مقداردهی کلیدهای Reality
     if ! REALITY_KEYS=$("$XRAY_EXECUTABLE" x25519); then
         error "خطا در تولید کلیدهای Reality"
     fi
-    
     REALITY_PRIVATE_KEY=$(echo "$REALITY_KEYS" | awk '/Private key:/ {print $3}')
     REALITY_PUBLIC_KEY=$(echo "$REALITY_KEYS" | awk '/Public key:/ {print $3}')
     REALITY_SHORT_ID=$(openssl rand -hex 4)
     XRAY_UUID=$(uuidgen)
 
     # ایجاد فایل تنظیمات Xray
-    cat > "$XRAY_CONFIG" <<EOF{
+    cat > "$XRAY_CONFIG" <<EOF
+{
     "log": {
         "loglevel": "warning",
-        "access": "/var/log/zhina/xray-access.log",
-        "error": "/var/log/zhina/xray-error.log"
+        "access": "$LOG_DIR/xray-access.log",
+        "error": "$LOG_DIR/xray-error.log"
     },
     "database": {
         "host": "localhost",
-        "user": "zhina_user",
-        "password": "zhina_db_password",
-        "name": "zhina_db",
+        "user": "$DB_USER",
+        "password": "$DB_PASSWORD",
+        "name": "$DB_NAME",
         "port": 5432
     },
     "inbounds": [
@@ -620,12 +619,7 @@ setup_python() {
             "port": 8443,
             "protocol": "vless",
             "settings": {
-                "clients": [
-                    {
-                        "id": "your-xray-uuid",
-                        "flow": "xtls-rprx-vision"
-                    }
-                ],
+                "clients": [{"id": "$XRAY_UUID", "flow": "xtls-rprx-vision"}],
                 "decryption": "none"
             },
             "streamSettings": {
@@ -636,8 +630,8 @@ setup_python() {
                     "dest": "www.datadoghq.com:443",
                     "xver": 0,
                     "serverNames": ["www.datadoghq.com"],
-                    "privateKey": "your-reality-private-key",
-                    "shortIds": ["your-reality-short-id"],
+                    "privateKey": "$REALITY_PRIVATE_KEY",
+                    "shortIds": ["$REALITY_SHORT_ID"],
                     "fingerprint": "chrome"
                 }
             },
@@ -647,19 +641,15 @@ setup_python() {
             }
         },
         {
-            "port": 2083,
+            "port": $XRAY_HTTP_PORT,
             "protocol": "vmess",
             "settings": {
-                "clients": [
-                    {
-                        "id": "your-xray-uuid"
-                    }
-                ]
+                "clients": [{"id": "$XRAY_UUID"}]
             },
             "streamSettings": {
                 "network": "ws",
                 "wsSettings": {
-                    "path": "/your-xray-path"
+                    "path": "$XRAY_PATH"
                 }
             }
         },
@@ -667,11 +657,7 @@ setup_python() {
             "port": 8444,
             "protocol": "trojan",
             "settings": {
-                "clients": [
-                    {
-                        "password": "your-trojan-password"
-                    }
-                ]
+                "clients": [{"password": "$TROJAN_PASSWORD"}]
             },
             "streamSettings": {
                 "network": "tcp",
@@ -691,7 +677,7 @@ setup_python() {
             "protocol": "shadowsocks",
             "settings": {
                 "method": "aes-256-gcm",
-                "password": "your-shadowsocks-password"
+                "password": "$SHADOWSOCKS_PASSWORD"
             },
             "streamSettings": {
                 "network": "tcp"
@@ -704,8 +690,8 @@ setup_python() {
                 "auth": "password",
                 "accounts": [
                     {
-                        "user": "socksuser",
-                        "pass": "your-socks-password"
+                        "user": "$SOCKS_USERNAME",
+                        "pass": "$SOCKS_PASSWORD"
                     }
                 ]
             }
@@ -757,11 +743,12 @@ EOF
     systemctl enable --now xray || error "خطا در راه‌اندازی Xray"
     
     sleep 2
+
     if ! systemctl is-active --quiet xray; then
         journalctl -u xray -n 20 --no-pager
         error "سرویس Xray فعال نشد. لطفاً خطاهای بالا را بررسی کنید."
     fi
-    
+
     success "Xray با موفقیت نصب و پیکربندی شد"
 }
         
