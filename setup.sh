@@ -602,18 +602,17 @@ setup_python() {
     XRAY_UUID=$(uuidgen)
 
     # ایجاد فایل تنظیمات Xray
-    cat > "$XRAY_CONFIG" <<EOF
-{
+    cat > "$XRAY_CONFIG" <<EOF{
     "log": {
         "loglevel": "warning",
-        "access": "$LOG_DIR/xray-access.log",
-        "error": "$LOG_DIR/xray-error.log"
+        "access": "/var/log/zhina/xray-access.log",
+        "error": "/var/log/zhina/xray-error.log"
     },
     "database": {
         "host": "localhost",
-        "user": "$DB_USER",
-        "password": "$DB_PASSWORD",
-        "name": "$DB_NAME",
+        "user": "zhina_user",
+        "password": "zhina_db_password",
+        "name": "zhina_db",
         "port": 5432
     },
     "inbounds": [
@@ -621,7 +620,12 @@ setup_python() {
             "port": 8443,
             "protocol": "vless",
             "settings": {
-                "clients": [{"id": "$XRAY_UUID", "flow": "xtls-rprx-vision"}],
+                "clients": [
+                    {
+                        "id": "your-xray-uuid",
+                        "flow": "xtls-rprx-vision"
+                    }
+                ],
                 "decryption": "none"
             },
             "streamSettings": {
@@ -632,26 +636,30 @@ setup_python() {
                     "dest": "www.datadoghq.com:443",
                     "xver": 0,
                     "serverNames": ["www.datadoghq.com"],
-                    "privateKey": "$REALITY_PRIVATE_KEY",
-                    "shortIds": ["$REALITY_SHORT_ID"],
+                    "privateKey": "your-reality-private-key",
+                    "shortIds": ["your-reality-short-id"],
                     "fingerprint": "chrome"
                 }
             },
             "sniffing": {
                 "enabled": true,
-                "destOverride": ["http","tls"]
+                "destOverride": ["http", "tls"]
             }
         },
         {
-            "port": $XRAY_HTTP_PORT,
+            "port": 2083,
             "protocol": "vmess",
             "settings": {
-                "clients": [{"id": "$XRAY_UUID"}]
+                "clients": [
+                    {
+                        "id": "your-xray-uuid"
+                    }
+                ]
             },
             "streamSettings": {
                 "network": "ws",
                 "wsSettings": {
-                    "path": "$XRAY_PATH"
+                    "path": "/your-xray-path"
                 }
             }
         },
@@ -659,7 +667,11 @@ setup_python() {
             "port": 8444,
             "protocol": "trojan",
             "settings": {
-                "clients": [{"password": "$TROJAN_PASSWORD"}]
+                "clients": [
+                    {
+                        "password": "your-trojan-password"
+                    }
+                ]
             },
             "streamSettings": {
                 "network": "tcp",
@@ -671,6 +683,7 @@ setup_python() {
                             "keyFile": "/etc/nginx/ssl/privkey.pem"
                         }
                     ]
+                }
             }
         },
         {
@@ -678,7 +691,7 @@ setup_python() {
             "protocol": "shadowsocks",
             "settings": {
                 "method": "aes-256-gcm",
-                "password": "$SHADOWSOCKS_PASSWORD"
+                "password": "your-shadowsocks-password"
             },
             "streamSettings": {
                 "network": "tcp"
@@ -691,8 +704,8 @@ setup_python() {
                 "auth": "password",
                 "accounts": [
                     {
-                        "user": "$SOCKS_USERNAME",
-                        "pass": "$SOCKS_PASSWORD"
+                        "user": "socksuser",
+                        "pass": "your-socks-password"
                     }
                 ]
             }
