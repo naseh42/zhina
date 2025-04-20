@@ -927,8 +927,14 @@ EOF
 
 # ------------------- تنظیم فایل محیط -------------------
 setup_env() {
+setup_env() {
     info "تنظیم فایل محیط..."
-    
+
+    # پیدا کردن مسیر گواهی‌های SSL
+    SSL_CERT_PATH=$(find /etc/nginx/ssl/ -name "fullchain.pem" | head -n 1)
+    SSL_KEY_PATH=$(find /etc/nginx/ssl/ -name "privkey.pem" | head -n 1)
+
+    # ایجاد فایل .env با مسیرهای صحیح
     cat > "$BACKEND_DIR/.env" <<EOF
 # تنظیمات دیتابیس
 DATABASE_URL=postgresql://$DB_USER:$DB_PASSWORD@localhost/$DB_NAME
@@ -956,15 +962,15 @@ PANEL_DOMAIN=$PANEL_DOMAIN
 DEFAULT_THEME=$DEFAULT_THEME
 DEFAULT_LANGUAGE=$DEFAULT_LANGUAGE
 
-# تنظیمات SSL
-SSL_CERTFILE=/etc/ssl/certs/cert.pem
-SSL_KEYFILE=/etc/ssl/private/key.pem
+# تنظیمات SSL (مسیرهای خودکار)
+SSL_CERT=$SSL_CERT_PATH
+SSL_KEY=$SSL_KEY_PATH
 EOF
 
     chmod 600 "$BACKEND_DIR/.env"
     chown "$SERVICE_USER":"$SERVICE_USER" "$BACKEND_DIR/.env"
     
-    success "فایل .env در $BACKEND_DIR/.env ایجاد شد"
+    success "فایل .env در $BACKEND_DIR/.env ایجاد شد و مسیرهای SSL تنظیم شدند"
 }
 
 # ------------------- تنظیم سرویس پنل -------------------
