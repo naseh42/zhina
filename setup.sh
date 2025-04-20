@@ -1616,30 +1616,29 @@ EOF
 main() {
     clear
     echo -e "${GREEN}"
-    echo "   ____  _     _           "
-    echo "  |__ / (_) __| | ___  _ _ "
-    echo "   |_ \ | |/ _\` |/ _ \| '_|"
-    echo "  |___/ |_|\__,_|\___/|_|  "
+    echo "   __  ___      _     _       __  "
+    echo "  /  |/  /__  (_)___(_)___  / /_ "
+    echo " / /|_/ / _ \/ / __/ / __ \/ __/ "
+    echo "/_/  /_/_//_/_/_/ /_/_/ /_/\__/  "
     echo -e "${NC}"
-    
+    echo -e "${YELLOW}=== راه‌اندازی Zhina Panel ===${NC}"
     check_system
     get_admin_credentials
     install_prerequisites
     setup_environment
     setup_database
     setup_python
-    setup_xray
-    setup_nginx
-    setup_ssl
+    setup_nginx        # اولویت به Nginx برای تعیین دامنه/IP
+    setup_ssl          # سپس SSL برای تولید گواهینامه
+    setup_xray         # در نهایت Xray با استفاده از SSL_CERT و SSL_KEY
     setup_env
     setup_panel_service
     show_installation_info
     create_management_menu
-    
-    echo -e "\n${GREEN}برای مشاهده جزئیات کامل، فایل لاگ را بررسی کنید:${NC}"
+    echo -e "
+${GREEN}برای مشاهده جزئیات کامل، فایل لاگ را بررسی کنید:${NC}"
     echo -e "${YELLOW}tail -f /var/log/zhina-install.log${NC}"
-    echo -e "\n${GREEN}برای مدیریت پنل از دستور زیر استفاده کنید:${NC}"
+    echo -e "
+${GREEN}برای مدیریت پنل از دستور زیر استفاده کنید:${NC}"
     echo -e "${YELLOW}zhina-manager${NC}"
 }
-
-main
