@@ -276,9 +276,6 @@ async def websocket_endpoint(websocket: WebSocket):
         except Exception as e:
             logger.error(f"WebSocket error: {str(e)}")
             break
-
-
-
 if __name__ == "__main__":
     import uvicorn
     import threading
