@@ -459,8 +459,7 @@ setup_python() {
 }
 
 # ------------------- نصب Xray با تمام پروتکل‌ها -------------------
-
-    setup_xray() {
+setup_xray() {
     info "نصب و پیکربندی Xray با تمام پروتکل‌ها..."
     systemctl stop xray 2>/dev/null || true
 
@@ -499,22 +498,7 @@ setup_python() {
     cat > "$XRAY_CONFIG" <<EOF
 {
     "log": {
-        "loglevel": "warning",
-        "access": "$LOG_DIR/xray-access.log",
-        "error": "$LOG_DIR/xray-error.log"
-    },
-    "api": {
-        "tag": "api",
-        "services": ["StatsService", "HandlerService", "LoggerService"]
-    },
-    "stats": {},
-    "policy": {
-        "levels": {
-            "0": {
-                "statsUserUplink": true,
-                "statsUserDownlink": true
-            }
-        }
+        "loglevel": "info"
     },
     "inbounds": [
         {
@@ -542,10 +526,6 @@ setup_python() {
                     "shortIds": ["$REALITY_SHORT_ID"],
                     "fingerprint": "chrome"
                 }
-            },
-            "sniffing": {
-                "enabled": true,
-                "destOverride": ["http", "tls"]
             }
         },
         {
@@ -563,7 +543,6 @@ setup_python() {
                 "network": "tcp",
                 "security": "tls",
                 "tlsSettings": {
-                    "serverName": "$PANEL_DOMAIN",
                     "certificates": [
                         {
                             "certificateFile": "$SSL_CERT",
@@ -571,6 +550,37 @@ setup_python() {
                         }
                     ]
                 }
+            }
+        },
+        {
+            "port": 8388,
+            "protocol": "shadowsocks",
+            "settings": {
+                "method": "aes-256-gcm",
+                "password": "$SHADOWSOCKS_PASSWORD"
+            },
+            "streamSettings": {
+                "network": "tcp"
+            }
+        },
+        {
+            "port": 1080,
+            "protocol": "socks",
+            "settings": {
+                "auth": "password",
+                "accounts": [
+                    {
+                        "user": "$SOCKS_USERNAME",
+                        "pass": "$SOCKS_PASSWORD"
+                    }
+                ]
+            }
+        },
+        {
+            "port": 8888,
+            "protocol": "http",
+            "settings": {
+                "allowTransparent": true
             }
         }
     ],
@@ -633,12 +643,6 @@ EOF
 
     systemctl daemon-reload
     systemctl enable --now xray || error "خطا در راه‌اندازی Xray"
-    sleep 2
-    if ! systemctl is-active --quiet xray; then
-        journalctl -u xray -n 30 --no-pager
-        error "سرویس Xray فعال نشد. لاگ‌ها را بررسی کنید."
-    fi
-    success "Xray با تمام پروتکل‌ها پیکربندی شد"
 }
 
 # ------------------- تنظیم Nginx -------------------
