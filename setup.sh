@@ -671,7 +671,6 @@ setup_python() {
                             "keyFile": "/etc/nginx/ssl/privkey.pem"
                         }
                     ]
-                ]
             }
         },
         {
