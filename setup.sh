@@ -766,6 +766,11 @@ setup_ssl() {
             -subj "/CN=$PANEL_DOMAIN"
         ssl_type="self-signed"
         
+        # تنظیم مالکیت و سطح دسترسی فایل‌های SSL
+        chown root:root /etc/nginx/ssl/fullchain.pem /etc/nginx/ssl/privkey.pem
+        chmod 644 /etc/nginx/ssl/fullchain.pem
+        chmod 600 /etc/nginx/ssl/privkey.pem
+        
         cat >> /etc/nginx/conf.d/zhina.conf <<EOF
 
 server {
