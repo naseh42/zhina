@@ -54,10 +54,8 @@ disable_ipv6() {
 
 fix_nginx() {
     info "رفع مشکلات Nginx..."
-    # توقف سرویس‌های مرتبط
     systemctl stop nginx 2>/dev/null || true
     
-    # آزادسازی پورت‌ها
     for port in 80 443 $XRAY_HTTP_PORT 8443; do
         if ss -tuln | grep -q ":$port "; then
             pid=$(ss -tulnp | grep ":$port " | awk '{print $7}' | cut -d= -f2 | cut -d, -f1)
@@ -65,16 +63,13 @@ fix_nginx() {
         fi
     done
     
-    # غیرفعال کردن IPv6 در تنظیمات Nginx
     sed -i 's/listen \[::\]:80/# listen [::]:80/g' /etc/nginx/sites-enabled/*
     sed -i 's/listen \[::\]:443/# listen [::]:443/g' /etc/nginx/sites-enabled/*
     
-    # حذف فایل‌های قفل
     rm -f /var/lib/apt/lists/lock
     rm -f /var/cache/apt/archives/lock
     rm -f /var/lib/dpkg/lock
     
-    # تعمیر بسته‌ها
     apt-get install -y -f || error "خطا در رفع وابستگی‌ها"
     dpkg --configure -a || error "خطا در پیکربندی بسته‌ها"
 }
@@ -125,7 +120,6 @@ restart_services() {
 check_services() {
     echo -e "${BLUE}=== بررسی وضعیت سرویس‌ها ===${NC}"
     
-    # بررسی وضعیت Xray و دیتابیس
     DB_CHECK=$(sudo -u postgres psql -d zhina_db -tAc "SELECT COUNT(*) FROM inbounds" 2>/dev/null || echo "0")
     XRAY_CHECK=$(curl -s http://localhost:${PANEL_PORT}/api/v1/xray/config | jq -r '.status' 2>/dev/null || echo "error")
     
@@ -250,12 +244,10 @@ check_system() {
     [[ "$ID" != "ubuntu" && "$ID" != "debian" ]] && 
         warning "این اسکریپت فقط بر روی Ubuntu/Debian تست شده است"
     
-    # بررسی نسخه پایتون
     if ! python3 -c "import sys; exit(1) if sys.version_info < (3, 8) else exit(0)"; then
         error "نیاز به پایتون نسخه 3.8 یا بالاتر دارید"
     fi
     
-    # بررسی فضای دیسک
     local free_space=$(df --output=avail -B 1G / | tail -n 1 | tr -d ' ')
     if [[ $free_space -lt 5 ]]; then
         warning "فضای دیسک کم است (کمتر از 5GB فضای آزاد)"
@@ -274,22 +266,18 @@ check_system() {
 install_prerequisites() {
     info "نصب بسته‌های ضروری..."
     
-    # رفع مشکل احتمالی lock فایل apt
     rm -f /var/lib/apt/lists/lock
     rm -f /var/cache/apt/archives/lock
     rm -f /var/lib/dpkg/lock
     
     apt-get update -y || error "خطا در بروزرسانی لیست پکیج‌ها"
     
-    # نصب بسته‌های اصلی بدون Nginx
     for pkg in git python3 python3-venv python3-pip postgresql postgresql-contrib curl wget openssl unzip uuid-runtime build-essential python3-dev libpq-dev jq; do
         apt-get install -y $pkg || warning "خطا در نصب $pkg - ادامه فرآیند نصب..."
     done
     
-    # نصب certbot بدون وابستگی به nginx
     apt-get install -y certbot python3-certbot || warning "خطا در نصب certbot"
     
-    # نصب Nginx در آخرین مرحله
     info "نصب Nginx..."
     disable_ipv6
     if ! apt-get install -y nginx; then
@@ -298,7 +286,6 @@ install_prerequisites() {
         apt-get install -y nginx || error "خطا در نصب Nginx پس از رفع مشکل"
     fi
     
-    # رفع هرگونه مشکل باقیمانده
     apt-get install -y -f || warning "خطا در رفع مشکلات باقیمانده بسته‌ها"
     
     success "پیش‌نیازها با موفقیت نصب شدند"
@@ -308,13 +295,11 @@ install_prerequisites() {
 setup_environment() {
     info "تنظیم محیط سیستم..."
     
-    # ایجاد کاربر سرویس
     if ! id "$SERVICE_USER" &>/dev/null; then
         useradd -r -s /bin/false -d "$INSTALL_DIR" "$SERVICE_USER" || 
             error "خطا در ایجاد کاربر $SERVICE_USER"
     fi
     
-    # ایجاد دایرکتوری‌ها
     mkdir -p \
         "$BACKEND_DIR" \
         "$FRONTEND_DIR" \
@@ -324,7 +309,6 @@ setup_environment() {
         "$SECRETS_DIR" \
         "/etc/xray" || error "خطا در ایجاد دایرکتوری‌ها"
     
-    # تنظیم مالکیت دایرکتوری‌ها
     chown -R "$SERVICE_USER":"$SERVICE_USER" \
         "$INSTALL_DIR" \
         "$BACKEND_DIR" \
@@ -332,32 +316,26 @@ setup_environment() {
         "$SECRETS_DIR" \
         "$CONFIG_DIR"
 
-    # تنظیم فایل‌های لاگ
     touch "$LOG_DIR/panel/access.log" "$LOG_DIR/panel/error.log"
     chown "$SERVICE_USER":"$SERVICE_USER" "$LOG_DIR/panel"/*.log
     
-    # انتقال فایل‌های backend
     if [ -d "./backend" ]; then
         cp -r "./backend"/* "$BACKEND_DIR"/ || error "خطا در انتقال بک‌اند"
     else
         error "پوشه backend در مسیر جاری یافت نشد!"
     fi
     
-    # انتقال فایل‌های frontend
     if [ -d "./frontend" ]; then
         cp -r "./frontend"/* "$FRONTEND_DIR"/ || error "خطا در انتقال فرانت‌اند"
     else
         error "پوشه frontend در مسیر جاری یافت نشد!"
     fi
     
-    # تنظیم دسترسی‌های backend
     find "$BACKEND_DIR" -type d -exec chmod 750 {} \;
     find "$BACKEND_DIR" -type f -exec chmod 640 {} \;
 
-    # تنظیم مالکیت و دسترسی backend
     chown -R "$SERVICE_USER":"$SERVICE_USER" "$BACKEND_DIR"
 
-    # تنظیم دسترسی‌های frontend
     find "$FRONTEND_DIR" -type d -exec chmod 755 {} \;
     find "$FRONTEND_DIR" -type f -exec chmod 644 {} \;
 
@@ -380,7 +358,6 @@ setup_database() {
     CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 EOF
 
-    # اعطای دسترسی‌های کامل
     sudo -u postgres psql -c "
     GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;
     GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO $DB_USER;
@@ -399,7 +376,6 @@ EOF
     
     systemctl restart postgresql || error "خطا در راه‌اندازی مجدد PostgreSQL"
     
-    # ایجاد جداول و داده‌های اولیه
     sudo -u postgres psql -d "$DB_NAME" <<EOF || error "خطا در ایجاد جداول دیتابیس"
     CREATE TABLE IF NOT EXISTS inbounds (
         id SERIAL PRIMARY KEY,
@@ -442,7 +418,6 @@ setup_python() {
     
     pip install --upgrade pip wheel || error "خطا در بروزرسانی pip و wheel"
     
-    # نصب نیازمندی‌های پایتون
     if [ -f "$BACKEND_DIR/requirements.txt" ]; then
         pip install -r "$BACKEND_DIR/requirements.txt" || error "خطا در نصب نیازمندی‌های پایتون"
     else
@@ -479,13 +454,12 @@ setup_python() {
     success "محیط پایتون تنظیم شد"
 }
 
-# ------------------- نصب Xray -------------------
+# ------------------- نصب Xray با تمام پروتکل‌ها -------------------
 setup_xray() {
-    info "نصب و پیکربندی Xray..."
+    info "نصب و پیکربندی Xray با تمام پروتکل‌ها..."
     
     systemctl stop xray 2>/dev/null || true
     
-    # بررسی پورت‌های مورد استفاده
     for port in 8443 $XRAY_HTTP_PORT; do
         if ss -tuln | grep -q ":$port "; then
             pid=$(ss -tulnp | grep ":$port " | awk '{print $7}' | cut -d= -f2 | cut -d, -f1)
@@ -511,6 +485,10 @@ setup_xray() {
     REALITY_PUBLIC_KEY=$(echo "$REALITY_KEYS" | awk '/Public key:/ {print $3}')
     REALITY_SHORT_ID=$(openssl rand -hex 4)
     XRAY_UUID=$(uuidgen)
+    TROJAN_PASSWORD=$(openssl rand -hex 16)
+    SHADOWSOCKS_PASSWORD=$(openssl rand -hex 16)
+    SOCKS_USERNAME="zhina-user"
+    SOCKS_PASSWORD=$(openssl rand -hex 8)
 
     cat > "$XRAY_CONFIG" <<EOF
 {
@@ -519,12 +497,31 @@ setup_xray() {
         "access": "$LOG_DIR/xray-access.log",
         "error": "$LOG_DIR/xray-error.log"
     },
+    "api": {
+        "tag": "api",
+        "services": ["StatsService", "HandlerService", "LoggerService"]
+    },
+    "stats": {},
+    "policy": {
+        "levels": {
+            "0": {
+                "statsUserUplink": true,
+                "statsUserDownlink": true
+            }
+        }
+    },
     "inbounds": [
         {
             "port": 8443,
             "protocol": "vless",
             "settings": {
-                "clients": [{"id": "$XRAY_UUID", "flow": "xtls-rprx-vision"}],
+                "clients": [
+                    {
+                        "id": "$XRAY_UUID",
+                        "flow": "xtls-rprx-vision",
+                        "email": "user@reality"
+                    }
+                ],
                 "decryption": "none"
             },
             "streamSettings": {
@@ -534,7 +531,7 @@ setup_xray() {
                     "show": false,
                     "dest": "www.datadoghq.com:443",
                     "xver": 0,
-                    "serverNames": ["www.datadoghq.com"],
+                    "serverNames": ["www.datadoghq.com", "www.lovelace.com"],
                     "privateKey": "$REALITY_PRIVATE_KEY",
                     "shortIds": ["$REALITY_SHORT_ID"],
                     "fingerprint": "chrome"
@@ -542,37 +539,165 @@ setup_xray() {
             },
             "sniffing": {
                 "enabled": true,
-                "destOverride": ["http","tls"]
+                "destOverride": ["http", "tls"]
             }
         },
         {
-            "port": $XRAY_HTTP_PORT,
+            "port": 2083,
             "protocol": "vmess",
             "settings": {
-                "clients": [{"id": "$XRAY_UUID"}]
+                "clients": [
+                    {
+                        "id": "$XRAY_UUID",
+                        "alterId": 0,
+                        "email": "user@vmess"
+                    }
+                ]
             },
             "streamSettings": {
                 "network": "ws",
                 "wsSettings": {
-                    "path": "$XRAY_PATH"
+                    "path": "$XRAY_PATH",
+                    "headers": {
+                        "Host": "$PANEL_DOMAIN"
+                    }
                 }
+            }
+        },
+        {
+            "port": 8444,
+            "protocol": "trojan",
+            "settings": {
+                "clients": [
+                    {
+                        "password": "$TROJAN_PASSWORD",
+                        "email": "user@trojan"
+                    }
+                ]
+            },
+            "streamSettings": {
+                "network": "tcp",
+                "security": "tls",
+                "tlsSettings": {
+                    "serverName": "$PANEL_DOMAIN",
+                    "certificates": [
+                        {
+                            "certificateFile": "/etc/letsencrypt/live/$PANEL_DOMAIN/fullchain.pem",
+                            "keyFile": "/etc/letsencrypt/live/$PANEL_DOMAIN/privkey.pem"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "port": 8388,
+            "protocol": "shadowsocks",
+            "settings": {
+                "method": "aes-256-gcm",
+                "password": "$SHADOWSOCKS_PASSWORD",
+                "network": "tcp,udp"
+            }
+        },
+        {
+            "port": 10808,
+            "protocol": "socks",
+            "settings": {
+                "auth": "password",
+                "accounts": [
+                    {
+                        "user": "$SOCKS_USERNAME",
+                        "pass": "$SOCKS_PASSWORD"
+                    }
+                ],
+                "udp": true,
+                "ip": "127.0.0.1"
+            }
+        },
+        {
+            "port": 8080,
+            "protocol": "http",
+            "settings": {
+                "allowTransparent": false,
+                "userLevel": 0
+            }
+        },
+        {
+            "port": 50051,
+            "protocol": "vless",
+            "settings": {
+                "clients": [
+                    {
+                        "id": "$XRAY_UUID",
+                        "level": 0,
+                        "email": "user@grpc"
+                    }
+                ],
+                "decryption": "none"
+            },
+            "streamSettings": {
+                "network": "grpc",
+                "grpcSettings": {
+                    "serviceName": "grpcservice",
+                    "multiMode": true
+                },
+                "security": "tls",
+                "tlsSettings": {
+                    "serverName": "$PANEL_DOMAIN",
+                    "certificates": [
+                        {
+                            "certificateFile": "/etc/letsencrypt/live/$PANEL_DOMAIN/fullchain.pem",
+                            "keyFile": "/etc/letsencrypt/live/$PANEL_DOMAIN/privkey.pem"
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "port": 10000,
+            "protocol": "dokodemo-door",
+            "settings": {
+                "address": "8.8.8.8",
+                "port": 53,
+                "network": "tcp,udp"
             }
         }
     ],
     "outbounds": [
         {
             "protocol": "freedom",
-            "tag": "direct"
+            "tag": "direct",
+            "settings": {
+                "domainStrategy": "UseIP"
+            }
         },
         {
             "protocol": "blackhole",
-            "tag": "blocked"
+            "tag": "blocked",
+            "settings": {}
+        },
+        {
+            "protocol": "dns",
+            "tag": "dns-out"
         }
-    ]
+    ],
+    "routing": {
+        "domainStrategy": "IPIfNonMatch",
+        "rules": [
+            {
+                "type": "field",
+                "ip": ["geoip:private"],
+                "outboundTag": "blocked"
+            },
+            {
+                "type": "field",
+                "domain": ["geosite:category-ads-all"],
+                "outboundTag": "blocked"
+            }
+        ]
+    }
 }
 EOF
 
-    # ایجاد فایل بکاپ
     cp "$XRAY_CONFIG" /etc/xray/config.json.bak
     chown "$SERVICE_USER":"$SERVICE_USER" /etc/xray/config.json.bak
     chmod 640 /etc/xray/config.json.bak
@@ -604,7 +729,7 @@ EOF
         error "سرویس Xray فعال نشد. لطفاً خطاهای بالا را بررسی کنید."
     fi
     
-    success "Xray با موفقیت نصب و پیکربندی شد"
+    success "Xray با تمام پروتکل‌ها با موفقیت نصب و پیکربندی شد"
 }
 
 # ------------------- تنظیم Nginx -------------------
@@ -613,7 +738,6 @@ setup_nginx() {
     
     systemctl stop nginx 2>/dev/null || true
     
-    # آزادسازی پورت‌های 80 و 443
     for port in 80 443; do
         if ss -tuln | grep -q ":$port "; then
             pid=$(ss -tulnp | grep ":$port " | awk '{print $7}' | cut -d= -f2 | cut -d, -f1)
@@ -621,14 +745,12 @@ setup_nginx() {
         fi
     done
     
-    # غیرفعال کردن IPv6 اگر مشکل ساز باشد
     if grep -q 'nginx: \[emerg\] socket() \[::\]:80 failed' /var/log/nginx/error.log 2>/dev/null; then
         disable_ipv6
         sed -i 's/listen \[::\]:80/# listen [::]:80/g' /etc/nginx/sites-enabled/*
         sed -i 's/listen \[::\]:443/# listen [::]:443/g' /etc/nginx/sites-enabled/*
     fi
     
-    # سوال از کاربر برای دامنه
     read -p "آیا از دامنه اختصاصی استفاده می‌کنید؟ (y/n) " use_domain
     if [[ "$use_domain" =~ ^[Yy]$ ]]; then
         while [[ -z "$PANEL_DOMAIN" ]]; do
@@ -640,16 +762,13 @@ setup_nginx() {
         echo -e "${YELLOW}از آدرس IP عمومی استفاده می‌شود: ${PANEL_DOMAIN}${NC}"
     fi
 
-    # پیکربندی Nginx
     cat > /etc/nginx/conf.d/zhina.conf <<EOF
 server {
     listen 80;
-    # listen [::]:80;
     server_name $PANEL_DOMAIN;
     
     root $FRONTEND_DIR;
     
-    # مسیر API
     location /api {
         proxy_pass http://127.0.0.1:8001;
         proxy_http_version 1.1;
@@ -659,20 +778,17 @@ server {
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_set_header Connection "";
         
-        # تنظیمات CORS
         add_header 'Access-Control-Allow-Origin' '\$http_origin' always;
         add_header 'Access-Control-Allow-Credentials' 'true' always;
         add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, DELETE, OPTIONS' always;
         add_header 'Access-Control-Allow-Headers' 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization' always;
         
-        # تنظیمات buffer و timeout
         proxy_buffering off;
         proxy_request_buffering off;
         proxy_read_timeout 300s;
         proxy_send_timeout 300s;
     }
     
-    # مسیر WebSocket
     location /ws {
         proxy_pass http://127.0.0.1:8001;
         proxy_http_version 1.1;
@@ -682,24 +798,20 @@ server {
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         
-        # تنظیمات خاص WebSocket
         proxy_read_timeout 86400s;
         proxy_send_timeout 86400s;
         proxy_connect_timeout 5s;
     }
     
-    # تنظیمات مسیر template
     location /template/ {
         alias $FRONTEND_DIR/template/;
         try_files \$uri /login.html /dashboard.html /settings.html /users.html /base.html =404;
     }
     
-    # تنظیمات مسیر CSS
     location /style/css/ {
         alias $FRONTEND_DIR/style/css/;
     }
 
-    # تنظیمات Xray
     location $XRAY_PATH {
         proxy_pass http://127.0.0.1:$XRAY_HTTP_PORT;
         proxy_http_version 1.1;
@@ -708,18 +820,15 @@ server {
         proxy_set_header Host \$host;
     }
     
-    # تنظیمات SSL و Let's Encrypt
     location /.well-known/acme-challenge/ {
         root /var/www/html;
     }
 
-    # جلوگیری از دسترسی به فایل‌های حساس
     location ~* \.env$ {
         deny all;
         return 404;
     }
 
-    # جلوگیری از دسترسی به فایل‌های دیگر
     location ~* \.(bak|git|htaccess|htpasswd|swp|swx)$ {
         deny all;
         return 404;
@@ -752,7 +861,6 @@ setup_ssl() {
 
 server {
     listen 443 ssl;
-    # listen [::]:443 ssl;
     server_name $PANEL_DOMAIN;
     
     ssl_certificate /etc/nginx/ssl/fullchain.pem;
@@ -805,6 +913,10 @@ REALITY_PRIVATE_KEY=$REALITY_PRIVATE_KEY
 XRAY_UUID=$XRAY_UUID
 XRAY_PATH=$XRAY_PATH
 XRAY_HTTP_PORT=$XRAY_HTTP_PORT
+TROJAN_PASSWORD=$TROJAN_PASSWORD
+SHADOWSOCKS_PASSWORD=$SHADOWSOCKS_PASSWORD
+SOCKS_USERNAME=$SOCKS_USERNAME
+SOCKS_PASSWORD=$SOCKS_PASSWORD
 
 # تنظیمات امنیتی
 ADMIN_USERNAME=$ADMIN_USER
@@ -928,6 +1040,9 @@ show_installation_info() {
     echo -e "• Public Key: ${YELLOW}${REALITY_PUBLIC_KEY}${NC}"
     echo -e "• Short ID: ${YELLOW}${REALITY_SHORT_ID}${NC}"
     echo -e "• مسیر WS: ${YELLOW}${XRAY_PATH}${NC}"
+    echo -e "• رمز عبور Trojan: ${YELLOW}${TROJAN_PASSWORD}${NC}"
+    echo -e "• رمز عبور Shadowsocks: ${YELLOW}${SHADOWSOCKS_PASSWORD}${NC}"
+    echo -e "• اطلاعات SOCKS: ${YELLOW}${SOCKS_USERNAME}:${SOCKS_PASSWORD}${NC}"
     
     echo -e "\n${YELLOW}اطلاعات دیتابیس:${NC}"
     echo -e "• نام دیتابیس: ${YELLOW}${DB_NAME}${NC}"
@@ -961,6 +1076,25 @@ Xray Settings:
 - VMESS+WS:
   • Port: ${XRAY_HTTP_PORT}
   • Path: ${XRAY_PATH}
+- Trojan:
+  • Port: 8444
+  • Password: ${TROJAN_PASSWORD}
+- Shadowsocks:
+  • Port: 8388
+  • Password: ${SHADOWSOCKS_PASSWORD}
+  • Method: aes-256-gcm
+- SOCKS:
+  • Port: 10808
+  • Username: ${SOCKS_USERNAME}
+  • Password: ${SOCKS_PASSWORD}
+- HTTP:
+  • Port: 8080
+- gRPC:
+  • Port: 50051
+  • Service Name: grpcservice
+- Dokodemo-Door:
+  • Port: 10000
+  • Target: 8.8.8.8:53
 
 Log Files:
 - Panel Access: ${LOG_DIR}/panel/access.log
