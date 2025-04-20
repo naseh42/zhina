@@ -1622,19 +1622,46 @@ main() {
     echo "/_/  /_/_//_/_/_/ /_/_/ /_/\__/  "
     echo -e "${NC}"
     echo -e "${YELLOW}=== راه‌اندازی Zhina Panel ===${NC}"
-    check_system
-    get_admin_credentials
+
+    echo "📌 بررسی سیستم..."
+    check_system && echo "✅ بررسی سیستم انجام شد."
+
+    echo "📌 دریافت اطلاعات مدیر..."
+    get_admin_credentials && echo "✅ اطلاعات مدیر ثبت شد."
+
+    echo "📌 نصب پیش‌نیازها..."
+    set -x
     install_prerequisites
-    setup_environment
-    setup_database
-    setup_python
-    setup_nginx        # اولویت به Nginx برای تعیین دامنه/IP
-    setup_ssl          # سپس SSL برای تولید گواهینامه
-    setup_xray         # در نهایت Xray با استفاده از SSL_CERT و SSL_KEY
-    setup_env
-    setup_panel_service
-    show_installation_info
-    create_management_menu
+    set +x
+    echo "✅ پیش‌نیازها نصب شدند."
+
+    echo "📌 تنظیم محیط..."
+    setup_environment && echo "✅ محیط تنظیم شد."
+
+    echo "📌 تنظیم پایگاه داده..."
+    setup_database && echo "✅ پایگاه داده راه‌اندازی شد."
+
+    echo "📌 تنظیم Python..."
+    setup_python && echo "✅ Python تنظیم شد."
+
+    echo "📌 تنظیم Nginx..."
+    setup_nginx && echo "✅ Nginx پیکربندی شد."
+
+    echo "📌 تنظیم SSL..."
+    setup_ssl && echo "✅ SSL پیکربندی شد."
+
+    echo "📌 تنظیم Xray..."
+    setup_xray && echo "✅ Xray تنظیم شد."
+
+    echo "📌 تنظیم متغیرهای محیطی..."
+    setup_env && echo "✅ متغیرهای محیطی تنظیم شدند."
+
+    echo "📌 تنظیم سرویس پنل..."
+    setup_panel_service && echo "✅ سرویس پنل راه‌اندازی شد."
+
+    echo "📌 ایجاد منوی مدیریت..."
+    create_management_menu && echo "✅ منوی مدیریت آماده شد."
+
     echo -e "
 ${GREEN}برای مشاهده جزئیات کامل، فایل لاگ را بررسی کنید:${NC}"
     echo -e "${YELLOW}tail -f /var/log/zhina-install.log${NC}"
@@ -1642,3 +1669,5 @@ ${GREEN}برای مشاهده جزئیات کامل، فایل لاگ را بر�
 ${GREEN}برای مدیریت پنل از دستور زیر استفاده کنید:${NC}"
     echo -e "${YELLOW}zhina-manager${NC}"
 }
+
+main
