@@ -1,39 +1,29 @@
 {% extends "base.html" %}
 
 {% block content %}
-    <div class="dashboard-container">
-        <!-- هدر -->
-        <header class="dashboard-header">
-            <h1>داشبورد مدیریت</h1>
-            <p>به پنل مدیریت خوش آمدید</p>
-        </header>
+<div class="dashboard-container">
+    <header class="dashboard-header">
+        <h1>داشبورد مدیریت</h1>
+        <p id="lastUpdate">آخرین بروزرسانی: <span>--</span></p>
+    </header>
 
-        <!-- کارت‌های آمار -->
-        <div class="stats-grid">
-            <div class="stat-card">
-                <h2>کاربران آنلاین</h2>
-                <p class="stat-value">۱۲۳</p>
-            </div>
-            <div class="stat-card">
-                <h2>ترافیک مصرفی</h2>
-                <p class="stat-value">۵۶۷ گیگابایت</p>
-            </div>
-            <div class="stat-card">
-                <h2>وضعیت سرور</h2>
-                <p class="stat-value">فعال</p>
-            </div>
+    <div class="stats-grid">
+        <div class="stat-card">
+            <h2>کاربران آنلاین</h2>
+            <p class="stat-value" id="onlineUsers">--</p>
         </div>
-
-        <!-- نمودارها -->
-        <div class="charts-grid">
-            <div class="chart-card">
-                <h2>ترافیک ماهانه</h2>
-                <canvas id="trafficChart"></canvas>
-            </div>
-            <div class="chart-card">
-                <h2>استفاده از CPU</h2>
-                <canvas id="cpuChart"></canvas>
-            </div>
+        <div class="stat-card">
+            <h2>ترافیک مصرفی</h2>
+            <p class="stat-value" id="trafficUsage">--</p>
         </div>
     </div>
+
+    <div class="charts-grid">
+        <div class="chart-card">
+            <canvas id="trafficChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<script src="/static/js/dashboard.js"></script>
 {% endblock %}
