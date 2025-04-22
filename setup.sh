@@ -1015,7 +1015,8 @@ async def root():
 EOF
     fi
     
-    cat > /etc/systemd/system/zhina-panel.service <<EOF
+    # ساخت فایل
+cat <<EOF > /etc/systemd/system/zhina-panel.service
 [Unit]
 Description=Zhina Panel Service
 After=network.target postgresql.service
@@ -1026,14 +1027,7 @@ Group=$SERVICE_USER
 WorkingDirectory=$BACKEND_DIR
 Environment="PATH=$INSTALL_DIR/venv/bin"
 Environment="PYTHONPATH=$BACKEND_DIR"
-ExecStart=$INSTALL_DIR/venv/bin/uvicorn \
-    app:app \
-    --host 0.0.0.0 \
-    --port $PANEL_PORT \
-    --workers $UVICORN_WORKERS \
-    --log-level info \
-    --access-log \
-    --no-server-header
+ExecStart=/opt/zhina/venv/bin/uvicorn app:app --host 0.0.0.0 --port 8001 --workers 4 --log-level info --access-log --no-server-header --ssl-keyfile "$SSL_KEY" --ssl-certfile "$SSL_CERT"
 
 Restart=always
 RestartSec=3
@@ -1043,6 +1037,9 @@ StandardError=append:$LOG_DIR/panel/error.log
 [Install]
 WantedBy=multi-user.target
 EOF
+
+# تنظیم مجوزهای دسترسی
+chmod 644 /etc/systemd/system/zhina-panel.service
 
     systemctl daemon-reload
     systemctl enable --now zhina-panel || error "خطا در راه‌اندازی سرویس پنل"
