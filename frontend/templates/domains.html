@@ -4,13 +4,34 @@
 <div class="domains-container">
     <header class="domains-header">
         <h1>مدیریت دامنه‌ها</h1>
-        <button id="addDomainBtn" class="btn-primary">
-            <i class="fas fa-plus"></i> افزودن دامنه
-        </button>
+        <div class="domain-actions">
+            <button id="addDomainBtn" class="btn-primary">
+                <i class="fas fa-plus"></i> افزودن دامنه
+            </button>
+            <div class="domain-filters">
+                <select id="domainTypeFilter">
+                    <option value="all">همه انواع</option>
+                    <option value="cdn">CDN</option>
+                    <option value="direct">Direct</option>
+                </select>
+            </div>
+        </div>
     </header>
 
-    <div class="domain-list" id="domainList">
-        <!-- داده‌ها با JS پر می‌شوند -->
+    <div class="domain-list-container">
+        <table id="domainsTable" class="domains-table">
+            <thead>
+                <tr>
+                    <th data-sort="name">نام دامنه ▼</th>
+                    <th data-sort="type">نوع</th>
+                    <th data-sort="status">وضعیت SSL</th>
+                    <th>عملیات</th>
+                </tr>
+            </thead>
+            <tbody id="domainsTableBody">
+                <!-- داده‌ها با JS پر می‌شوند -->
+            </tbody>
+        </table>
     </div>
 </div>
 
