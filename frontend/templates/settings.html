@@ -4,13 +4,23 @@
 <div class="settings-container">
     <header class="settings-header">
         <h1>تنظیمات سیستم</h1>
+        <div class="settings-tabs">
+            <button class="tab-btn active" data-tab="xray">Xray</button>
+            <button class="tab-btn" data-tab="cdn">CDN</button>
+            <button class="tab-btn" data-tab="backup">پشتیبان‌گیری</button>
+        </div>
     </header>
 
-    <div class="settings-grid">
-        <div class="setting-card" id="xraySettings">
-            <h2>تنظیمات Xray</h2>
-            <!-- محتوای دینامیک -->
-        </div>
+    <div class="tab-content" id="xraySettings">
+        <!-- محتوای تب Xray -->
+    </div>
+
+    <div class="tab-content hidden" id="cdnSettings">
+        <!-- محتوای تب CDN -->
+    </div>
+
+    <div class="tab-content hidden" id="backupSettings">
+        <!-- محتوای تب پشتیبان‌گیری -->
     </div>
 </div>
 
