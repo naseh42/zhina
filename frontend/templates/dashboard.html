@@ -16,13 +16,22 @@
             <h2>ترافیک مصرفی</h2>
             <p class="stat-value" id="trafficUsage">--</p>
         </div>
+        <div class="stat-card">
+            <h2>وضعیت سرور</h2>
+            <p class="stat-value" id="serverStatus">--</p>
+        </div>
     </div>
 
     <div class="charts-grid">
         <div class="chart-card">
             <canvas id="trafficChart"></canvas>
         </div>
+        <div class="chart-card">
+            <canvas id="resourcesChart"></canvas>
+        </div>
     </div>
+
+    <div id="systemAlerts"></div> <!-- برای نمایش هشدارها -->
 </div>
 
 <script src="/static/js/dashboard.js"></script>
