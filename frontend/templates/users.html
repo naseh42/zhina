@@ -4,17 +4,23 @@
 <div class="users-container">
     <header class="users-header">
         <h1>مدیریت کاربران</h1>
-        <button id="addUserBtn" class="btn-primary">
-            <i class="fas fa-plus"></i> افزودن کاربر
-        </button>
+        <div class="actions">
+            <button id="addUserBtn" class="btn-primary">
+                <i class="fas fa-plus"></i> افزودن کاربر
+            </button>
+            <div class="search-box">
+                <input type="text" id="userSearch" placeholder="جستجوی کاربر...">
+            </div>
+        </div>
     </header>
 
     <div class="table-responsive">
         <table id="usersTable" class="users-table">
             <thead>
                 <tr>
-                    <th>نام کاربری</th>
-                    <th>وضعیت</th>
+                    <th data-sort="username">نام کاربری ▼</th>
+                    <th data-sort="status">وضعیت</th>
+                    <th data-sort="traffic">ترافیک مصرفی</th>
                     <th>عملیات</th>
                 </tr>
             </thead>
@@ -22,12 +28,8 @@
                 <!-- داده‌ها با JS پر می‌شوند -->
             </tbody>
         </table>
+        <div class="pagination" id="usersPagination"></div>
     </div>
-</div>
-
-<!-- مودال‌ها -->
-<div id="userModal" class="modal">
-    <!-- محتوای مودال -->
 </div>
 
 <script src="/static/js/users.js"></script>
