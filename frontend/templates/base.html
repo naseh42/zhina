@@ -6,6 +6,8 @@
     <title>{{ title }} - Zhina Panel</title>
     <link rel="stylesheet" href="/static/css/futuristic.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <!-- اضافه کردن Favicon -->
+    <link rel="icon" href="/static/images/favicon.ico">
 </head>
 <body>
     <!-- منوی مدیریت -->
@@ -15,10 +17,10 @@
             <span>Zhina Panel</span>
         </div>
         <ul class="menu">
-            <li><a href="/dashboard"><i class="fas fa-home"></i> داشبورد</a></li>
-            <li><a href="/users"><i class="fas fa-users"></i> کاربران</a></li>
-            <li><a href="/domains"><i class="fas fa-globe"></i> دامنه‌ها</a></li>
-            <li><a href="/settings"><i class="fas fa-cog"></i> تنظیمات</a></li>
+            <li><a href="/dashboard" class="nav-link" id="dashboardLink"><i class="fas fa-home"></i> داشبورد</a></li>
+            <li><a href="/users" class="nav-link" id="usersLink"><i class="fas fa-users"></i> کاربران</a></li>
+            <li><a href="/domains" class="nav-link" id="domainsLink"><i class="fas fa-globe"></i> دامنه‌ها</a></li>
+            <li><a href="/settings" class="nav-link" id="settingsLink"><i class="fas fa-cog"></i> تنظیمات</a></li>
         </ul>
     </nav>
 
@@ -27,7 +29,10 @@
         {% block content %}{% endblock %}
     </main>
 
-    <!-- اسکریپت‌ها -->
-    <script src="/static/js/scripts.js"></script>
+    <!-- اسکریپت‌های مشترک -->
+    <script src="/static/js/core.js"></script>
+    
+    <!-- اسکریپت اختصاصی هر صفحه -->
+    {% block scripts %}{% endblock %}
 </body>
 </html>
