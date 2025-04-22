@@ -1,59 +1,18 @@
 {% extends "base.html" %}
 
 {% block content %}
-    <div class="settings-container">
-        <!-- هدر -->
-        <header class="settings-header">
-            <h1>تنظیمات پیشرفته دامنه‌ها</h1>
-        </header>
+<div class="settings-container">
+    <header class="settings-header">
+        <h1>تنظیمات سیستم</h1>
+    </header>
 
-        <!-- انتخاب دامنه -->
-        <div class="domain-selector">
-            <label for="domain">انتخاب دامنه:</label>
-            <select id="domain" name="domain" onchange="loadDomainSettings(this.value)">
-                {% for domain in domains %}
-                    <option value="{{ domain.id }}">{{ domain.name }} ({{ domain.type }})</option>
-                {% endfor %}
-            </select>
-        </div>
-
-        <!-- تنظیمات دامنه -->
-        <div id="domainSettings" class="domain-settings">
-            <!-- تنظیمات CDN -->
-            <div class="cdn-settings">
-                <h2>تنظیمات CDN</h2>
-                <form id="cdnSettingsForm">
-                    <label for="cdnProvider">سرویس CDN:</label>
-                    <select id="cdnProvider" name="cdnProvider">
-                        <option value="cloudflare">Cloudflare</option>
-                        <option value="fastly">Fastly</option>
-                        <option value="gcore">Gcore</option>
-                    </select>
-
-                    <label for="apiKey">کلید API:</label>
-                    <input type="text" id="apiKey" name="apiKey">
-
-                    <button type="submit">ذخیره تنظیمات CDN</button>
-                </form>
-            </div>
-
-            <!-- تنظیمات پروتکل -->
-            <div class="protocol-settings">
-                <h2>تنظیمات پروتکل</h2>
-                <form id="protocolSettingsForm">
-                    <label for="protocol">پروتکل:</label>
-                    <select id="protocol" name="protocol">
-                        <option value="reality">Reality</option>
-                        <option value="vless">VLESS</option>
-                        <option value="vmess">VMess</option>
-                        <option value="trojan">Trojan</option>
-                    </select>
-
-                    <button type="submit">ذخیره تنظیمات پروتکل</button>
-                </form>
-            </div>
+    <div class="settings-grid">
+        <div class="setting-card" id="xraySettings">
+            <h2>تنظیمات Xray</h2>
+            <!-- محتوای دینامیک -->
         </div>
     </div>
+</div>
 
-    <script src="/static/js/settings.js"></script>
+<script src="/static/js/settings.js"></script>
 {% endblock %}
