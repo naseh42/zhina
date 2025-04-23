@@ -189,6 +189,28 @@ async def dashboard(request: Request, db: Session = Depends(get_db)):
         "stats": stats
     })
 
+@app.get("/users", response_class=HTMLResponse)
+async def users_page(request: Request, db: Session = Depends(get_db)):
+    users = db.query(models.User).all()
+    return templates.TemplateResponse("users.html", {
+        "request": request,
+        "users": users
+    })
+
+@app.get("/domains", response_class=HTMLResponse)
+async def domains_page(request: Request, db: Session = Depends(get_db)):
+    domains = db.query(models.Domain).all()
+    return templates.TemplateResponse("domains.html", {
+        "request": request,
+        "domains": domains
+    })
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request):
+    return templates.TemplateResponse("settings.html", {
+        "request": request
+    })
+
 @app.get("/api/v1/server-stats", response_model=ServerStatsResponse)
 async def server_stats(db: Session = Depends(get_db)):
     """دریافت آمار سرور"""
