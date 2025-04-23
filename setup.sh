@@ -375,17 +375,27 @@ EOF
     " || error "خطا در اعطای دسترسی‌های بیشتر به کاربر دیتابیس"
 
     local pg_conf="/etc/postgresql/$(ls /etc/postgresql | head -1)/main/postgresql.conf"
-    if [ -f "$pg_conf" ]; then
+    local hba_conf="/etc/postgresql/$(ls /etc/postgresql | head -1)/main/pg_hba.conf"
+
+    if [ -f "$pg_conf" ] && [ -f "$hba_conf" ]; then
         sed -i '/^#listen_addresses/s/^#//; s/localhost/*/' "$pg_conf"
-        sed -i 's/scram-sha-256/md5/g' /etc/postgresql/*/main/pg_hba.conf
-        echo "host $DB_NAME $DB_USER 127.0.0.1/32 md5" >> /etc/postgresql/*/main/pg_hba.conf
+
+        # تغییر تمام روش‌های peer به md5
+        sed -i 's/^local\s\+all\s\+all\s\+peer/\1md5/' "$hba_conf"
+
+        # تغییر scram-sha-256 به md5 در صورت وجود
+        sed -i 's/scram-sha-256/md5/g' "$hba_conf"
+
+        # افزودن دسترسی به یوزر خاص
+        echo "host $DB_NAME $DB_USER 127.0.0.1/32 md5" >> "$hba_conf"
     else
-        warning "فایل پیکربندی PostgreSQL یافت نشد!"
+        warning "فایل‌های پیکربندی PostgreSQL یافت نشد!"
     fi
 
     systemctl restart postgresql || error "خطا در راه‌اندازی مجدد PostgreSQL"
 
-    success "احراز هویت PostgreSQL به MD5 تغییر یافت!"
+    success "پایگاه داده و احراز هویت PostgreSQL با موفقیت تنظیم شد!"
+
     
     # ایجاد تمام جداول اصلی دقیقاً مطابق نسخه شما
     sudo -u postgres psql -d "$DB_NAME" <<EOF
