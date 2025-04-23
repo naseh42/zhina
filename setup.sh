@@ -354,13 +354,13 @@ setup_environment() {
 # ------------------- تنظیم دیتابیس (با تمام جداول اصلی) -------------------
 setup_database() {
     info "تنظیم پایگاه داده PostgreSQL..."
-    
+
     systemctl start postgresql || error "خطا در راه‌اندازی PostgreSQL"
-    
+
     sudo -u postgres psql <<EOF || error "خطا در اجرای دستورات PostgreSQL"
     DROP DATABASE IF EXISTS $DB_NAME;
     DROP USER IF EXISTS $DB_USER;
-    CREATE USER $DB_USER WITH ENCRYPTED PASSWORD '$DB_PASSWORD';
+    CREATE USER $DB_USER WITH PASSWORD '$DB_PASSWORD';
     CREATE DATABASE $DB_NAME OWNER $DB_USER;
     \c $DB_NAME
     CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -368,34 +368,24 @@ setup_database() {
 EOF
 
     sudo -u postgres psql -c "
-    ALTER USER $DB_USER WITH ENCRYPTED PASSWORD '$DB_PASSWORD';
-    ALTER USER $DB_USER SET password_encryption = 'md5';
+    ALTER USER $DB_USER WITH PASSWORD '$DB_PASSWORD';
     GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;
     GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO $DB_USER;
     GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO $DB_USER;
     " || error "خطا در اعطای دسترسی‌های بیشتر به کاربر دیتابیس"
-    
-    local pg_conf="/etc/postgresql/$(ls /etc/postgresql | head -1)/main/postgresql.conf"
-    if [ -f "$pg_conf" ]; then
-        sed -i '/^#listen_addresses/s/^#//; s/localhost/*/' "$pg_conf"
-        sed -i 's/scram-sha-256/md5/g' /etc/postgresql/*/main/pg_hba.conf
-    else
-        warning "فایل پیکربندی PostgreSQL یافت نشد!"
-    fi
-    
-    systemctl restart postgresql || error "خطا در راه‌اندازی مجدد PostgreSQL"
-    
-    success "احراز هویت PostgreSQL به `md5` تغییر یافت!"
 
     local pg_conf="/etc/postgresql/$(ls /etc/postgresql | head -1)/main/postgresql.conf"
     if [ -f "$pg_conf" ]; then
         sed -i '/^#listen_addresses/s/^#//; s/localhost/*/' "$pg_conf"
-        echo "host $DB_NAME $DB_USER 127.0.0.1/32 scram-sha-256" >> /etc/postgresql/*/main/pg_hba.conf
+        sed -i 's/scram-sha-256/md5/g' /etc/postgresql/*/main/pg_hba.conf
+        echo "host $DB_NAME $DB_USER 127.0.0.1/32 md5" >> /etc/postgresql/*/main/pg_hba.conf
     else
         warning "فایل پیکربندی PostgreSQL یافت نشد!"
     fi
-    
+
     systemctl restart postgresql || error "خطا در راه‌اندازی مجدد PostgreSQL"
+
+    success "احراز هویت PostgreSQL به MD5 تغییر یافت!"
     
     # ایجاد تمام جداول اصلی دقیقاً مطابق نسخه شما
     sudo -u postgres psql -d "$DB_NAME" <<EOF
