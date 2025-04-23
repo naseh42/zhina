@@ -381,13 +381,17 @@ EOF
         sed -i '/^#listen_addresses/s/^#//; s/localhost/*/' "$pg_conf"
 
         # تغییر تمام روش‌های peer به md5
-        sed -i 's/^local\s\+all\s\+all\s\+peer/\1md5/' "$hba_conf"
+        sed -i 's/^\s*local\s\+all\s\+all\s\+peer/local all all md5/' "$hba_conf"
 
         # تغییر scram-sha-256 به md5 در صورت وجود
         sed -i 's/scram-sha-256/md5/g' "$hba_conf"
 
         # افزودن دسترسی به یوزر خاص
         echo "host $DB_NAME $DB_USER 127.0.0.1/32 md5" >> "$hba_conf"
+
+        # افزودن دسترسی از آی‌پی عمومی سرور
+        SERVER_IP=$(hostname -I | awk '{print $1}')
+        echo "host    all             all             ${SERVER_IP}/32         md5" >> "$hba_conf"
     else
         warning "فایل‌های پیکربندی PostgreSQL یافت نشد!"
     fi
