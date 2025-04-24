@@ -1,36 +1,47 @@
-{% extends "base.html" %}
-
-{% block content %}
-<div class="users-container">
-    <header class="users-header">
-        <h1>مدیریت کاربران</h1>
-        <div class="actions">
-            <button id="addUserBtn" class="btn-primary">
-                <i class="fas fa-plus"></i> افزودن کاربر
-            </button>
-            <div class="search-box">
-                <input type="text" id="userSearch" placeholder="جستجوی کاربر...">
-            </div>
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title id="page-title">پنل مدیریت یوزرها</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+    <div class="container">
+        <div class="language-selector">
+            <button id="btn-en">English</button>
+            <button id="btn-fa">فارسی</button>
         </div>
-    </header>
 
-    <div class="table-responsive">
-        <table id="usersTable" class="users-table">
+        <h1 id="header">مدیریت یوزرها</h1>
+
+        <div class="search-bar">
+            <input type="text" id="search" placeholder="جستجو بر اساس اسم یا UUID...">
+        </div>
+
+        <table id="user-table">
             <thead>
                 <tr>
-                    <th data-sort="username">نام کاربری ▼</th>
-                    <th data-sort="status">وضعیت</th>
-                    <th data-sort="traffic">ترافیک مصرفی</th>
-                    <th>عملیات</th>
+                    <th id="username-header">نام یوزر</th>
+                    <th id="uuid-header">UUID</th>
+                    <th id="status-header">وضعیت</th>
+                    <th id="data-usage-header">حجم مصرفی</th>
+                    <th id="connections-header">تعداد اتصالات</th>
+                    <th id="last-connection-header">آخرین اتصال</th>
+                    <th id="actions-header">عملیات</th>
                 </tr>
             </thead>
-            <tbody id="usersTableBody">
-                <!-- داده‌ها با JS پر می‌شوند -->
+            <tbody id="user-list">
+                <!-- یوزرها اینجا بارگذاری می‌شوند -->
             </tbody>
         </table>
-        <div class="pagination" id="usersPagination"></div>
-    </div>
-</div>
 
-<script src="/static/js/users.js"></script>
-{% endblock %}
+        <div id="pagination">
+            <button id="prev-page" disabled>قبلی</button>
+            <button id="next-page">بعدی</button>
+        </div>
+    </div>
+
+    <script src="/static/js/users.js"></script>
+</body>
+</html>
