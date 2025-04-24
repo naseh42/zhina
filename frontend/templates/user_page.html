@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title id="page-title">صفحه کاربری</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1 id="user-name"></h1> <!-- اسم یوزر اینجا به‌طور دینامیک بارگذاری می‌شود -->
+            <div id="user-stats">
+                <span id="data-remaining">حجم باقی‌مانده: 100 گیگ</span>
+                <span id="data-used">حجم مصرفی: 50 گیگ</span>
+                <div id="data-chart">
+                    <!-- نمودار مصرف حجم -->
+                    <div id="usage-bar" style="width: 50%;"></div>
+                    <div id="usage-text">50 گیگ از 100 گیگ مصرف شده</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="configs-section">
+            <h2>کانفیگ‌ها</h2>
+            <ul id="configs-list">
+                <!-- لیست کانفیگ‌ها بارگذاری می‌شود -->
+            </ul>
+        </div>
+
+        <div id="qr-and-subscription">
+            <h2>لینک و کیوآر کد اشتراک</h2>
+            <div id="subscription-link">
+                <a href="#" id="subscription-url">لینک اشتراک</a>
+            </div>
+            <div id="qr-code">
+                <!-- QR Code will be displayed here -->
+                <img src="/static/images/qr-placeholder.png" alt="QR Code" id="qr-image">
+            </div>
+        </div>
+
+        <div id="config-details">
+            <h3>جزئیات کانفیگ</h3>
+            <pre id="config-content">
+                <!-- محتوای کانفیگ اینجا نمایش داده می‌شود -->
+            </pre>
+        </div>
+    </div>
+
+    <script src="/static/js/user-page.js"></script>
+</body>
+</html>
