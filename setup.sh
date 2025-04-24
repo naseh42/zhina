@@ -404,19 +404,19 @@ EOF
     # ایجاد تمام جداول اصلی دقیقاً مطابق نسخه شما
     sudo -u postgres psql -d "$DB_NAME" <<EOF
     CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        username VARCHAR(50) UNIQUE NOT NULL,
-        email VARCHAR(100) UNIQUE,
-        hashed_password VARCHAR(255) NOT NULL,
-        uuid UUID DEFAULT uuid_generate_v4(),
-        traffic_limit BIGINT DEFAULT 0,
-        usage_duration INTEGER DEFAULT 0,
-        simultaneous_connections INTEGER DEFAULT 1,
-        is_active BOOLEAN DEFAULT TRUE,
-        is_admin BOOLEAN DEFAULT FALSE,
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-    );
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(50) UNIQUE NOT NULL,
+    email VARCHAR(100) UNIQUE,
+    hashed_password VARCHAR(255) NOT NULL,
+    uuid UUID DEFAULT uuid_generate_v4(),
+    traffic_limit BIGINT DEFAULT 0, -- حداکثر حجم مجاز به بایت
+    usage_duration INTEGER DEFAULT 0, -- مدت زمان مجاز به روز
+    simultaneous_connections INTEGER DEFAULT 1, -- تعداد اتصال همزمان مجاز
+    is_active BOOLEAN DEFAULT TRUE, -- فعال یا غیرفعال بودن اکانت
+    is_admin BOOLEAN DEFAULT FALSE, -- مدیر بودن یا نبودن
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
 
     CREATE TABLE IF NOT EXISTS domains (
         id SERIAL PRIMARY KEY,
