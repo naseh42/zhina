@@ -1,0 +1,55 @@
+<!-- templates/advanced_settings.html -->
+{% extends "base.html" %}
+{% block title %}تنظیمات پیشرفته{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+  <h2 class="text-2xl font-bold mb-4">تنظیمات پیشرفته Xray</h2>
+
+  <!-- لیست اینباندها -->
+  <div id="inbounds-section" class="mb-6">
+    <div class="flex justify-between items-center mb-2">
+      <h3 class="text-xl font-semibold">اینباندها</h3>
+      <button onclick="openInboundModal()" class="btn btn-primary">+ افزودن اینباند</button>
+    </div>
+    <div id="inbounds-list" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <!-- اینباندها به صورت داینامیک بارگذاری می‌شوند -->
+    </div>
+  </div>
+
+  <!-- مودال افزودن/ویرایش اینباند -->
+  <div id="inbound-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
+    <div class="bg-white p-6 rounded-lg w-full max-w-lg shadow-xl">
+      <h3 id="inbound-modal-title" class="text-xl font-bold mb-4">افزودن اینباند</h3>
+      <form id="inbound-form" onsubmit="submitInbound(event)">
+        <input type="hidden" name="id" id="inbound-id">
+        
+        <label class="block mb-2">نام اینباند:</label>
+        <input type="text" name="tag" id="inbound-tag" class="input input-bordered w-full mb-3" required>
+
+        <label class="block mb-2">پورت:</label>
+        <input type="number" name="port" id="inbound-port" class="input input-bordered w-full mb-3" required>
+
+        <label class="block mb-2">پروتکل:</label>
+        <select name="protocol" id="inbound-protocol" class="input input-bordered w-full mb-3" required>
+          <option value="vless">VLESS</option>
+          <option value="vmess">VMess</option>
+          <option value="trojan">Trojan</option>
+          <option value="shadowsocks">Shadowsocks</option>
+          <option value="socks">SOCKS</option>
+          <option value="http">HTTP</option>
+        </select>
+
+        <div class="flex justify-end gap-3 mt-4">
+          <button type="button" class="btn" onclick="closeInboundModal()">انصراف</button>
+          <button type="submit" class="btn btn-success">ذخیره</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/advanced_settings.js"></script>
+{% endblock %}
