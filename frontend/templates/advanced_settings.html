@@ -40,6 +40,17 @@
           <option value="http">HTTP</option>
         </select>
 
+        <!-- اضافه کردن TLS -->
+        <label class="block mb-2">TLS:</label>
+        <select name="tls" id="inbound-tls" class="input input-bordered w-full mb-3" required>
+          <option value="enabled">فعال</option>
+          <option value="disabled">غیرفعال</option>
+        </select>
+
+        <!-- اضافه کردن سابسکرپشن -->
+        <label class="block mb-2">سابسکرپشن:</label>
+        <input type="text" name="subscription" id="inbound-subscription" class="input input-bordered w-full mb-3" placeholder="لینک سابسکرپشن">
+
         <div class="flex justify-end gap-3 mt-4">
           <button type="button" class="btn" onclick="closeInboundModal()">انصراف</button>
           <button type="submit" class="btn btn-success">ذخیره</button>
