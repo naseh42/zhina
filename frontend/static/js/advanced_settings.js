@@ -32,6 +32,8 @@ function renderInbounds(inbounds) {
       </div>
       <p><strong>پورت:</strong> ${inbound.port}</p>
       <p><strong>پروتکل:</strong> ${inbound.protocol}</p>
+      <p><strong>TLS:</strong> ${inbound.tls}</p>
+      <p><strong>سابسکرپشن:</strong> ${inbound.subscription}</p>
     `;
 
     container.appendChild(card);
@@ -54,6 +56,8 @@ function editInbound(inbound) {
   document.getElementById("inbound-tag").value = inbound.tag;
   document.getElementById("inbound-port").value = inbound.port;
   document.getElementById("inbound-protocol").value = inbound.protocol;
+  document.getElementById("inbound-tls").value = inbound.tls;
+  document.getElementById("inbound-subscription").value = inbound.subscription;
   document.getElementById("inbound-modal-title").innerText = "ویرایش اینباند";
   document.getElementById("inbound-modal").classList.remove("hidden");
 }
