@@ -3,6 +3,7 @@ from typing import Dict, List, Optional
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 from backend.models import User, Domain
+from backend.utils import generate_uuid  # اطمینان از اینکه این تابع از قبل در utils.py تعریف شده است
 
 # --- بخش امنیتی ---
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -122,3 +123,18 @@ class SettingsManager:
         self.domain_config = DomainConfigManager(db)
         self.appearance = AppearanceSettings()
         self.security = SecurityManager()
+
+    def generate_user_subscription_link(self, user_id: int) -> str:
+        """ساخت لینک اشتراک برای کاربر"""
+        user = self.db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise ValueError("کاربر پیدا نشد")
+        
+        if not user.uuid:
+            user.uuid = generate_uuid()  # فرض بر این است که تابع generate_uuid قبلاً تعریف شده است
+            self.db.commit()
+
+        # ساخت لینک اشتراک (به صورت نمونه)
+        subscription_link = f"https://example.com/subscription/{user.uuid}"
+
+        return subscription_link
