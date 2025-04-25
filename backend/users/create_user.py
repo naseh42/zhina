@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, validator
 from typing import Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
@@ -11,6 +11,9 @@ from backend.utils import (
 )
 from backend.config import settings
 import logging
+import qrcode
+from io import BytesIO
+from fastapi.responses import StreamingResponse
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +102,14 @@ class UserInDB(UserBase):
     class Config:
         from_attributes = True
 
+def generate_qr_code(url: str) -> StreamingResponse:
+    """ساخت QR کد برای لینک اشتراک"""
+    img = qrcode.make(url)
+    img_io = BytesIO()
+    img.save(img_io, 'PNG')
+    img_io.seek(0)
+    return StreamingResponse(img_io, media_type="image/png")
+
 def create_user(db: Session, user_data: UserCreate) -> User:
     """ایجاد کاربر جدید در سیستم"""
     try:
@@ -124,9 +135,15 @@ def create_user(db: Session, user_data: UserCreate) -> User:
         db.add(db_user)
         db.commit()
         db.refresh(db_user)
+
+        # ساخت لینک اشتراک
+        subscription_link = f"{settings.SUBSCRIPTION_URL}/{db_user.uuid}"
         
-        logger.info(f"کاربر جدید ایجاد شد: {db_user.username}")
-        return db_user
+        # ساخت QR کد از لینک اشتراک
+        qr_code = generate_qr_code(subscription_link)
+
+        logger.info(f"کاربر جدید ایجاد شد: {db_user.username}, لینک اشتراک: {subscription_link}")
+        return db_user, qr_code  # بازگشت کاربر و QR کد
         
     except Exception as e:
         db.rollback()
