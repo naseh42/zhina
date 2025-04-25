@@ -27,6 +27,8 @@ from backend.xray_config import get_xray_manager
 from backend.users.user_manager import UserManager
 from backend.domains.domain_manager import DomainManager
 from backend.dashboard.dashboard_manager import DashboardManager
+from backend.routers import user_routes
+
 
 xray_manager = get_xray_manager()
 
@@ -50,6 +52,8 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url=None
 )
+
+app.include_router(user_routes.router)
 
 TEMPLATE_DIR = "/opt/zhina/frontend/templates"
 STATIC_DIR = "/opt/zhina/frontend/static"
