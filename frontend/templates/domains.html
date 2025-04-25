@@ -13,6 +13,7 @@
                     <option value="all">همه انواع</option>
                     <option value="cdn">CDN</option>
                     <option value="direct">Direct</option>
+                    <option value="subscription">Subscription</option>
                 </select>
             </div>
         </div>
@@ -32,6 +33,35 @@
                 <!-- داده‌ها با JS پر می‌شوند -->
             </tbody>
         </table>
+    </div>
+
+    <!-- فرم افزودن/ویرایش دامنه -->
+    <div id="domainFormContainer" style="display:none;">
+        <h3>افزودن/ویرایش دامنه</h3>
+        <form id="domainForm">
+            <label for="domainName">نام دامنه:</label>
+            <input type="text" id="domainName" name="name" required>
+
+            <label for="domainType">نوع دامنه:</label>
+            <select id="domainType" name="type" required>
+                <option value="direct">Direct</option>
+                <option value="cdn">CDN</option>
+                <option value="subscription">Subscription</option>
+            </select>
+
+            <div id="subdomainsContainer" style="display:none;">
+                <label for="subdomains">انتخاب دامنه‌های زیرمجموعه:</label>
+                <select id="subdomains" name="subdomains" multiple>
+                    <!-- اینجا با جاوا اسکریپت دامنه‌های موجود نمایش داده می‌شود -->
+                </select>
+            </div>
+
+            <label for="sslStatus">وضعیت SSL:</label>
+            <input type="checkbox" id="sslStatus" name="ssl_status">
+
+            <button type="submit">ثبت دامنه</button>
+            <button type="button" id="cancelDomainBtn">لغو</button>
+        </form>
     </div>
 </div>
 
