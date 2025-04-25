@@ -419,13 +419,21 @@ EOF
 );
 
     CREATE TABLE IF NOT EXISTS domains (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(255) UNIQUE NOT NULL,
-        description TEXT,
-        owner_id INTEGER REFERENCES users(id),
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-    );
+    id SERIAL PRIMARY KEY,                            -- شناسه منحصر به فرد دامنه
+    name VARCHAR(255) UNIQUE NOT NULL,                 -- نام دامنه (یونیورسال و یکتا)
+    description TEXT,                                  -- توضیحات دامنه
+    owner_id INTEGER REFERENCES users(id),             -- شناسه مالک (کاربر)
+    domain_type VARCHAR(20),                           -- نوع دامنه (CDN, Direct, Subscription)
+    subscription_id INTEGER REFERENCES subscriptions(id), -- ارجاع به سابسکرپشن
+    created_at TIMESTAMP DEFAULT NOW(),                -- تاریخ و زمان ایجاد
+    updated_at TIMESTAMP DEFAULT NOW()                 -- تاریخ و زمان آخرین بروزرسانی
+);
+
+CREATE TABLE IF NOT EXISTS subscription_domains (
+    id SERIAL PRIMARY KEY,                            -- شناسه منحصر به فرد رابطه
+    subscription_id INTEGER REFERENCES subscriptions(id), -- شناسه سابسکرپشن
+    domain_id INTEGER REFERENCES domains(id)         -- شناسه دامنه
+);
 
     CREATE TABLE IF NOT EXISTS subscriptions (
         id SERIAL PRIMARY KEY,
