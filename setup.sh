@@ -1032,8 +1032,15 @@ async def root():
     return {"message": "خوش آمدید به پنل مدیریت Zhina"}
 EOF
     fi
-    
-    # ساخت فایل
+
+    # بررسی وجود فایل‌های SSL
+    if [[ -f "$SSL_CERT" && -f "$SSL_KEY" ]]; then
+        SSL_OPTIONS="--ssl-keyfile \"$SSL_KEY\" --ssl-certfile \"$SSL_CERT\""
+    else
+        SSL_OPTIONS=""
+        warning "فایل‌های SSL پیدا نشدند، پنل بدون HTTPS راه‌اندازی می‌شود."
+    fi
+
 cat <<EOF > /etc/systemd/system/zhina-panel.service
 [Unit]
 Description=Zhina Panel Service
@@ -1045,7 +1052,7 @@ Group=$SERVICE_USER
 WorkingDirectory=$BACKEND_DIR
 Environment="PATH=$INSTALL_DIR/venv/bin"
 Environment="PYTHONPATH=$BACKEND_DIR"
-ExecStart=/opt/zhina/venv/bin/uvicorn app:app --host 0.0.0.0 --port 8001 --workers 4 --log-level info --access-log --no-server-header --ssl-keyfile "$SSL_KEY" --ssl-certfile "$SSL_CERT"
+ExecStart=/opt/zhina/venv/bin/uvicorn app:app --host 0.0.0.0 --port 8001 --workers 4 --log-level info --access-log --no-server-header $SSL_OPTIONS
 
 Restart=always
 RestartSec=3
@@ -1056,9 +1063,7 @@ StandardError=append:$LOG_DIR/panel/error.log
 WantedBy=multi-user.target
 EOF
 
-# تنظیم مجوزهای دسترسی
-chmod 644 /etc/systemd/system/zhina-panel.service
-
+    chmod 644 /etc/systemd/system/zhina-panel.service
     systemctl daemon-reload
     systemctl enable --now zhina-panel || error "خطا در راه‌اندازی سرویس پنل"
     
@@ -1067,7 +1072,7 @@ chmod 644 /etc/systemd/system/zhina-panel.service
         journalctl -u zhina-panel -n 30 --no-pager
         error "سرویس پنل فعال نشد. لطفاً خطاهای بالا را بررسی کنید."
     fi
-    
+
     success "سرویس پنل تنظیم شد"
 }
 
