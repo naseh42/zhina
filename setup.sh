@@ -57,28 +57,34 @@ warning() { echo -e "${YELLOW}[!] $1${NC}"; }
 # ------------------- توابع کمکی -------------------
 disable_ipv6() {
     info "غیرفعال کردن موقت IPv6..."
-    sysctl -w net.ipv6.conf.all.disable_ipv6=1 >/dev/null
-    sysctl -w net.ipv6.conf.default.disable_ipv6=1 >/dev/null
+    
+    if [ -f /proc/sys/net/ipv6/conf/all/disable_ipv6 ]; then
+        sysctl -w net.ipv6.conf.all.disable_ipv6=1 >/dev/null
+    fi
+
+    if [ -f /proc/sys/net/ipv6/conf/default/disable_ipv6 ]; then
+        sysctl -w net.ipv6.conf.default.disable_ipv6=1 >/dev/null
+    fi
 }
 
 fix_nginx() {
     info "رفع مشکلات Nginx..."
     systemctl stop nginx 2>/dev/null || true
-    
+
     for port in 80 443 $XRAY_HTTP_PORT 8443; do
         if ss -tuln | grep -q ":$port "; then
             pid=$(ss -tulnp | grep ":$port " | awk '{print $7}' | cut -d= -f2 | cut -d, -f1)
             kill -9 $pid 2>/dev/null || warning "نمی‌توان پورت $port را آزاد کرد"
         fi
     done
-    
-    sed -i 's/listen \[::\]:80/# listen [::]:80/g' /etc/nginx/sites-enabled/*
-    sed -i 's/listen \[::\]:443/# listen [::]:443/g' /etc/nginx/sites-enabled/*
-    
+
+    sed -i 's/listen :::80/# listen [::]:80/g' /etc/nginx/sites-enabled/*
+    sed -i 's/listen :::443/# listen [::]:443/g' /etc/nginx/sites-enabled/*
+
     rm -f /var/lib/apt/lists/lock
     rm -f /var/cache/apt/archives/lock
     rm -f /var/lib/dpkg/lock
-    
+
     apt-get install -y -f || error "خطا در رفع وابستگی‌ها"
     dpkg --configure -a || error "خطا در پیکربندی بسته‌ها"
 }
