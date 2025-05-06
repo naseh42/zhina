@@ -993,7 +993,7 @@ EOF
 # ------------------- تنظیم سرویس پنل -------------------
 setup_panel_service() {
     info "تنظیم سرویس پنل..."
-    
+
     APP_FILE="$BACKEND_DIR/app.py"
     if [[ ! -f "$APP_FILE" ]]; then
         warning "فایل app.py در مسیر $BACKEND_DIR یافت نشد! یک فایل نمونه ایجاد می‌کنیم..."
@@ -1033,14 +1033,20 @@ async def root():
 EOF
     fi
 
-    # بررسی وجود فایل‌های SSL
-    if [[ -f "$SSL_CERT" && -f "$SSL_KEY" ]]; then
-        SSL_OPTIONS="--ssl-keyfile \"$SSL_KEY\" --ssl-certfile \"$SSL_CERT\""
-    else
-        SSL_OPTIONS=""
-        warning "فایل‌های SSL پیدا نشدند، پنل بدون HTTPS راه‌اندازی می‌شود."
+    # بررسی SSL
+    if [[ -z "$SSL_CERT" || -z "$SSL_KEY" ]]; then
+        info "گواهی SSL مشخص نشده؛ تلاش برای یافتن گواهی پیش‌فرض snakeoil..."
+        SSL_CERT="/etc/ssl/certs/ssl-cert-snakeoil.pem"
+        SSL_KEY="/etc/ssl/private/ssl-cert-snakeoil.key"
+
+        if [[ ! -f "$SSL_CERT" || ! -f "$SSL_KEY" ]]; then
+            error "گواهی پیش‌فرض snakeoil پیدا نشد. نصب SSL شکست خورد."
+        else
+            success "گواهی snakeoil یافت شد و استفاده خواهد شد."
+        fi
     fi
 
+    # ساخت فایل سرویس systemd
 cat <<EOF > /etc/systemd/system/zhina-panel.service
 [Unit]
 Description=Zhina Panel Service
@@ -1052,7 +1058,9 @@ Group=$SERVICE_USER
 WorkingDirectory=$BACKEND_DIR
 Environment="PATH=$INSTALL_DIR/venv/bin"
 Environment="PYTHONPATH=$BACKEND_DIR"
-ExecStart=/opt/zhina/venv/bin/uvicorn app:app --host 0.0.0.0 --port 8001 --workers 4 --log-level info --access-log --no-server-header $SSL_OPTIONS
+ExecStart=$INSTALL_DIR/venv/bin/uvicorn app:app --host 0.0.0.0 --port 8001 \
+  --workers 4 --log-level info --access-log --no-server-header \
+  --ssl-keyfile "$SSL_KEY" --ssl-certfile "$SSL_CERT"
 
 Restart=always
 RestartSec=3
@@ -1066,14 +1074,14 @@ EOF
     chmod 644 /etc/systemd/system/zhina-panel.service
     systemctl daemon-reload
     systemctl enable --now zhina-panel || error "خطا در راه‌اندازی سرویس پنل"
-    
+
     sleep 3
     if ! systemctl is-active --quiet zhina-panel; then
         journalctl -u zhina-panel -n 30 --no-pager
         error "سرویس پنل فعال نشد. لطفاً خطاهای بالا را بررسی کنید."
     fi
 
-    success "سرویس پنل تنظیم شد"
+    success "سرویس پنل با موفقیت راه‌اندازی شد"
 }
 
 # ------------------- نمایش اطلاعات نصب -------------------
