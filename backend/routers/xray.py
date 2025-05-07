@@ -1,169 +1,55 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import JSONResponse
-from typing import List
 from sqlalchemy.orm import Session
-from .database import get_db
-from .schemas import (
-    InboundCreate,
-    InboundUpdate,
-    InboundResponse,
-    PortChangeRequest,
-    ProxyCreate,  # اضافه کردن پروکسی
-    ProxyUpdate,  # اضافه کردن پروکسی
-    DomainCreate,  # اضافه کردن دامنه
-    DomainUpdate,  # اضافه کردن دامنه
-    TLSConfigCreate,  # اضافه کردن تنظیمات TLS
-    SubscriptionCreate,  # اضافه کردن سابسکریپشن
+from backend.database import get_db
+
+from xray_config.inbounds import (
+    create_inbound, get_inbounds, update_inbound, delete_inbound
 )
-from .services.xray_service import XrayService
-from .core.security import get_current_admin
-
-router = APIRouter(
-    prefix="/api/v1/xray",
-    tags=["Xray Configuration"],
-    dependencies=[Depends(get_current_admin)]  # نیاز به احراز هویت ادمین
+from xray_config.tls import (
+    create_tls, get_tls_config, update_tls, delete_tls
+)
+from xray_config.subscription import (
+    create_subscription, get_subscriptions, update_subscription, delete_subscription
+)
+from xray_config.protocols import (
+    get_protocols, update_protocol
+)
+from xray_config.setting import (
+    get_xray_settings, update_xray_settings
+)
+from xray_config.xray_manager import (
+    restart_xray, reload_xray, get_xray_status
 )
 
-# مسیرهای موجود برای اینباندها
+router = APIRouter(prefix="/xray", tags=["Xray"])
 
-@router.post("/inbounds", 
-             response_model=InboundResponse,
-             status_code=status.HTTP_201_CREATED)
-async def create_inbound(
-    inbound: InboundCreate, 
-    db: Session = Depends(get_db)
-):
-    """ایجاد اینباند جدید"""
-    try:
-        service = XrayService(db)
-        new_inbound = service.add_inbound(inbound)
-        return {
-            "status": "success",
-            "data": new_inbound,
-            "message": "اینباند با موفقیت ایجاد شد"
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+# ---------------- Inbounds ----------------
+router.post("/inbounds")(create_inbound)
+router.get("/inbounds")(get_inbounds)
+router.put("/inbounds/{inbound_id}")(update_inbound)
+router.delete("/inbounds/{inbound_id}")(delete_inbound)
 
-@router.put("/inbounds/{inbound_id}", 
-            response_model=InboundResponse)
-async def update_inbound(
-    inbound_id: int,
-    inbound: InboundUpdate,
-    db: Session = Depends(get_db)
-):
-    """به‌روزرسانی اینباند"""
-    try:
-        service = XrayService(db)
-        updated_inbound = service.update_inbound(inbound_id, inbound)
-        if not updated_inbound:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="اینباند یافت نشد"
-            )
-        return {
-            "status": "success",
-            "data": updated_inbound
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+# ---------------- TLS ----------------
+router.post("/tls")(create_tls)
+router.get("/tls")(get_tls_config)
+router.put("/tls")(update_tls)
+router.delete("/tls")(delete_tls)
 
-# مسیرهای جدید برای پروکسی‌ها و دامنه‌ها
+# ---------------- Subscriptions ----------------
+router.post("/subscriptions")(create_subscription)
+router.get("/subscriptions")(get_subscriptions)
+router.put("/subscriptions/{subscription_id}")(update_subscription)
+router.delete("/subscriptions/{subscription_id}")(delete_subscription)
 
-@router.post("/proxies", 
-             response_model=ProxyCreate, 
-             status_code=status.HTTP_201_CREATED)
-async def create_proxy(
-    proxy: ProxyCreate, 
-    db: Session = Depends(get_db)
-):
-    """ایجاد پروکسی جدید"""
-    try:
-        service = XrayService(db)
-        new_proxy = service.add_proxy(proxy)
-        return {
-            "status": "success",
-            "data": new_proxy,
-            "message": "پروکسی با موفقیت ایجاد شد"
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+# ---------------- Protocols ----------------
+router.get("/protocols")(get_protocols)
+router.put("/protocols")(update_protocol)
 
-@router.post("/domains", 
-             response_model=DomainCreate, 
-             status_code=status.HTTP_201_CREATED)
-async def create_domain(
-    domain: DomainCreate, 
-    db: Session = Depends(get_db)
-):
-    """ایجاد دامنه جدید"""
-    try:
-        service = XrayService(db)
-        new_domain = service.add_domain(domain)
-        return {
-            "status": "success",
-            "data": new_domain,
-            "message": "دامنه با موفقیت ایجاد شد"
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+# ---------------- Settings ----------------
+router.get("/settings")(get_xray_settings)
+router.put("/settings")(update_xray_settings)
 
-# مسیرهای جدید برای TLS
-
-@router.post("/tls", 
-             response_model=TLSConfigCreate, 
-             status_code=status.HTTP_201_CREATED)
-async def create_tls(
-    tls_config: TLSConfigCreate, 
-    db: Session = Depends(get_db)
-):
-    """ایجاد تنظیمات TLS"""
-    try:
-        service = XrayService(db)
-        new_tls = service.add_tls_config(tls_config)
-        return {
-            "status": "success",
-            "data": new_tls,
-            "message": "تنظیمات TLS با موفقیت ایجاد شد"
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
-
-# مسیرهای جدید برای سابسکریپشن‌ها
-
-@router.post("/subscriptions", 
-             response_model=SubscriptionCreate, 
-             status_code=status.HTTP_201_CREATED)
-async def create_subscription(
-    subscription: SubscriptionCreate, 
-    db: Session = Depends(get_db)
-):
-    """ایجاد سابسکریپشن جدید"""
-    try:
-        service = XrayService(db)
-        new_subscription = service.add_subscription(subscription)
-        return {
-            "status": "success",
-            "data": new_subscription,
-            "message": "سابسکریپشن با موفقیت ایجاد شد"
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+# ---------------- Manager ----------------
+router.post("/restart")(restart_xray)
+router.post("/reload")(reload_xray)
+router.get("/status")(get_xray_status)
