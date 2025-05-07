@@ -135,3 +135,67 @@ class ServerStats(BaseModel):
     active_connections: int = Field(..., ge=0)
     total_users: int
     online_users: int
+
+from pydantic import BaseModel, Field, field_validator
+from typing import Optional, Dict
+from datetime import datetime
+
+class InboundCreate(BaseModel):
+    port: int = Field(..., ge=1, le=65535, description="پورت اینباند (1-65535)")
+    protocol: str = Field(..., description="پروتکل اینباند")
+    settings: Dict = Field(default_factory=dict, description="تنظیمات اختصاصی پروتکل")
+    stream_settings: Dict = Field(default_factory=dict, description="تنظیمات جریان داده")
+    tag: Optional[str] = Field(None, max_length=50, description="برچسب اینباند")
+    remark: Optional[str] = Field(None, max_length=100, description="توضیحات اختیاری")
+
+    @field_validator('protocol')
+    @classmethod
+    def validate_protocol(cls, v):
+        valid_protocols = ["vmess", "vless", "trojan", "shadowsocks", "http", "socks"]
+        if v.lower() not in valid_protocols:
+            raise ValueError(f"پروتکل نامعتبر. باید یکی از این موارد باشد: {', '.join(valid_protocols)}")
+        return v.lower()
+
+    @field_validator('settings')
+    @classmethod
+    def validate_settings(cls, v, values):
+        protocol = values.data.get('protocol')
+        if protocol == 'vmess' and 'clients' not in v:
+            raise ValueError("تنظیمات vmess باید شامل لیست clients باشد")
+        return v
+
+
+class InboundUpdate(BaseModel):
+    port: Optional[int] = Field(None, ge=1, le=65535)
+    protocol: Optional[str] = None
+    settings: Optional[Dict] = None
+    stream_settings: Optional[Dict] = None
+    tag: Optional[str] = Field(None, max_length=50)
+    remark: Optional[str] = Field(None, max_length=100)
+
+    @field_validator('protocol')
+    @classmethod
+    def validate_protocol(cls, v):
+        if v is not None:
+            valid_protocols = ["vmess", "vless", "trojan", "shadowsocks", "http", "socks"]
+            if v.lower() not in valid_protocols:
+                raise ValueError(f"پروتکل نامعتبر. باید یکی از این موارد باشد: {', '.join(valid_protocols)}")
+            return v.lower()
+        return v
+
+
+class InboundResponse(BaseModel):
+    id: int
+    port: int
+    protocol: str
+    settings: Dict
+    stream_settings: Dict
+    tag: Optional[str]
+    remark: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+    config_path: Optional[str]
+    is_active: Optional[bool]
+
+    class Config:
+        orm_mode = True
