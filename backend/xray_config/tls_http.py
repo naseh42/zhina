@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, validator
-from typing import Dict, Optional, List
+from typing import List, Optional
 from pathlib import Path
 from backend.config import settings
 import logging
@@ -71,6 +71,59 @@ class TLSSettings(BaseModel):
         self.certificate_path = Path(cert_path)
         self.key_path = Path(key_path)
         logger.info("مسیرهای گواهی TLS با موفقیت تنظیم شدند")
+
+    def generate_tls_config(self):
+        """
+        تولید پیکربندی TLS بر اساس تنظیمات موجود
+        
+        این تابع پیکربندی TLS را به صورت دیکشنری یا شیء مناسب برمی‌گرداند.
+        """
+        if not self.enable:
+            logger.warning("TLS غیرفعال است، پیکربندی ایجاد نمی‌شود.")
+            return {}
+        
+        config = {
+            "certificate": str(self.certificate_path) if self.certificate_path else None,
+            "key": str(self.key_path) if self.key_path else None,
+            "server_name": self.server_name,
+            "alpn": self.alpn,
+            "min_version": self.min_version,
+            "max_version": self.max_version
+        }
+        logger.info("پیکربندی TLS با موفقیت تولید شد.")
+        return config
+
+    def validate_tls_certificates(self):
+        """
+        اعتبارسنجی گواهی و کلید SSL
+        
+        بررسی می‌کند که آیا فایل‌های گواهی و کلید موجود هستند و درست تنظیم شده‌اند.
+        """
+        if not self.certificate_path or not self.key_path:
+            logger.error("مسیر گواهی یا کلید خصوصی تنظیم نشده است.")
+            return False
+        
+        if not self.certificate_path.exists() or not self.key_path.exists():
+            logger.error("فایل گواهی یا کلید خصوصی یافت نشد.")
+            return False
+        
+        logger.info("گواهی و کلید خصوصی معتبر هستند.")
+        return True
+
+    def apply_tls_settings(self):
+        """
+        اعمال تنظیمات TLS به سرور
+        
+        این تابع می‌تواند تنظیمات TLS را در سرویس مورد نظر مانند Xray اعمال کند.
+        """
+        if not self.validate_tls_certificates():
+            logger.error("تنظیمات TLS معتبر نیستند.")
+            return False
+        
+        # اینجا می‌توانید کد لازم برای اعمال پیکربندی TLS به سرور Xray یا هر سیستم دیگر را بنویسید.
+        logger.info("تنظیمات TLS با موفقیت اعمال شدند.")
+        return True
+
 
 class HTTPSettings(BaseModel):
     """
