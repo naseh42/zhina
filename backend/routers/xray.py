@@ -2,22 +2,22 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from backend.database import get_db
 
-from xray_config.inbounds import (
+from backend.xray_config.inbounds import (
     create_inbound, get_inbounds, update_inbound, delete_inbound
 )
-from xray_config.tls import (
+from backend.xray_config.tls import (
     create_tls, get_tls_config, update_tls, delete_tls
 )
-from xray_config.subscription import (
+from backend.xray_config.subscription import (
     create_subscription, get_subscriptions, update_subscription, delete_subscription
 )
-from xray_config.protocols import (
+from backend.xray_config.protocols import (
     get_protocols, update_protocol
 )
-from xray_config.setting import (
+from backend.xray_config.setting import (
     get_xray_settings, update_xray_settings
 )
-from xray_config.xray_manager import (
+from backend.xray_config.xray_manager import (
     restart_xray, reload_xray, get_xray_status
 )
 
