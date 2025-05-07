@@ -117,6 +117,10 @@ def get_subscription(db: Session, subscription_id: int) -> Optional[Subscription
     """دریافت سابسکریپشن بر اساس آیدی"""
     return db.query(Subscription).filter(Subscription.id == subscription_id).first()
 
+def get_subscriptions(db: Session) -> list:
+    """دریافت تمام سابسکریپشن‌ها"""
+    return db.query(Subscription).all()
+
 def update_subscription(
     db: Session,
     subscription_id: int,
